@@ -15,6 +15,9 @@ when it becomes the active task.
   login/logout. The game exists only in the currently-open tab; closing/reloading/rebooting
   loses the character — that's the point (see decision below). Every milestone's "verify"
   step drops the old "bump save.ts + migrate" requirement entirely.
+  *Amended (2026-07-07, scoreboard carve-out):* finished-run **results** (character age, nights
+  survived, seed, date) may persist locally for the oldest-character board. Outcomes, not state —
+  a run can never be resumed from them, so the anti-save-scum intent stands untouched.
 
 ## Architectural decisions
 - **360° animation — SHIPPED THEN REVERTED (2026-07-07).** Built a parametric rig (ordered parts,
@@ -42,6 +45,15 @@ when it becomes the active task.
 - **Zoom/LOD/dream-regen** — wheel/pinch zoom + LOD chunk streaming; unowned terrain regenerates from a
   slow "dream phase" seed, owned territory pinned constant.
 - **Event log** — ring-buffer bus + UI panel + `window.__nw.log`; built in W0 so later systems emit to it.
+- **Content-first pivot (2026-07-07, post-W3 playtest).** User verdict after playing the W3 build:
+  nights too easy, leveling ~10× too fast, the day needs prey to hunt, and loot needs sinks (feed
+  soul gear / fund building). Batch-2's remaining engine/feel work (multi-res art, dream-regen,
+  action polish) is deferred behind a content batch (new W4–W8 below). Zoom got pulled forward out
+  of the old zoom/LOD/dream-regen milestone because the user asked for it directly.
+- **Hosting (2026-07-07).** The game is a static Vite build with zero backend — GitHub Pages hosts it
+  as-is (push repo → enable Pages → build via Action, set Vite `base` to the repo name). One limit:
+  Pages is static-only, so the "oldest character ever, across everyone" leaderboard needs a separate
+  tiny backend/serverless store later; the local (this-browser) board works on Pages today.
 - **No persistence, ever.** `state = newState(seed, spawn)` on every boot, full stop. No save file,
   no autosave, no "continue" button — one open tab is one instance of one character. Closing the
   tab, refreshing, or a crash/reboot ends that character permanently (in-run death already respawns
@@ -73,19 +85,43 @@ when it becomes the active task.
   phases+telegraphs were the actual milestone content. Revisit spin as its own small follow-up if
   wanted. Brief: `docs/plans/W3-combat.md`. **Playtest gate: STOP here** — combat *feel* is subjective;
   get the user's verdict before starting W4 (W1 lesson).
-- **W4 — Multi-res art + multi-tile resources**: `SUBPIX` detail factor in `engine/procgen/sprites.ts`;
+- **W4 — Day hunts & the balance pass** *(active next — see content-first pivot above)*: daytime
+  roaming mobs around the player (sparse, capped, wander near their spawn, despawn when left far
+  behind; data-driven via a `daytime` flag on `EnemyDef` + a `config.dayspawn` block), harder nights
+  (config.horde retune), and ×10 xp curves (skills AND soul gear — user asked for "everything").
+  Brief: `docs/plans/W4-dayhunts.md`. **Playtest gate** — this is a balance-feel milestone.
+- **W5 — Zoom & the wide view**: mouse-wheel (+ pinch) zoom, pulled forward from the old
+  zoom/LOD/dream-regen milestone. Needs LOD chunk baking to stay performant zoomed out. Zoom-out is
+  **capped at a wide tactical view** — the world is unbounded procgen, so "see the whole map" literally
+  can't exist; a minimap of explored regions is the honest complement (candidate stretch scope).
+  Dream-regen stays deferred (below).
+- **W6 — Lifespan & scoreboards**: HUD age readout ("days dreamed" — `state.clock` is already the
+  authoritative age; death-respawn doesn't reset it, only hall loss / tab close ends a character),
+  a death/game-over scorecard, and oldest-character boards: this run, and this browser's all-time
+  (uses the scores-only persistence carve-out in the non-negotiables). "Oldest ever, everyone" needs
+  a backend — out of scope, but shape the local board's record format so a remote one slots in later.
+- **W7 — Loot economy & soul-feeding**: enemy loot tables drop upgrade materials; **feed materials →
+  soul-gear xp** (the "fed materials" half of the original Soul Gear concept, finally); hunts also
+  supply building materials. This closes the intended core loop: hunt by day → feed gear / fund
+  buildings → survive harder nights → grow territory → attract worse things.
+- **W8 — Grid inventory & paper-doll**: limited-capacity inventory in the D2/PoE mold — items with
+  w×h footprints in a grid (uniform-slot WoW-style cells are the documented fallback if tetris
+  placement balloons; same cut-line pattern that worked for W3's spin). Paper-doll equip panel; the
+  natural home for W2's deferred rings/amulets/charms and the "Soul Satchel" capacity upgrades.
+  **Design sign-off gate:** agree the inventory style with the user BEFORE building — look/feel milestone.
+
+### Deferred (old batch-2 back-half — engine/feel work, revisit after W8)
+- **Multi-res art + multi-tile resources** (old W4): `SUBPIX` detail factor in `engine/procgen/sprites.ts`;
   `FeatureDef.footprint?:{w,h}` multi-tile nodes across worldgen/world/chunkmap/gather.
-  **Sign-off gate (W1 lesson):** bake 2–3 representative sprites (tree, player, wall) at ×2/×4 in a
-  side-by-side debug view and get the user's verdict BEFORE migrating the whole pipeline — this
-  milestone changes how everything looks, the exact failure mode that got W1 reverted. Also note:
-  SUBPIX×4 = 16× the pixels per chunk bake — measure bake time + texture memory in verify, and design
-  the `chunkmap.ts` change with W5's LOD in mind (both milestones rewrite the same baker; consider
-  planning them together when W4 becomes active).
-- **W5 — Zoom + LOD + dream-regen**: wheel/pinch zoom, LOD chunk baking, dream-phase regen with owned-
-  territory pinning. Watch the interactions: depletion state (`world.isDepleted`) is keyed by tile
-  coords, so regenerated unowned terrain must reset/clear it (no ghost stumps), and regen must never
-  visibly rewrite terrain near the player mid-run.
-- **W6 — Action-feedback polish**: gather/mine/harvest sprite animations (bounce/tint/particle —
+  **Sign-off gate (W1 lesson):** bake 2–3 representative sprites at ×2/×4 in a side-by-side debug view
+  and get the user's verdict BEFORE migrating the whole pipeline. SUBPIX×4 = 16× the pixels per chunk
+  bake — measure bake time + texture memory; coordinate with the LOD baker that W5-zoom will now have
+  already touched (both rewrite `chunkmap.ts`).
+- **Dream-regen + owned-territory pinning** (rest of old W5): unowned terrain regenerates from a slow
+  dream-phase seed, owned territory pinned. Watch: depletion state (`world.isDepleted`) is keyed by
+  tile coords, so regenerated terrain must clear it (no ghost stumps), and regen must never visibly
+  rewrite terrain near the player mid-run.
+- **Action-feedback polish** (old W6): gather/mine/harvest sprite animations (bounce/tint/particle —
   no rig, it's gone) synced to SFX, node shake + depletion poof, log wiring.
 
 ## Verification (every milestone)
