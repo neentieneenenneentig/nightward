@@ -60,10 +60,19 @@ when it becomes the active task.
 - **W2 — Soul Gear** ✅ shipped `v0.7-w2-soulgear` (weapon/armor/tools pass; simplified from uid'd
   instances to per-slot soul-bound leveling — see `docs/plans/W2-soulgear.md`). Rings/amulets/charms
   and the inventory-size "Soul Satchel" deferred (need new content, not just systems work).
-- **W3 — Weighty combat** *(re-scoped 2026-07-07 — no longer "needs W1")*: attack state machine in
-  `systems/combat.ts`, `attackSpeed` from weapon soul level, enemy wind-up telegraphs, radial spin
-  attack. Brief: `docs/plans/W3-combat.md`. **Playtest gate:** combat *feel* is subjective — after
-  merging, STOP and get the user's playtest verdict before starting the next milestone (W1 lesson).
+- **W3 — Weighty combat** ✅ shipped `v0.8-w3-combat` (2026-07-07): player `attack()` now runs
+  `windup → active (damage resolves once here) → recovery` instead of an instant flat-cooldown hit;
+  pressing during recovery buffers one queued swing, mid-swing presses are ignored; envelope duration
+  scales down with weapon soul level (floored at 0.5×); movement slows mid-swing; sprite tints/squashes
+  on windup and desaturates on recovery. Foes/bosses gained a data-driven `telegraphSec` tell (blinking
+  warning tint + SFX) — a committed hit only lands if the player is still in reach (+ small slack) when
+  it elapses, so stepping out during the tell whiffs it. All verified live via direct sim-state driving
+  (see `docs/plans/W3-combat.md`'s verify section). **Spin/channel (hold-to-charge radial burst) was
+  deferred**, per the brief's own escape hatch — it needs key-down/up hold tracking through
+  `input.ts`/`ui.ts`/`main.ts` that the tap-based phase machine doesn't otherwise require, and
+  phases+telegraphs were the actual milestone content. Revisit spin as its own small follow-up if
+  wanted. Brief: `docs/plans/W3-combat.md`. **Playtest gate: STOP here** — combat *feel* is subjective;
+  get the user's verdict before starting W4 (W1 lesson).
 - **W4 — Multi-res art + multi-tile resources**: `SUBPIX` detail factor in `engine/procgen/sprites.ts`;
   `FeatureDef.footprint?:{w,h}` multi-tile nodes across worldgen/world/chunkmap/gather.
   **Sign-off gate (W1 lesson):** bake 2–3 representative sprites (tree, player, wall) at ×2/×4 in a
