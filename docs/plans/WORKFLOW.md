@@ -29,11 +29,16 @@ Formalized workflow so each milestone is isolated, verifiable, and mergeable on 
    `window.__nw.step(n)` + eval and the event log (the harness tab renders hidden, so don't rely on
    screenshots). If live verification fails, fix forward on main (or revert the merge).
 7. **Tag** the verified state (e.g. `v0.5-w0`, `v0.7-w2-soulgear`).
-8. **Playtest gate for look/feel milestones**: if the milestone changes how the game looks, feels, or
-   sounds (art, animation, combat feel — W3/W4/W6 all qualify), STOP after tagging and get the user's
-   playtest verdict before starting the next milestone. W1 shipped a visual overhaul, chained straight
-   into W2, and then had to be surgically reverted around W2's changes when the user disliked it —
-   a plain `git revert` would have worked if we'd paused for feedback first.
+8. **Playtest gate for look/feel milestones**: if the milestone changes how the game looks, feels,
+   sounds, or is balanced (art, animation, combat feel, spawn/xp tuning), STOP after tagging and get
+   the user's playtest verdict before starting the next milestone. W1 shipped a visual overhaul,
+   chained straight into W2, and then had to be surgically reverted around W2's changes when the user
+   disliked it — a plain `git revert` would have worked if we'd paused for feedback first.
+   **Automated pass first (added 2026-07-07):** before asking the user, spawn the `playtest` agent
+   (`.claude/agents/playtest.md`, runs on Sonnet) against the merged main build. It plays a structured
+   session through the preview harness, measures pacing/balance numbers, and hunts bugs. Fix anything
+   it finds actually broken, then hand the user its report alongside the ask. The user's feel verdict
+   is still the gate — the agent only screens for bugs and balance-math, it cannot feel fun.
 
 ## Conventions
 - One milestone = one branch = one worktree. Don't mix milestones.
