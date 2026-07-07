@@ -27,8 +27,10 @@ when it becomes the active task.
   kept as a record of the approach and why it didn't stick. **Any future animation work should assume
   4-direction baked frames as the baseline**, not rebuild the rig, unless the user asks for it again.
 - **Weighty combat = attack state machine** `windup → active(hit-window) → recovery`; damage only in
-  the active window; `attackSpeed` scales the envelope. Phases are rig poses. Spin/channel AoE-with-
-  falloff falls out once facing is a float. Numbers in `config.ts`.
+  the active window; `attackSpeed` scales the envelope. Numbers in `config.ts`. *(Re-scoped after the
+  rig revert:)* phases drive the existing sprite + slash effect (windup tint/scale-pulse, slash during
+  the active window) — NOT rig poses. Spin/channel was premised on float facing; with 4-direction
+  facing it becomes a full-circle radial burst, or gets cut — it no longer "falls out" of anything.
 - **Soul Gear = soul-bound instanced gear** (tools/weapons/armour/rings/amulets/charms/inventory-size),
   each an instance with its own `level`/`xp` on a RuneScape-scale curve, leveling by use + fed materials,
   upgrades gated on rare + boss loot. Inventory model changes: materials stay stackable counts, gear
@@ -58,15 +60,24 @@ when it becomes the active task.
 - **W2 — Soul Gear** ✅ shipped `v0.7-w2-soulgear` (weapon/armor/tools pass; simplified from uid'd
   instances to per-slot soul-bound leveling — see `docs/plans/W2-soulgear.md`). Rings/amulets/charms
   and the inventory-size "Soul Satchel" deferred (need new content, not just systems work).
-- **W3 — Weighty combat + channeling** *(re-scope needed — no longer "needs W1")*: attack state machine
-  in `systems/combat.ts`, `attackSpeed` from equipped weapon soul-level, spin/channel AoE with falloff,
-  enemy telegraphs. Phases should drive the *existing* 4-direction frame swap (a windup/recovery tint or
-  brief scale-pulse, say) rather than rig poses, since the rig is gone.
+- **W3 — Weighty combat** *(re-scoped 2026-07-07 — no longer "needs W1")*: attack state machine in
+  `systems/combat.ts`, `attackSpeed` from weapon soul level, enemy wind-up telegraphs, radial spin
+  attack. Brief: `docs/plans/W3-combat.md`. **Playtest gate:** combat *feel* is subjective — after
+  merging, STOP and get the user's playtest verdict before starting the next milestone (W1 lesson).
 - **W4 — Multi-res art + multi-tile resources**: `SUBPIX` detail factor in `engine/procgen/sprites.ts`;
   `FeatureDef.footprint?:{w,h}` multi-tile nodes across worldgen/world/chunkmap/gather.
+  **Sign-off gate (W1 lesson):** bake 2–3 representative sprites (tree, player, wall) at ×2/×4 in a
+  side-by-side debug view and get the user's verdict BEFORE migrating the whole pipeline — this
+  milestone changes how everything looks, the exact failure mode that got W1 reverted. Also note:
+  SUBPIX×4 = 16× the pixels per chunk bake — measure bake time + texture memory in verify, and design
+  the `chunkmap.ts` change with W5's LOD in mind (both milestones rewrite the same baker; consider
+  planning them together when W4 becomes active).
 - **W5 — Zoom + LOD + dream-regen**: wheel/pinch zoom, LOD chunk baking, dream-phase regen with owned-
-  territory pinning.
-- **W6 — Action-feedback polish**: gather/mine/harvest rig animations synced to SFX, particles, log wiring.
+  territory pinning. Watch the interactions: depletion state (`world.isDepleted`) is keyed by tile
+  coords, so regenerated unowned terrain must reset/clear it (no ghost stumps), and regen must never
+  visibly rewrite terrain near the player mid-run.
+- **W6 — Action-feedback polish**: gather/mine/harvest sprite animations (bounce/tint/particle —
+  no rig, it's gone) synced to SFX, node shake + depletion poof, log wiring.
 
 ## Verification (every milestone)
 - `npm run typecheck` clean; `npm run build` green; bundle stays lean (procgen, no assets).
