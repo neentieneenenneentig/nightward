@@ -1,5 +1,6 @@
-// Player melee (arc swing in the facing direction, best carried weapon
-// auto-applies), watchtower fire, day regen, death & respawn.
+// Player melee: windup → active (damage resolves once here) → recovery state
+// machine, best carried weapon auto-applies, plus watchtower fire, day regen,
+// death & respawn.
 import { CFG } from '../data/config';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
@@ -8,6 +9,7 @@ import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
 import type { Foe } from './hordes';
 import type { WorldBoss } from '../state';
+import type { AttackPhase } from '../world/player';
 
 const bossSize = (id: string) => ENEMIES.find((e) => e.id === id)?.art.size ?? 40;
 
@@ -16,7 +18,9 @@ const FACING_ANGLE: Record<string, number> = {
 };
 
 export class CombatSystem {
-  private cd = 0;
+  phase: AttackPhase = 'idle';
+  private phaseT = 0;
+  private queued = false;    // one buffered swing, pressed during recovery
   swingT = 0;          // >0 while the swing flash is visible
   swingAngle = 0;
   private towerT = new Map<number, number>(); // building uid → cooldown
@@ -24,7 +28,6 @@ export class CombatSystem {
   constructor(private ctx: any) {}
 
   update(dt: number) {
-    this.cd -= dt;
     this.swingT -= dt;
 
     const { state } = this.ctx;
@@ -33,11 +36,64 @@ export class CombatSystem {
       state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + CFG.player.regenPerSec * dt);
     }
     this.updateTowers(dt);
+    this.updatePhase(dt);
   }
 
+  /** Windup/active/recovery durations, sped up by the weapon's soul level (floored). */
+  private envelope() {
+    const lvl = this.ctx.state.player.soulItems?.weapon?.level ?? 1;
+    const { attackSpeedPerSoulLevel: k, attackSpeedFloor: floor } = CFG.combat;
+    const mult = Math.max(floor, 1 / (1 + lvl * k));
+    return {
+      windup: CFG.combat.windupSec * mult,
+      active: CFG.combat.activeSec * mult,
+      recovery: CFG.combat.recoverySec * mult,
+    };
+  }
+
+  private setPhase(p: AttackPhase) {
+    this.phase = p;
+    this.ctx.player.setAttackPhase(p);
+  }
+
+  private updatePhase(dt: number) {
+    if (this.phase === 'idle') return;
+    this.phaseT -= dt;
+    if (this.phaseT > 0) return;
+
+    const env = this.envelope();
+    if (this.phase === 'windup') {
+      this.resolveHit();
+      this.setPhase('active');
+      this.phaseT = env.active;
+    } else if (this.phase === 'active') {
+      this.setPhase('recovery');
+      this.phaseT = env.recovery;
+    } else {
+      // recovery elapsed
+      if (this.queued) { this.queued = false; this.startSwing(); }
+      else this.setPhase('idle');
+    }
+  }
+
+  /** Player pressed attack: starts windup from idle, buffers one swing during
+   * recovery (keeps mashing from feeling ignored), ignored mid-swing. */
   attack() {
-    if (this.cd > 0 || this.ctx.state.gameOver) return;
-    this.cd = CFG.player.meleeCooldown;
+    if (this.ctx.state.gameOver) return;
+    if (this.phase === 'idle') this.startSwing();
+    else if (this.phase === 'recovery') this.queued = true;
+  }
+
+  private startSwing() {
+    const env = this.envelope();
+    this.setPhase('windup');
+    this.phaseT = env.windup;
+    this.swingAngle = FACING_ANGLE[this.ctx.player.facing];
+    Sound.play('windup');
+  }
+
+  /** Damage resolves once, on the windup → active transition. */
+  private resolveHit() {
     const { state, player, hordes, views } = this.ctx;
 
     const fa = FACING_ANGLE[player.facing];
@@ -45,7 +101,7 @@ export class CombatSystem {
     this.swingAngle = fa;
 
     const dmg = CFG.player.baseDmg + equippedWeaponDmg(state);
-    const arc = (CFG.player.meleeArc * Math.PI) / 180;
+    const arc = (CFG.combat.arcDeg * Math.PI) / 180;
     const cx = state.player.x, cy = state.player.y - 10;
 
     // always draw the swing so a whiff still reads as an attack

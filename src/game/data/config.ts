@@ -10,8 +10,6 @@ export const CFG = {
     maxHp: 100,
     regenPerSec: 1.5,        // hp/s during the DAY only
     meleeRange: 40,          // px
-    meleeArc: 150,           // degrees, centered on facing
-    meleeCooldown: 0.45,     // s between swings
     baseDmg: 4,              // fists; weapons add weaponDmg on top
     deathGoldLossPct: 0.25,  // fraction of gold dropped on death
     // roguelike death: you don't wake at the hall — the dream scatters you far
@@ -29,6 +27,19 @@ export const CFG = {
     base: 40,
     growth: 1.32,
     maxLevel: 50,
+  },
+
+  // Weighty combat: attacks commit through windup → active (damage resolves
+  // here once) → recovery, instead of an instant flat-cooldown hit.
+  combat: {
+    windupSec: 0.22,
+    activeSec: 0.12,
+    recoverySec: 0.30,
+    arcDeg: 110,             // narrower than the old 150° — weighty means aimed
+    moveSlowMult: 0.35,      // movement speed mult while mid-swing (windup/active)
+    attackSpeedPerSoulLevel: 0.01, // envelope × 1/(1 + weaponSoulLevel × k)
+    attackSpeedFloor: 0.5,   // ...but never faster than this fraction of base
+    telegraphSlackPx: 8,     // grace distance when an enemy's telegraphed hit resolves
   },
 
   // Soul Gear: every equip slot is a soul-bound tool that levels on its own
