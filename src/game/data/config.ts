@@ -107,11 +107,6 @@ export const CFG = {
     dawnFlee: true,          // survivors melt away at sunrise
   },
 
-  save: {
-    autosaveSec: 10,
-    keyPrefix: 'nightward:', // one save slot per world seed
-  },
-
   ui: {
     toastSec: 3.2,
   },

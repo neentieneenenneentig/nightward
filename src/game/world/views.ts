@@ -5,6 +5,7 @@
 import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import { TILE } from './worldgen';
 import type { WorldArt } from './art';
+import type { World } from './world';
 import type { Foe } from '../systems/hordes';
 import type { Building, WorldBoss } from '../state';
 import { BUILDINGS } from '../data/buildings';
@@ -51,10 +52,12 @@ class BuildingView {
   cont = new Container();
   private bar = new Graphics();
   private maxHp: number;
-  constructor(b: Building, art: WorldArt) {
+  private isWall: boolean;
+  constructor(b: Building, private art: WorldArt, mask = 0) {
     const def = BUILDINGS.find((d) => d.id === b.type)!;
     this.maxHp = def.hp;
-    const s = new Sprite(tex(art.buildings.get(b.type)!));
+    this.isWall = def.art === 'wall';
+    const s = new Sprite(tex(this.isWall ? art.wall(mask) : art.buildings.get(b.type)!));
     s.anchor.set(0.5, 1);
     this.cont.addChild(s, this.bar);
     // anchored at the tile's bottom-center
@@ -69,6 +72,11 @@ class BuildingView {
       this.bar.rect(-14, -this.spriteH() - 4, 28, 3).fill(0x110a10);
       this.bar.rect(-14, -this.spriteH() - 4, 28 * frac, 3).fill(frac > 0.5 ? 0x8fd05a : 0xd05a5a);
     }
+  }
+  /** Re-pick the wall art for a new neighbor mask (auto-connect). */
+  refreshWall(mask: number) {
+    if (!this.isWall) return;
+    (this.cont.children[0] as Sprite).texture = tex(this.art.wall(mask));
   }
   private spriteH() { return (this.cont.children[0] as Sprite).height; }
   destroy() { this.cont.destroy({ children: true }); }
@@ -118,7 +126,7 @@ export class Views {
   private ghost: { cont: Container; foot: Graphics; sprite: Sprite } | null = null;
   private fx = new Container();
 
-  constructor(private layer: Container, private art: WorldArt) {
+  constructor(private layer: Container, private art: WorldArt, private world: World) {
     layer.sortableChildren = true;
     layer.addChild(this.fx);
     this.fx.zIndex = 1e9; // effects always on top
@@ -126,7 +134,7 @@ export class Views {
 
   // --- buildings ---
   addBuilding(b: Building) {
-    const v = new BuildingView(b, this.art);
+    const v = new BuildingView(b, this.art, this.wallMask(b.tx, b.ty));
     this.buildings.set(b.uid, v);
     this.layer.addChild(v.cont);
   }
@@ -134,6 +142,24 @@ export class Views {
   removeBuilding(uid: number) {
     this.buildings.get(uid)?.destroy();
     this.buildings.delete(uid);
+  }
+
+  private wallMask(tx: number, ty: number): number {
+    const isWall = (x: number, y: number) => this.world.buildingAt(x, y)?.type === 'wall';
+    let m = 0;
+    if (isWall(tx, ty - 1)) m |= 1; // N
+    if (isWall(tx + 1, ty)) m |= 2; // E
+    if (isWall(tx, ty + 1)) m |= 4; // S
+    if (isWall(tx - 1, ty)) m |= 8; // W
+    return m;
+  }
+
+  /** After a wall is placed/destroyed at (tx,ty), re-pick its neighbors' art. */
+  refreshWallsAround(tx: number, ty: number) {
+    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+      const nb = this.world.buildingAt(tx + dx, ty + dy);
+      if (nb && nb.type === 'wall') this.buildings.get(nb.uid)?.refreshWall(this.wallMask(nb.tx, nb.ty));
+    }
   }
 
   // --- foes ---

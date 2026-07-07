@@ -91,12 +91,16 @@ const CSS = `
   padding: 8px 10px 8px 12px; backdrop-filter: blur(5px); pointer-events: auto;
   box-shadow: 0 0 22px #8fd05a44; max-width: 94vw;
 }
-.nw-buildbar.on { display: flex; }
+.nw-buildbar.on { display: flex; animation: nw-buildpulse 1.1s ease-in-out infinite; }
 .nw-buildbar .ico { font-size: 18px; color: var(--good); }
 .nw-buildbar .txt { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
 .nw-buildbar .nm { color: #f4f7fc; font-weight: 600; }
 .nw-buildbar .hint { font-size: 11px; color: var(--ink-dim); }
 .nw-buildbar .cancel { min-width: 0; padding: 6px 12px; border-color: var(--bad); }
+@keyframes nw-buildpulse {
+  0%, 100% { box-shadow: 0 0 22px #8fd05a44; border-color: var(--good); }
+  50% { box-shadow: 0 0 34px #8fd05a99; border-color: #c8f0a8; }
+}
 
 /* ---- panels ---- */
 .nw-scrim {
@@ -185,6 +189,19 @@ const CSS = `
 .nw-xpbar { height: 8px; background: #0d1a2c; border-radius: 5px; overflow: hidden;
   border: 1px solid #ffffff12; }
 .nw-xpfill { height: 100%; background: linear-gradient(90deg, var(--glow), #7fb8e6); }
+
+/* ---- event log ---- */
+.nw-logrow { display: flex; align-items: baseline; gap: 8px; padding: 5px 6px;
+  border-bottom: 1px solid #ffffff0c; font-size: 12px; }
+.nw-logt { color: #5a6b82; font-variant-numeric: tabular-nums; font-size: 11px; min-width: 34px; }
+.nw-logk { font-size: 9px; letter-spacing: .5px; text-transform: uppercase; min-width: 56px;
+  color: var(--ink-dim); }
+.nw-logm { flex: 1; color: var(--ink); }
+.nw-log-combat .nw-logk, .nw-log-death .nw-logk { color: var(--bad); }
+.nw-log-boss .nw-logk { color: #e0a13f; }
+.nw-log-level .nw-logk, .nw-log-economy .nw-logk { color: var(--gold); }
+.nw-log-gather .nw-logk, .nw-log-craft .nw-logk, .nw-log-build .nw-logk { color: var(--good); }
+.nw-log-region .nw-logk { color: #c9b6e6; }
 
 /* ---- toasts ---- */
 .nw-toasts { position: absolute; left: 50%; top: 54px; transform: translateX(-50%);

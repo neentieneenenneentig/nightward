@@ -95,6 +95,7 @@ export class WorldBossSystem {
     this.warned.delete(b.uid);
     this.ctx.views.addBoss(b);
     this.ctx.toast(`${b.name} re-forms in the deep dream, stronger.`, 'bad');
+    this.ctx.log?.push('boss', `${b.name} re-forms, stronger (level ${b.level})`, this.ctx.state.clock);
   }
 
   // ---- per-step AI --------------------------------------------------------
@@ -151,6 +152,7 @@ export class WorldBossSystem {
       this.ctx.toast(`${b.name} has caught your scent — it approaches!`, 'bad');
       Sound.play('bossRoar');
       this.ctx.cam.shake?.(4);
+      this.ctx.log?.push('boss', `${b.name} has caught your scent`, this.ctx.state.clock);
     } else if (tiles > CFG.worldBoss.warnTiles * 1.5) {
       this.warned.delete(b.uid);
     }
@@ -175,8 +177,12 @@ export class WorldBossSystem {
       invAdd(state, d.id, d.n); autoEquip(state, d.id);
       this.ctx.toast(`+${d.n} ${ITEMS[d.id].name}`, 'good');
     }
-    if (fromPlayer) { const lvl = addXp(state, 'combat', def.xp); if (lvl) this.ctx.toast(`Combat reached level ${lvl}!`, 'good'); }
+    if (fromPlayer) {
+      const lvl = addXp(state, 'combat', def.xp);
+      if (lvl) { this.ctx.toast(`Combat reached level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Combat reached level ${lvl}`, state.clock); }
+    }
     Sound.play('enemyDie');
     this.ctx.toast(`You have slain ${b.name}! The dream recoils.`, 'good');
+    this.ctx.log?.push('boss', `Slain ${b.name}!`, state.clock);
   }
 }

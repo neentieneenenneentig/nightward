@@ -81,8 +81,10 @@ export class BuildSystem {
     state.buildings.push(b);
     world.reindexBuildings();
     this.ctx.views.addBuilding(b);
+    if (m.def.id === 'wall') this.ctx.views.refreshWallsAround(m.tx, m.ty);
     Sound.play('build');
     toast(`${m.def.name} built`);
+    this.ctx.log?.push('build', `Built ${m.def.name} at (${m.tx},${m.ty})`, state.clock);
     if (m.def.id === 'hall') toast('The racket is open for business.', 'good');
 
     // keep placing (walls!) while materials last; otherwise drop out of mode

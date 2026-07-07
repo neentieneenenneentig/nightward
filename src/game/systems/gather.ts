@@ -8,7 +8,13 @@ import { addXp, autoEquip, bestTool, invAdd, rollLoot, skillLevel } from '../rul
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
 
-const GATHER_SFX: Record<string, string> = { woodcutting: 'chop', mining: 'mine', foraging: 'forage' };
+// a couple of alternates per skill so gathering doesn't sound identical every hit
+const GATHER_SFX: Record<string, string[]> = {
+  woodcutting: ['chop', 'chop2'],
+  mining: ['mine', 'mine2'],
+  foraging: ['forage', 'forage2'],
+};
+const pickSfx = (names: string[]) => names[(Math.random() * names.length) | 0];
 
 const SKILL_NAME = Object.fromEntries(SKILLS.map((s) => [s.id, s.name]));
 export const VERB: Record<string, string> = {
@@ -90,9 +96,13 @@ export class GatherSystem {
     world.deplete(a.tx, a.ty, a.def.respawnSec);
     chunks.rebakeTile(a.tx, a.ty);
 
-    Sound.play(GATHER_SFX[a.def.skill] ?? 'forage');
+    Sound.play(pickSfx(GATHER_SFX[a.def.skill] ?? ['forage']));
     const got = drops.map((d) => `+${d.n} ${ITEMS[d.id].name}`).join('  ');
     toast(`${got}   (+${a.def.xp} ${SKILL_NAME[a.def.skill]} xp)`);
-    if (newLevel) { Sound.play('levelup'); toast(`${SKILL_NAME[a.def.skill]} reached level ${newLevel}!`, 'good'); }
+    this.ctx.log?.push('gather', `${got || 'Gathered nothing'} from ${a.def.name}`, state.clock);
+    if (newLevel) {
+      Sound.play('levelup'); toast(`${SKILL_NAME[a.def.skill]} reached level ${newLevel}!`, 'good');
+      this.ctx.log?.push('level', `${SKILL_NAME[a.def.skill]} reached level ${newLevel}`, state.clock);
+    }
   }
 }

@@ -427,6 +427,30 @@ export function makeBuilding(kind: 'hall' | 'hut' | 'wall' | 'tower', seed: numb
   return p.done();
 }
 
+/**
+ * Auto-connecting palisade segment. `mask` is a 4-bit neighbor bitmask
+ * (N=1, E=2, S=4, W=8): a central post is always drawn, plus a rail toward
+ * each connected side, so runs/corners/T-junctions/crosses all read distinctly.
+ */
+export function makeWall(mask: number, seed: number): HTMLCanvasElement {
+  const p = new Pix(32, 26);
+  const N = (mask & 1) !== 0, E = (mask & 2) !== 0, S = (mask & 4) !== 0, W = (mask & 8) !== 0;
+  const cx0 = 11, cx1 = 20; // central post columns
+
+  blocks(p, cx0, 4, cx1, 25, STONE, seed ^ 0xa11);
+  p.rect(cx0, 4, cx1, 5, STONE[2]); // cap
+
+  if (E) blocks(p, cx1 + 1, 10, 31, 17, STONE, seed ^ 0xa12);
+  if (W) blocks(p, 0, 10, cx0 - 1, 17, STONE, seed ^ 0xa13);
+  // N/S connections run "into the screen" in this pseudo-top-down view — a
+  // taller cap extension is enough to read as a continuous line of posts.
+  if (N) p.rect(cx0, 2, cx1, 3, STONE[1]);
+  if (S) p.rect(cx0, 24, cx1, 25, STONE[1]);
+
+  p.outline([20, 18, 28]);
+  return p.done();
+}
+
 // -------------------------------------------------------------- enemies ----
 
 export interface BlobArt { size: number; body: RGB[]; eye: RGB }

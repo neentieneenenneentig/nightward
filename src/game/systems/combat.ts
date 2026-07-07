@@ -142,6 +142,7 @@ export class CombatSystem {
     toast(lost > 0
       ? `You fall — the dream casts you out, ${lost} gold lost. Find your way home.`
       : 'You fall — the dream casts you out into distant lands…', 'bad');
+    this.ctx.log?.push('death', `You fell${lost > 0 ? ` (−${lost} gold)` : ''} — cast out to distant lands`, state.clock);
   }
 
   /** A random passable spot far from home — the roguelike wake-up. */
