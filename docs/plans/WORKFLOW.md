@@ -15,7 +15,7 @@ Formalized workflow so each milestone is isolated, verifiable, and mergeable on 
    - `npm run build` → green
    - `preview_start nightward-dev`, then exercise logic via `window.__nw.step(n)` + eval and the event log
      (the harness tab renders hidden, so don't rely on screenshots).
-   - Save/load roundtrip; if `GameState` changed, bump `src/game/save.ts` version + add a migration.
+   - No save/load — there is no persistence layer (see ROADMAP: no-persistence decision). Don't add one.
 5. **Commit** (conventional messages), then merge back and clean up:
    ```
    git -C <repo> merge --no-ff feat/w<n>-<slug>

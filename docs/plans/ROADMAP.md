@@ -11,6 +11,10 @@ when it becomes the active task.
   `GameState`. Adding content ≠ new engine code.
 - Loose-mode TS + Vite + PixiJS v8 (WebGPU, `?gl` forces WebGL). Determinism from seed.
 - `npm run typecheck` clean and `npm run build` green before any merge.
+- **No persistence (added 2026-07-07).** No save/load, no localStorage/IndexedDB state, no
+  login/logout. The game exists only in the currently-open tab; closing/reloading/rebooting
+  loses the character — that's the point (see decision below). Every milestone's "verify"
+  step drops the old "bump save.ts + migrate" requirement entirely.
 
 ## Architectural decisions
 - **360° animation = parametric skeletal rigs (pseudo-3D in 2D).** Creatures are ordered *parts*
@@ -32,6 +36,14 @@ when it becomes the active task.
 - **Zoom/LOD/dream-regen** — wheel/pinch zoom + LOD chunk streaming; unowned terrain regenerates from a
   slow "dream phase" seed, owned territory pinned constant.
 - **Event log** — ring-buffer bus + UI panel + `window.__nw.log`; built in W0 so later systems emit to it.
+- **No persistence, ever.** `state = newState(seed, spawn)` on every boot, full stop. No save file,
+  no autosave, no "continue" button — one open tab is one instance of one character. Closing the
+  tab, refreshing, or a crash/reboot ends that character permanently (in-run death already respawns
+  you via the roguelike scatter; only losing the Hall or closing the tab ends things for good). This
+  is on-theme (dream-world, nothing persists but what you've claimed *while you're in it*) and it's
+  what makes a future highscore/leaderboard interesting — no one can safety-scum a save, every run
+  that reaches a leaderboard actually survived. A real leaderboard needs a backend, which is still
+  explicitly out of scope for this batch — noted here as a later idea, not a milestone.
 
 ## Milestones (one worktree each, in order)
 - **W0 — Foundations & fixes** *(next)*: build-menu input-trap fix, auto-connecting/rotatable walls,
@@ -52,5 +64,5 @@ when it becomes the active task.
 - `npm run typecheck` clean; `npm run build` green; bundle stays lean (procgen, no assets).
 - Live: `preview_start` `nightward-dev`. The harness tab renders hidden (rAF paused) → verify logic via
   `window.__nw.step(n)` + eval and the event log; visual check by foregrounding the preview panel.
-- Determinism preserved (same seed → same world/gear rolls). Save/load roundtrip after each milestone;
-  bump `src/game/save.ts` version + add a migration when `GameState` changes.
+- Determinism preserved (same seed → same world/gear rolls). No save/load to roundtrip — a fresh
+  `newState()` on every boot is itself the correctness check; don't reintroduce persistence.

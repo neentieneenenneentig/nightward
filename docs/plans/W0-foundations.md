@@ -1,8 +1,29 @@
 # W0 — Foundations & fixes
 
-Branch: `feat/w0-foundations`. Four independent pieces; land them as separate commits.
-Read `ROADMAP.md` for context and `WORKFLOW.md` for the loop. No `GameState` shape change is
-required except an optional wall `orient` field (see §2) — if you add it, bump `save.ts` + migrate.
+Branch: `feat/w0-foundations`. Five independent pieces; land them as separate commits.
+Read `ROADMAP.md` for context and `WORKFLOW.md` for the loop. Optional wall `orient` field
+(see §2) is fine to add to `GameState` — there is no save file to migrate (see §0).
+
+---
+
+## 0. Rip out persistence  `feat:`
+**New decision:** no save/load, ever. The game exists only in the currently-open tab; closing,
+reloading, or a reboot loses the character — that's intentional (permadeath-per-session, and it
+keeps a future highscore board honest since no run can be save-scummed).
+
+**Do:**
+- Delete `src/game/save.ts`.
+- `src/main.ts`: remove the `loadFor`/`saveNow` import; `boot()` always does
+  `const state: GameState = newState(seed, spawn);` (drop the `loadFor(seed) ?? ` part). Remove the
+  `saveT` accumulator and the autosave block in `sim()`. Remove the `saveNow(state)` call in
+  `triggerGameOver()` (the game-over screen's "reload" button already yields a fresh character since
+  nothing persists — that's correct, leave it).
+- `src/game/data/config.ts`: delete the `save: { autosaveSec, keyPrefix }` block.
+- Leave the roguelike in-run respawn system (`respawnMinTiles/MaxTiles`) alone — that's unrelated,
+  it's what happens when you merely *die*, not when you close the tab.
+
+**Accept:** no references to `save.ts`/`localStorage` remain in `src/`; reloading the page (same
+`#s=` hash or not) always yields a brand-new character at spawn.
 
 ---
 
@@ -104,4 +125,4 @@ variants exist and are used by `systems/gather.ts`.
   present. Enter build mode via `__nw.sys.build.enter('hut')`, confirm `build.cancel()` clears
   `build.mode` and the banner; confirm right-click/Esc/B paths in the foregrounded panel.
 - Foreground the preview and eyeball connected walls + the Log panel. SFX audible after a click gesture.
-- No save-format change unless you add wall `orient` (then bump `save.ts` + migrate).
+- Confirm no persistence: reload the preview, character/state is fresh every time.
