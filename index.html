@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0d2b47" />
+  <title>NIGHTWARD</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      background: #0d2b47;
+      overflow: hidden;
+      touch-action: none;
+      user-select: none; -webkit-user-select: none;
+      font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+    }
+    #app, #app canvas { position: fixed; inset: 0; }
+
+    #hud { position: fixed; inset: 0; pointer-events: none; color: #dfe6f0; z-index: 10; }
+    #hud .top {
+      position: absolute; top: 0; left: 0; right: 0;
+      display: flex; align-items: center; gap: 12px;
+      padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
+    }
+    #hud .title {
+      font-size: 15px; font-weight: 700; letter-spacing: 4px;
+      color: #f4f7fc; text-shadow: 0 0 8px #3b82c4, 0 0 24px #3b82c488;
+    }
+    #hud .seed { font-size: 11px; opacity: 0.7; }
+    #hud button {
+      pointer-events: auto; margin-left: auto;
+      background: #12345688; color: #dfe6f0;
+      border: 1px solid #3b82c488; border-radius: 6px;
+      padding: 6px 10px; font: inherit; font-size: 11px; letter-spacing: 1px;
+      cursor: pointer; backdrop-filter: blur(4px);
+    }
+    #hud button:hover { border-color: #3b82c4; box-shadow: 0 0 10px #3b82c455; }
+    #hud .hint {
+      position: absolute; left: 0; right: 0;
+      bottom: calc(16px + env(safe-area-inset-bottom));
+      text-align: center; font-size: 12px; letter-spacing: 1px;
+      color: #dfe6f0; opacity: 0.75;
+      transition: opacity 1.5s ease;
+    }
+    #hud .hint.fade { opacity: 0; }
+
+    /* floating virtual joystick (touch only, appears where you press) */
+    .stick { position: fixed; border-radius: 50%; pointer-events: none; z-index: 20; display: none; }
+    #stick-base {
+      width: 96px; height: 96px; margin: -48px 0 0 -48px;
+      border: 2px solid #dfe6f055; background: #12345633;
+    }
+    #stick-knob {
+      width: 44px; height: 44px; margin: -22px 0 0 -22px;
+      background: #dfe6f0aa; box-shadow: 0 0 12px #3b82c4aa;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="hud"></div>
+  <div id="stick-base" class="stick"></div>
+  <div id="stick-knob" class="stick"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

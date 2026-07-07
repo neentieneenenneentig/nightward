@@ -1,0 +1,64 @@
+// Item database. `icon` is a procgen recipe (shape kind + colors) — icons are
+// drawn at runtime like everything else. Add a row = new item exists.
+import { type RGB, hex } from '../../engine/procgen/palette';
+
+export type IconKind =
+  | 'log' | 'plank' | 'stone' | 'ore' | 'bar'
+  | 'herb' | 'berry' | 'axe' | 'pick' | 'sword' | 'potion' | 'armor';
+
+export interface ItemDef {
+  id: string;
+  name: string;
+  icon: { kind: IconKind; color: RGB; accent?: RGB };
+  /** tools: which node class they work and how strongly (speeds gathering) */
+  toolClass?: 'axe' | 'pick';
+  toolPower?: number;
+  /** weapons: added to the player's base damage when equipped */
+  weaponDmg?: number;
+  /** armor: flat damage reduction on each hit taken when equipped */
+  armor?: number;
+  /** potions: hp restored on use */
+  heal?: number;
+}
+
+const I = (
+  id: string, name: string, kind: IconKind, color: string, accent?: string,
+  extra: Partial<ItemDef> = {},
+): ItemDef => ({
+  id, name,
+  icon: { kind, color: hex(color), accent: accent ? hex(accent) : undefined },
+  ...extra,
+});
+
+export const ITEMS: Record<string, ItemDef> = Object.fromEntries([
+  // materials
+  I('log', 'Log', 'log', '#6b4a38'),
+  I('fine_log', 'Fine Log', 'log', '#8a5a38', '#c2a15f'),
+  I('plank', 'Plank', 'plank', '#a3794f'),
+  I('stone', 'Stone', 'stone', '#737887'),
+  I('copper_ore', 'Copper Ore', 'ore', '#5a5f6b', '#c47b3b'),
+  I('iron_ore', 'Iron Ore', 'ore', '#5a5f6b', '#9aa7b8'),
+  I('copper_bar', 'Copper Bar', 'bar', '#c47b3b'),
+  I('iron_bar', 'Iron Bar', 'bar', '#9aa7b8'),
+  // herbs & food
+  I('sunleaf', 'Sunleaf', 'herb', '#569a53', '#e6c86e'),
+  I('moonbell', 'Moonbell', 'herb', '#3f8148', '#c9a0dc'),
+  I('berry', 'Berries', 'berry', '#b3402e', '#569a53'),
+  // tools (power gates nothing, it multiplies gather speed)
+  I('axe_flint', 'Flint Axe', 'axe', '#737887', '#6b4a38', { toolClass: 'axe', toolPower: 1 }),
+  I('axe_copper', 'Copper Axe', 'axe', '#c47b3b', '#6b4a38', { toolClass: 'axe', toolPower: 2 }),
+  I('axe_iron', 'Iron Axe', 'axe', '#9aa7b8', '#6b4a38', { toolClass: 'axe', toolPower: 3 }),
+  I('pick_flint', 'Flint Pick', 'pick', '#737887', '#6b4a38', { toolClass: 'pick', toolPower: 1 }),
+  I('pick_copper', 'Copper Pick', 'pick', '#c47b3b', '#6b4a38', { toolClass: 'pick', toolPower: 2 }),
+  I('pick_iron', 'Iron Pick', 'pick', '#9aa7b8', '#6b4a38', { toolClass: 'pick', toolPower: 3 }),
+  // weapons
+  I('sword_copper', 'Copper Sword', 'sword', '#c47b3b', '#52402f', { weaponDmg: 4 }),
+  I('sword_iron', 'Iron Sword', 'sword', '#c9d2e0', '#52402f', { weaponDmg: 9 }),
+  // armor (worn in the armor slot; reduces damage taken)
+  I('vest_bark', 'Bark Vest', 'armor', '#6b4a38', '#569a53', { armor: 2 }),
+  I('armor_copper', 'Copper Plate', 'armor', '#c47b3b', '#52402f', { armor: 4 }),
+  I('armor_iron', 'Iron Plate', 'armor', '#aab4c4', '#52402f', { armor: 8 }),
+  // potions
+  I('tonic_minor', 'Minor Tonic', 'potion', '#d97b7b', '#f2f2f2', { heal: 30 }),
+  I('tonic_major', 'Major Tonic', 'potion', '#c9a0dc', '#f2f2f2', { heal: 75 }),
+].map((d) => [d.id, d]));

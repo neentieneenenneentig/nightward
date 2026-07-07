@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.local
+*.log
+
+# worktrees (feature isolation lives here, never committed)
+.claude/worktrees/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,162 @@
+// Player melee (arc swing in the facing direction, best carried weapon
+// auto-applies), watchtower fire, day regen, death & respawn.
+import { CFG } from '../data/config';
+import { BUILDINGS } from '../data/buildings';
+import { ENEMIES } from '../data/enemies';
+import { armorDef, equippedWeaponDmg, hall } from '../rules';
+import { TILE } from '../world/worldgen';
+import { Sound } from '../../engine/audio';
+import type { Foe } from './hordes';
+import type { WorldBoss } from '../state';
+
+const bossSize = (id: string) => ENEMIES.find((e) => e.id === id)?.art.size ?? 40;
+
+const FACING_ANGLE: Record<string, number> = {
+  right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2,
+};
+
+export class CombatSystem {
+  private cd = 0;
+  swingT = 0;          // >0 while the swing flash is visible
+  swingAngle = 0;
+  private towerT = new Map<number, number>(); // building uid → cooldown
+
+  constructor(private ctx: any) {}
+
+  update(dt: number) {
+    this.cd -= dt;
+    this.swingT -= dt;
+
+    const { state } = this.ctx;
+    // daylight heals; night doesn't
+    if (!this.ctx.isNight() && state.player.hp < CFG.player.maxHp) {
+      state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + CFG.player.regenPerSec * dt);
+    }
+    this.updateTowers(dt);
+  }
+
+  attack() {
+    if (this.cd > 0 || this.ctx.state.gameOver) return;
+    this.cd = CFG.player.meleeCooldown;
+    const { state, player, hordes, views } = this.ctx;
+
+    const fa = FACING_ANGLE[player.facing];
+    this.swingT = 0.13;
+    this.swingAngle = fa;
+
+    const dmg = CFG.player.baseDmg + equippedWeaponDmg(state);
+    const arc = (CFG.player.meleeArc * Math.PI) / 180;
+    const cx = state.player.x, cy = state.player.y - 10;
+
+    // always draw the swing so a whiff still reads as an attack
+    views.addSlash(cx, cy, fa, CFG.player.meleeRange, arc);
+    Sound.play('swing');
+
+    const inArc = (x: number, y: number, reach: number) => {
+      const d = Math.hypot(x - cx, y - cy);
+      if (d > reach) return -1;
+      let dd = Math.atan2(y - cy, x - cx) - fa;
+      while (dd > Math.PI) dd -= Math.PI * 2;
+      while (dd < -Math.PI) dd += Math.PI * 2;
+      return Math.abs(dd) > arc / 2 ? -1 : d;
+    };
+
+    let landed = false;
+    for (const f of [...hordes.foes] as Foe[]) {
+      const d = inArc(f.x, f.y, CFG.player.meleeRange + f.def.art.size / 2);
+      if (d < 0) continue;
+      // tiny knockback sells the hit
+      const kx = f.x + (f.x - cx) / (d || 1) * 6, ky = f.y + (f.y - cy) / (d || 1) * 6;
+      if (this.ctx.world.canStand(kx, ky, 5)) { f.x = kx; f.y = ky; }
+      hordes.hurt(f, dmg);
+      views.addHitFlash(f.x, f.y);
+      landed = true;
+    }
+
+    // world bosses share the swing — they're big, so aim generously
+    const wb = this.ctx.worldbosses;
+    if (wb) for (const b of wb.alive() as WorldBoss[]) {
+      const size = bossSize(b.defId);
+      if (inArc(b.x, b.y, CFG.player.meleeRange + size / 2) < 0) continue;
+      wb.hurt(b, dmg);
+      views.addHitFlash(b.x, b.y - size / 4);
+      landed = true;
+    }
+    if (landed) Sound.play('hit');
+  }
+
+  private updateTowers(dt: number) {
+    const { state, hordes, views, worldbosses } = this.ctx;
+    const bosses: WorldBoss[] = worldbosses ? worldbosses.alive() : [];
+    if (!hordes.foes.length && !bosses.length) return;
+    for (const b of state.buildings) {
+      const def = BUILDINGS.find((d) => d.id === b.type);
+      if (!def?.tower) continue;
+      const t = (this.towerT.get(b.uid) ?? 0) - dt;
+      if (t > 0) { this.towerT.set(b.uid, t); continue; }
+
+      const bx = (b.tx + 0.5) * TILE, by = (b.ty + 0.2) * TILE;
+      const range = def.tower.rangeTiles * TILE;
+      let bestFoe: Foe | null = null, bestBoss: WorldBoss | null = null, bestD = Infinity;
+      for (const f of hordes.foes as Foe[]) {
+        const d = Math.hypot(f.x - bx, f.y - by);
+        if (d < range && d < bestD) { bestFoe = f; bestBoss = null; bestD = d; }
+      }
+      for (const wb of bosses) {
+        const d = Math.hypot(wb.x - bx, wb.y - by);
+        if (d < range && d < bestD) { bestBoss = wb; bestFoe = null; bestD = d; }
+      }
+      if (bestFoe) {
+        this.towerT.set(b.uid, def.tower.cooldown);
+        views.addShot(bx, by, bestFoe.x, bestFoe.y - bestFoe.def.art.size / 2);
+        hordes.hurt(bestFoe, def.tower.dmg, false); // towers don't train your combat
+      } else if (bestBoss) {
+        this.towerT.set(b.uid, def.tower.cooldown);
+        views.addShot(bx, by, bestBoss.x, bestBoss.y);
+        worldbosses.hurt(bestBoss, def.tower.dmg, false);
+      } else {
+        this.towerT.set(b.uid, 0);
+      }
+    }
+  }
+
+  /** Enemy → player damage, plus death handling. */
+  damagePlayer(dmg: number) {
+    const { state, player, toast } = this.ctx;
+    if (state.gameOver) return;
+    const taken = Math.max(1, dmg - armorDef(state)); // armor softens, never fully negates
+    state.player.hp -= taken;
+    player.flash();
+    Sound.play('hurt');
+    this.ctx.cam.shake?.(Math.min(11, 3 + taken * 0.25));
+    if (state.player.hp > 0) return;
+
+    // down — drop gold and the dream flings you far out into the world
+    const lost = Math.floor(state.player.gold * CFG.player.deathGoldLossPct);
+    state.player.gold -= lost;
+    state.player.hp = CFG.player.maxHp;
+    const spot = this.randomRespawn();
+    state.player.x = spot.x;
+    state.player.y = spot.y;
+    player.teleport(spot.x, spot.y);
+    toast(lost > 0
+      ? `You fall — the dream casts you out, ${lost} gold lost. Find your way home.`
+      : 'You fall — the dream casts you out into distant lands…', 'bad');
+  }
+
+  /** A random passable spot far from home — the roguelike wake-up. */
+  private randomRespawn(): { x: number; y: number } {
+    const { state, world } = this.ctx;
+    const h = hall(state);
+    const cx = h ? (h.tx + 0.5) * TILE : this.ctx.spawnPoint.x;
+    const cy = h ? (h.ty + 0.5) * TILE : this.ctx.spawnPoint.y;
+    const { respawnMinTiles: mn, respawnMaxTiles: mx } = CFG.player;
+    for (let i = 0; i < 80; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = (mn + Math.random() * (mx - mn)) * TILE;
+      const x = cx + Math.cos(ang) * dist, y = cy + Math.sin(ang) * dist;
+      if (world.canStand(x, y)) return { x, y };
+    }
+    return { x: cx, y: cy };
+  }
+}

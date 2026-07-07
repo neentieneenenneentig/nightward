@@ -1,0 +1,182 @@
+// World bosses = the domain lords made flesh. A handful of them stalk the
+// overworld at once. Left alone they drift around their home domain; once your
+// racket grows loud enough (territory) — or night falls — they turn and
+// converge on your hall, phasing across any terrain like the dream-things they
+// are. Slain, they re-form deeper in the world, stronger (Diablo-GR style).
+import { CFG } from '../data/config';
+import { ENEMIES, type EnemyDef } from '../data/enemies';
+import { ITEMS } from '../data/items';
+import { addXp, autoEquip, hall, invAdd, rollLoot, territoryScore } from '../rules';
+import type { WorldBoss } from '../state';
+import { TILE } from '../world/worldgen';
+import { REGION, domainAtRegion, regionCenterPx } from '../world/domains';
+import { hash2 } from '../../engine/rng';
+import { Sound } from '../../engine/audio';
+
+const defOf = (id: string): EnemyDef => ENEMIES.find((e) => e.id === id)!;
+
+export class WorldBossSystem {
+  private warned = new Set<number>();
+
+  constructor(private ctx: any) {
+    if (!this.ctx.state.worldBosses.length) this.seedBosses();
+    else for (const b of this.ctx.state.worldBosses) if (b.reviveAt === 0) this.ctx.views.addBoss(b);
+  }
+
+  /** Alive bosses (not currently re-forming) — combat targets these. */
+  alive(): WorldBoss[] { return this.ctx.state.worldBosses.filter((b: WorldBoss) => b.reviveAt === 0); }
+
+  /** Distance (tiles) to the nearest hunting boss, or null — drives music & fog. */
+  nearestThreatTiles(): number | null {
+    const p = this.ctx.state.player;
+    let best: number | null = null;
+    for (const b of this.alive()) {
+      if (!b.hunting) continue;
+      const d = Math.hypot(b.x - p.x, b.y - p.y) / TILE;
+      if (best == null || d < best) best = d;
+    }
+    return best;
+  }
+
+  // ---- spawning / reviving ------------------------------------------------
+  private seedBosses() {
+    const { state } = this.ctx;
+    const ring = CFG.worldBoss.spawnRing;
+    const cands: [number, number][] = [];
+    for (let gx = -ring; gx <= ring; gx++)
+      for (let gy = -ring; gy <= ring; gy++)
+        if (Math.max(Math.abs(gx), Math.abs(gy)) === ring) cands.push([gx, gy]);
+    cands.sort((a, b) => hash2(a[0], a[1], state.seed ^ 0xb055) - hash2(b[0], b[1], state.seed ^ 0xb055));
+    for (let i = 0; i < Math.min(CFG.worldBoss.count, cands.length); i++) {
+      const [gx, gy] = cands[i];
+      this.makeBoss(gx, gy, Math.max(1, domainAtRegion(gx, gy, state.seed).danger));
+    }
+  }
+
+  private makeBoss(gx: number, gy: number, level: number) {
+    const { state } = this.ctx;
+    const dom = domainAtRegion(gx, gy, state.seed);
+    const def = defOf(dom.lord.bossId);
+    const [cx, cy] = regionCenterPx(gx, gy);
+    const maxHp = this.hpFor(level);
+    const b: WorldBoss = {
+      uid: state.nextUid++, defId: def.id, lordId: dom.lord.id,
+      name: `${def.name} of ${dom.name}`,
+      x: cx, y: cy, px: cx, py: cy,
+      hp: maxHp, maxHp, dmg: this.dmgFor(level), level,
+      atkT: 0, animT: Math.random(), hunting: false, reviveAt: 0, homeGx: gx, homeGy: gy,
+    };
+    state.worldBosses.push(b);
+    this.ctx.views.addBoss(b);
+  }
+
+  private hpFor(level: number) {
+    return Math.round(CFG.worldBoss.hpBase * Math.pow(CFG.worldBoss.hpPerLevel, level - 1)
+      + CFG.worldBoss.hpPerTerritory * territoryScore(this.ctx.state));
+  }
+  private dmgFor(level: number) {
+    return Math.round(CFG.worldBoss.dmgBase * Math.pow(CFG.worldBoss.dmgPerLevel, level - 1));
+  }
+
+  private revive(b: WorldBoss) {
+    const { state } = this.ctx;
+    b.level += CFG.worldBoss.levelPerRevive;
+    const ringR = b.level + CFG.worldBoss.spawnRing;
+    const ang = hash2(b.uid, b.level, state.seed) * Math.PI * 2;
+    const gx = Math.round(Math.cos(ang) * ringR), gy = Math.round(Math.sin(ang) * ringR);
+    const dom = domainAtRegion(gx, gy, state.seed);
+    const def = defOf(dom.lord.bossId);
+    const [cx, cy] = regionCenterPx(gx, gy);
+    b.defId = def.id; b.lordId = dom.lord.id; b.name = `${def.name} of ${dom.name}`;
+    b.homeGx = gx; b.homeGy = gy;
+    b.x = b.px = cx; b.y = b.py = cy;
+    b.maxHp = this.hpFor(b.level); b.hp = b.maxHp; b.dmg = this.dmgFor(b.level);
+    b.reviveAt = 0; b.hunting = false; b.atkT = 0;
+    this.warned.delete(b.uid);
+    this.ctx.views.addBoss(b);
+    this.ctx.toast(`${b.name} re-forms in the deep dream, stronger.`, 'bad');
+  }
+
+  // ---- per-step AI --------------------------------------------------------
+  update(dt: number) {
+    const { state } = this.ctx;
+    const p = state.player;
+    const hallB = hall(state);
+    const terr = territoryScore(state);
+    const roused = terr >= CFG.worldBoss.wakeTerritory || this.ctx.isNight();
+
+    for (const b of state.worldBosses as WorldBoss[]) {
+      if (b.reviveAt > 0) { if (state.clock >= b.reviveAt) this.revive(b); continue; }
+      b.px = b.x; b.py = b.y; b.animT += dt; b.atkT -= dt;
+      const def = defOf(b.defId);
+
+      // pick a target: hunt you/your hall when roused, otherwise drift at home
+      let tx: number, ty: number;
+      if (hallB && roused) {
+        b.hunting = true;
+        const hx = (hallB.tx + 0.5) * TILE, hy = (hallB.ty + 0.9) * TILE;
+        const dHall = Math.hypot(hx - b.x, hy - b.y);
+        const dPly = Math.hypot(p.x - b.x, (p.y - 10) - b.y);
+        if (dPly < dHall * 0.8) { tx = p.x; ty = p.y - 10; } else { tx = hx; ty = hy; }
+      } else {
+        b.hunting = false;
+        const [cx, cy] = regionCenterPx(b.homeGx, b.homeGy);
+        tx = cx + Math.cos(b.animT * 0.3 + b.uid) * REGION * TILE * 0.3;
+        ty = cy + Math.sin(b.animT * 0.24 + b.uid) * REGION * TILE * 0.3;
+      }
+
+      const dist = Math.hypot(tx - b.x, ty - b.y) || 1;
+      const speed = b.hunting
+        ? CFG.worldBoss.huntSpeed + CFG.worldBoss.convergePerTerritory * terr
+        : CFG.worldBoss.roamSpeed;
+
+      // attack if already on top of the player or the hall; else keep closing
+      const dPly = Math.hypot(p.x - b.x, (p.y - 10) - b.y);
+      if (b.hunting && dPly < CFG.worldBoss.attackReachPx) {
+        if (b.atkT <= 0) { b.atkT = def.atkCooldown; this.ctx.damagePlayer(b.dmg); this.ctx.cam.shake?.(7); }
+      } else if (hallB && b.hunting && Math.hypot((hallB.tx + 0.5) * TILE - b.x, (hallB.ty + 0.9) * TILE - b.y) < CFG.worldBoss.attackReachPx + 12) {
+        if (b.atkT <= 0) { b.atkT = def.atkCooldown; this.ctx.hordes.damageBuilding(hallB, b.dmg); this.ctx.cam.shake?.(5); }
+      } else if (dist > 4) {
+        b.x += (tx - b.x) / dist * speed * dt;
+        b.y += (ty - b.y) / dist * speed * dt;
+      }
+
+      this.checkWarning(b, Math.hypot(p.x - b.x, p.y - b.y) / TILE);
+    }
+  }
+
+  private checkWarning(b: WorldBoss, tiles: number) {
+    if (b.hunting && tiles < CFG.worldBoss.warnTiles && !this.warned.has(b.uid)) {
+      this.warned.add(b.uid);
+      this.ctx.toast(`${b.name} has caught your scent — it approaches!`, 'bad');
+      Sound.play('bossRoar');
+      this.ctx.cam.shake?.(4);
+    } else if (tiles > CFG.worldBoss.warnTiles * 1.5) {
+      this.warned.delete(b.uid);
+    }
+  }
+
+  // ---- taking damage from the player / towers -----------------------------
+  hurt(b: WorldBoss, dmg: number, fromPlayer = true) {
+    if (b.reviveAt > 0) return;
+    b.hp -= dmg;
+    if (b.hp > 0) return;
+
+    const { state } = this.ctx;
+    this.ctx.views.removeBoss(b.uid);
+    b.reviveAt = state.clock + CFG.worldBoss.reviveSec;
+    b.hunting = false;
+    this.warned.delete(b.uid);
+
+    const def = defOf(b.defId);
+    const [gmin, gmax] = CFG.worldBoss.goldOnKill;
+    state.player.gold += gmin + Math.floor(Math.random() * (gmax - gmin + 1)) + b.level * 20;
+    for (const d of rollLoot(def.loot)) {
+      invAdd(state, d.id, d.n); autoEquip(state, d.id);
+      this.ctx.toast(`+${d.n} ${ITEMS[d.id].name}`, 'good');
+    }
+    if (fromPlayer) { const lvl = addXp(state, 'combat', def.xp); if (lvl) this.ctx.toast(`Combat reached level ${lvl}!`, 'good'); }
+    Sound.play('enemyDie');
+    this.ctx.toast(`You have slain ${b.name}! The dream recoils.`, 'good');
+  }
+}
