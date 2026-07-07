@@ -7,6 +7,7 @@
 export const CFG = {
   player: {
     speed: 160,              // world px/s (32 px = 1 tile)
+    turnSpeed: Math.PI * 3.2, // rad/s the rig turns toward its target facing — lower = more visible slow-turn
     maxHp: 100,
     regenPerSec: 1.5,        // hp/s during the DAY only
     meleeRange: 40,          // px

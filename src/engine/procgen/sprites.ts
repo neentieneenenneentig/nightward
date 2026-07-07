@@ -3,7 +3,7 @@
 // upscaled crisp by the renderer. This file IS the game's art department.
 import { valueNoise } from '../noise';
 import { hash2, mulberry32 } from '../rng';
-import { type RGB, PLAYER_POOL, lighten, darken } from './palette';
+import { type RGB, lighten, darken } from './palette';
 
 /** Detail styles a tile recipe can ask for (game data picks one per biome). */
 export type Detail =
@@ -180,77 +180,6 @@ export function makeTreeVariants(t: TreeRecipe, seed: number, count = 6): HTMLCa
     out.push(p.done());
   }
   return out;
-}
-
-// ------------------------------------------------------------- character ----
-
-export interface PlayerFrames {
-  down: HTMLCanvasElement[];
-  up: HTMLCanvasElement[];
-  side: HTMLCanvasElement[]; // drawn facing right; renderer flips for left
-}
-
-/** 20×26 hero, 2 walk frames per direction, outfit rolled from the seed. */
-export function makePlayerFrames(seed: number): PlayerFrames {
-  const rand = mulberry32(seed ^ 0x4e40);
-  const pick = (a: RGB[]) => a[(rand() * a.length) | 0];
-  const skin = pick(PLAYER_POOL.skin);
-  const hair = pick(PLAYER_POOL.hair);
-  const tunic = pick(PLAYER_POOL.cloth);
-  const pants = pick(PLAYER_POOL.pants);
-  const boots = pick(PLAYER_POOL.boots);
-  const eye: RGB = [26, 26, 36];
-  const belt = darken(tunic, 20);
-
-  // leg with optional 1px lift (the walk cycle is legs alternating lifts)
-  const leg = (p: Pix, x: number, lift: number) => {
-    p.rect(x, 19, x + 1, 23 - lift, pants);
-    p.rect(x, 24 - lift, x + 1, 25 - lift, boots);
-  };
-
-  const frame = (dir: 'down' | 'up' | 'side', step: 0 | 1): HTMLCanvasElement => {
-    const p = new Pix(20, 26);
-    const o = step === 1 ? -1 : 0; // torso bob on the off-step
-
-    if (dir === 'side') {
-      if (step === 0) { leg(p, 7, 0); leg(p, 11, 1); }
-      else { leg(p, 7, 1); leg(p, 11, 0); }
-      p.rect(6, 10 + o, 13, 17 + o, tunic);
-      p.rect(6, 18 + o, 13, 18 + o, belt);
-      p.rect(7, 5 + o, 12, 9 + o, skin);            // head
-      p.rect(6, 2 + o, 13, 4 + o, hair);            // top
-      p.rect(6, 5 + o, 8, 7 + o, hair);             // back of head
-      p.set(11, 7 + o, eye);
-      p.rect(12, 11 + o + step, 13, 15 + o + step, tunic); // swinging arm
-      p.set(12, 16 + o + step, skin);                      // hand
-    } else {
-      if (step === 0) { leg(p, 7, 0); leg(p, 11, 1); }
-      else { leg(p, 7, 1); leg(p, 11, 0); }
-      p.rect(5, 10 + o, 14, 17 + o, tunic);
-      p.rect(5, 18 + o, 14, 18 + o, belt);
-      // arms swing opposite each other
-      const aL = step ? 2 : 0, aR = step ? 0 : 2;
-      p.rect(4, 11 + o + aL, 4, 15 + o + aL, skin);
-      p.rect(15, 11 + o + aR, 15, 15 + o + aR, skin);
-      p.rect(6, 5 + o, 13, 9 + o, skin);            // head
-      if (dir === 'down') {
-        p.rect(5, 2 + o, 14, 4 + o, hair);
-        p.rect(6, 5 + o, 13, 5 + o, hair);          // fringe
-        p.set(8, 7 + o, eye);
-        p.set(11, 7 + o, eye);
-      } else {
-        p.rect(5, 2 + o, 14, 7 + o, hair);          // hair covers the back
-      }
-    }
-    p.outline([20, 18, 28]);
-    return p.done();
-  };
-
-  return {
-    down: [frame('down', 0), frame('down', 1)],
-    up: [frame('up', 0), frame('up', 1)],
-    side: [frame('side', 0), frame('side', 1)],
-  };
 }
 
 // ------------------------------------------------------- world features ----
