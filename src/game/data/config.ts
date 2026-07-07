@@ -24,7 +24,7 @@ export const CFG = {
 
   // RS-style curve: xp to go from level L to L+1 = base * growth^(L-1)
   xp: {
-    base: 40,
+    base: 400,               // ×10 (W4 balance pass) — leveling is a journey, not a sprint
     growth: 1.32,
     maxLevel: 50,
   },
@@ -46,7 +46,7 @@ export const CFG = {
   // (much steeper/higher-ceiling) curve — hundreds of hours to reach maxLevel,
   // RuneScape-style. Tune live via window.NW.CFG to taste.
   soulgear: {
-    xpBase: 90,
+    xpBase: 900,             // ×10 (W4 balance pass), same treatment as the skill curve
     xpGrowth: 1.085,
     maxLevel: 100,
     weaponXpPerSwing: 3,  // per swing that lands at least one hit
@@ -119,16 +119,27 @@ export const CFG = {
 
   horde: {
     firstNight: 1,           // nights before this one are quiet
-    baseCount: 6,            // enemies on the first hostile night
-    perNight: 3.5,           // + per night survived
+    baseCount: 9,            // enemies on the first hostile night (W4: 6→9)
+    perNight: 5,             // + per night survived (W4: 3.5→5)
     perTerritory: 0.22,      // + per point of territory score (greed = risk)
     maxAlive: 90,            // hard cap for perf & sanity
     spawnRadiusTiles: 14,    // distance from hall (or player) they emerge at
-    spawnIntervalSec: 1.5,   // trickle rate (faster = scarier)
-    hpGrowth: 1.14,          // per-night multiplier on enemy hp
-    dmgGrowth: 1.09,         // per-night multiplier on enemy damage
+    spawnIntervalSec: 1.1,   // trickle rate (W4: 1.5→1.1 — faster = scarier)
+    hpGrowth: 1.18,          // per-night multiplier on enemy hp (W4: 1.14→1.18)
+    dmgGrowth: 1.12,         // per-night multiplier on enemy damage (W4: 1.09→1.12)
     aggroRangePx: 170,       // enemies switch to the player inside this
     dawnFlee: true,          // survivors melt away at sunrise
+  },
+
+  // daytime prey: sparse roamers that pop up around the PLAYER (never the hall)
+  // — loot on legs to hunt between nights, not a siege. Only EnemyDef rows
+  // flagged `daytime` spawn here, at their base (night-1) stats.
+  dayspawn: {
+    maxAlive: 5,             // day mobs alive at once
+    spawnIntervalSec: 9,     // trickle rate while under the cap
+    minRadiusTiles: 8,       // spawn ring around the player
+    maxRadiusTiles: 16,
+    despawnTiles: 28,        // left this far behind, they melt back into the dream
   },
 
   ui: {
