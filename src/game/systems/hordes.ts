@@ -37,6 +37,7 @@ export class HordeSystem {
     );
     this.spawnT = 0;
     this.ctx.toast(`Night ${nightIndex} — something stirs in the ungoverned dark…`, 'bad');
+    this.ctx.log?.push('combat', `Night ${nightIndex} falls — ${this.toSpawn} incoming`, this.ctx.state.clock);
   }
 
   onDawn() {
@@ -48,6 +49,7 @@ export class HordeSystem {
     }
     this.toSpawn = 0;
     toast(`Dawn breaks. Nights survived: ${state.nightsSurvived}`, 'good');
+    this.ctx.log?.push('combat', `Dawn breaks — nights survived: ${state.nightsSurvived}`, state.clock);
   }
 
   update(dt: number) {
@@ -168,7 +170,9 @@ export class HordeSystem {
     state.buildings = state.buildings.filter((x: Building) => x.uid !== b.uid);
     world.reindexBuildings();
     views.removeBuilding(b.uid);
+    if (b.type === 'wall') views.refreshWallsAround(b.tx, b.ty);
     toast(`${def.name} destroyed!`, 'bad');
+    this.ctx.log?.push('build', `${def.name} destroyed at (${b.tx},${b.ty})`, state.clock);
     if (b.type === 'hall') this.ctx.onHallDestroyed();
   }
 
@@ -190,7 +194,8 @@ export class HordeSystem {
     }
     if (awardXp) {
       const lvl = addXp(state, 'combat', f.def.xp);
-      if (lvl) toast(`Combat reached level ${lvl}!`, 'good');
+      if (lvl) { toast(`Combat reached level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Combat reached level ${lvl}`, state.clock); }
     }
+    this.ctx.log?.push('combat', `Slew a ${f.def.name}`, state.clock);
   }
 }

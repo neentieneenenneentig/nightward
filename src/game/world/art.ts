@@ -4,7 +4,7 @@ import { hash2 } from '../../engine/rng';
 import { ramp } from '../../engine/procgen/palette';
 import {
   makeTileVariants, makeTreeVariants, makeRockVariants, makeHerbVariants,
-  makeBushVariants, makeStump, makeBuilding, makeBlobFrames,
+  makeBushVariants, makeStump, makeBuilding, makeBlobFrames, makeWall,
 } from '../../engine/procgen/sprites';
 import { BIOMES } from '../data/biomes';
 import { FEATURES } from '../data/features';
@@ -19,8 +19,11 @@ export class WorldArt {
   stump: HTMLCanvasElement;
   buildings = new Map<string, HTMLCanvasElement>();
   enemies = new Map<string, HTMLCanvasElement[]>();
+  private wallSeed: number;
+  private wallVariants = new Map<number, HTMLCanvasElement>();
 
   constructor(seed: number) {
+    this.wallSeed = seed ^ hashId('wall-variant');
     this.tiles = BIOMES.map((b, i) => makeTileVariants(b, seed, i, 4));
 
     for (const f of FEATURES) {
@@ -47,6 +50,13 @@ export class WorldArt {
   feature(id: string, tx: number, ty: number): HTMLCanvasElement {
     const v = this.features.get(id)!;
     return v[(hash2(tx, ty, 0xf3a7) * v.length) | 0];
+  }
+
+  /** Auto-connecting palisade art for a given N/E/S/W neighbor bitmask, cached. */
+  wall(mask: number): HTMLCanvasElement {
+    let t = this.wallVariants.get(mask);
+    if (!t) { t = makeWall(mask, this.wallSeed); this.wallVariants.set(mask, t); }
+    return t;
   }
 }
 
