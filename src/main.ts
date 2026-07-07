@@ -6,7 +6,7 @@ import { createRenderer } from './engine/renderer';
 import { createInput } from './engine/input';
 import { CFG } from './game/data/config';
 import { newState, type GameState } from './game/state';
-import { loadFor, saveNow } from './game/save';
+import { GameLog } from './game/systems/log';
 import { WorldGen, TILE } from './game/world/worldgen';
 import { WorldArt } from './game/world/art';
 import { World } from './game/world/world';
@@ -47,10 +47,10 @@ async function boot() {
   const art = new WorldArt(seed);
   const spawn = gen.findSpawn();
 
-  const state: GameState = loadFor(seed) ?? newState(seed, spawn);
+  const state: GameState = newState(seed, spawn);
   const world = new World(gen, state);
   const chunks = new ChunkMap(world, art, stage.ground);
-  const views = new Views(stage.entities, art);
+  const views = new Views(stage.entities, art, world);
   views.reset(state.buildings);
 
   const player = new Player(seed, state.player.x, state.player.y);
@@ -68,9 +68,11 @@ async function boot() {
   // fog of sight sits above the tint — the unknown stays dark
   const fog = new Fog(stage.app, stage.app.stage);
 
+  const log = new GameLog();
+
   // shared context every system reads/writes
   const ctx: any = {
-    state, world, chunks, views, cam, player, spawnPoint: spawn,
+    state, world, chunks, views, cam, player, spawnPoint: spawn, log,
     isNight: () => phase(state.clock).isNight,
     nightIndex: () => phase(state.clock).dayIndex,
     toast: (m: string, k?: any) => ui.toast(m, k),
@@ -92,11 +94,13 @@ async function boot() {
     interact: () => gather.tryStart(),
     attack: () => combat.attack(),
     enterBuild: (id: string) => (id ? build.enter(id) : build.cancel()),
-    craft: (id: string) => craft(state, id, ctx.toast),
+    craft: (id: string) => craft(state, id, ctx.toast, log),
     useItem: (id: string) => useItem(id),
     equip: (id: string) => equipItem(id),
     toggleMute: () => Sound.toggle(),
     newWorld: () => { location.hash = 's=' + ((Math.random() * 2 ** 31) | 0); location.reload(); },
+    isPlacing: () => !!build.mode,
+    logEntries: () => log.recent(100),
     gatherView: () => {
       if (gather.active) return { label: labelFor(gather.active.def), frac: gather.active.progress / gather.active.need };
       if (gather.target) return { label: labelFor(gather.target.def) + ' (E)', frac: 0 };
@@ -130,7 +134,7 @@ async function boot() {
     if (state.gameOver) return;
     state.gameOver = true;
     hordes.onDawn(); // clear the field
-    saveNow(state);
+    log.push('death', 'The hall has fallen. The racket is finished.', state.clock);
     ui.showGameOver(() => { location.reload(); });
   }
 
@@ -138,8 +142,13 @@ async function boot() {
   const canvas = stage.app.canvas;
   canvas.addEventListener('pointermove', (e) => build.mode && build.hover(e.clientX, e.clientY));
   canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return; // only the primary button places/attacks
     if (build.mode) { build.place(e.clientX, e.clientY); return; }
     if (e.pointerType === 'mouse') combat.attack();
+  });
+  // right-click always backs out of placement instead of opening the browser menu
+  canvas.addEventListener('contextmenu', (e) => {
+    if (build.mode) { e.preventDefault(); build.cancel(); }
   });
 
   setupDebug(ctx, hordes, worldbosses);
@@ -157,14 +166,14 @@ async function boot() {
   // ---- the loop ----
   let acc = STEP;
   let wasNight = phase(state.clock).isNight;
-  let saveT = 0;
   let frames = 0;
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
     sys: { gather, economy, build, hordes, combat, worldbosses }, world, player,
+    get log() { return log.entries; },
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
-    craft: (id: string) => craft(state, id, ctx.toast),
+    craft: (id: string) => craft(state, id, ctx.toast, log),
   };
 
   stage.app.ticker.add((tk) => {
@@ -201,9 +210,6 @@ async function boot() {
     combat.update(dt);
     hordes.update(dt);
     worldbosses.update(dt);
-
-    saveT += dt;
-    if (saveT >= CFG.save.autosaveSec) { saveT = 0; saveNow(state); }
   }
 
   function enterRegion(ptx: number, pty: number, rk: string) {
@@ -211,6 +217,7 @@ async function boot() {
     state.explored[rk] = 1;
     const dom = domainAt(ptx, pty, seed!);
     ui.setDomain(dom.name, dom.danger);
+    log.push('region', `Entered ${dom.name}${dom.danger > 0 ? ` (${dom.lord.title})` : ''}`, state.clock);
     if (CFG.domain.announce) {
       Sound.play('discover');
       ui.toast(
