@@ -11,6 +11,10 @@ import type { WorldBoss } from '../state';
 
 const bossSize = (id: string) => ENEMIES.find((e) => e.id === id)?.art.size ?? 40;
 
+const FACING_ANGLE: Record<string, number> = {
+  right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2,
+};
+
 export class CombatSystem {
   private cd = 0;
   swingT = 0;          // >0 while the swing flash is visible
@@ -36,10 +40,9 @@ export class CombatSystem {
     this.cd = CFG.player.meleeCooldown;
     const { state, player, hordes, views } = this.ctx;
 
-    const fa = player.facing; // already a float radian — no lookup needed
+    const fa = FACING_ANGLE[player.facing];
     this.swingT = 0.13;
     this.swingAngle = fa;
-    player.playAttack(); // the rig's own weapon-arm sweeps through the arc
 
     const dmg = CFG.player.baseDmg + equippedWeaponDmg(state);
     const arc = (CFG.player.meleeArc * Math.PI) / 180;
@@ -59,15 +62,18 @@ export class CombatSystem {
     };
 
     let landed = false;
+    const hitLines: string[] = [];
     for (const f of [...hordes.foes] as Foe[]) {
       const d = inArc(f.x, f.y, CFG.player.meleeRange + f.def.art.size / 2);
       if (d < 0) continue;
       // tiny knockback sells the hit
       const kx = f.x + (f.x - cx) / (d || 1) * 6, ky = f.y + (f.y - cy) / (d || 1) * 6;
       if (this.ctx.world.canStand(kx, ky, 5)) { f.x = kx; f.y = ky; }
+      const hpBefore = f.hp;
       hordes.hurt(f, dmg);
       views.addHitFlash(f.x, f.y);
       landed = true;
+      hitLines.push(`${f.def.name} for ${Math.min(dmg, hpBefore)} (${Math.max(0, f.hp)}/${f.maxHp} hp left)`);
     }
 
     // world bosses share the swing — they're big, so aim generously
@@ -75,14 +81,19 @@ export class CombatSystem {
     if (wb) for (const b of wb.alive() as WorldBoss[]) {
       const size = bossSize(b.defId);
       if (inArc(b.x, b.y, CFG.player.meleeRange + size / 2) < 0) continue;
+      const hpBefore = b.hp;
       wb.hurt(b, dmg);
       views.addHitFlash(b.x, b.y - size / 4);
       landed = true;
+      hitLines.push(`${b.name} for ${Math.min(dmg, hpBefore)} (${Math.max(0, b.hp)}/${b.maxHp} hp left)`);
     }
     if (landed) {
       Sound.play('hit');
+      this.ctx.log?.push('combat', `Hit ${hitLines.join('; ')}`, state.clock);
       const lvl = awardSoulXp(state, 'weapon', CFG.soulgear.weaponXpPerSwing);
       if (lvl) { this.ctx.toast(`Your weapon feels hungrier — soul level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Weapon reached soul level ${lvl}`, state.clock); }
+    } else {
+      this.ctx.log?.push('combat', 'Swung and missed', state.clock);
     }
   }
 
@@ -130,6 +141,7 @@ export class CombatSystem {
     player.flash();
     Sound.play('hurt');
     this.ctx.cam.shake?.(Math.min(11, 3 + taken * 0.25));
+    this.ctx.log?.push('combat', `Took ${taken} dmg (${Math.max(0, Math.ceil(state.player.hp))}/${CFG.player.maxHp} hp left)`, state.clock);
     if (state.player.equip?.armor) {
       const lvl = awardSoulXp(state, 'armor', CFG.soulgear.armorXpPerHit);
       if (lvl) { toast(`Your armor toughens — soul level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Armor reached soul level ${lvl}`, state.clock); }

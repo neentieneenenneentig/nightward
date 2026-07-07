@@ -54,7 +54,7 @@ async function boot() {
   views.reset(state.buildings);
 
   const player = new Player(seed, state.player.x, state.player.y);
-  stage.entities.addChild(player.view.cont);
+  stage.entities.addChild(player.sprite);
   stage.entities.sortableChildren = true;
 
   const cam = new Camera(stage.app, stage.world);
@@ -229,7 +229,7 @@ async function boot() {
 
   function render(alpha: number) {
     const [fx, fy] = player.render(alpha);
-    player.view.cont.zIndex = fy;
+    player.sprite.zIndex = fy;
     cam.follow(fx, fy);
 
     const w = stage.app.screen.width, h = stage.app.screen.height;
