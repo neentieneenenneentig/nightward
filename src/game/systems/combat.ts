@@ -11,10 +11,6 @@ import type { WorldBoss } from '../state';
 
 const bossSize = (id: string) => ENEMIES.find((e) => e.id === id)?.art.size ?? 40;
 
-const FACING_ANGLE: Record<string, number> = {
-  right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2,
-};
-
 export class CombatSystem {
   private cd = 0;
   swingT = 0;          // >0 while the swing flash is visible
@@ -40,9 +36,10 @@ export class CombatSystem {
     this.cd = CFG.player.meleeCooldown;
     const { state, player, hordes, views } = this.ctx;
 
-    const fa = FACING_ANGLE[player.facing];
+    const fa = player.facing; // already a float radian — no lookup needed
     this.swingT = 0.13;
     this.swingAngle = fa;
+    player.playAttack(); // the rig's own weapon-arm sweeps through the arc
 
     const dmg = CFG.player.baseDmg + equippedWeaponDmg(state);
     const arc = (CFG.player.meleeArc * Math.PI) / 180;
