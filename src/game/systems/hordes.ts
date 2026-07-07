@@ -1,6 +1,9 @@
-// The night. Waves scale with nights survived AND territory score (greed =
-// risk). Enemies walk at the hall, chew through whatever blocks them, and
-// switch to the player at close range. All knobs in config.horde.
+// The night — and the day's prey. Night waves scale with nights survived AND
+// territory score (greed = risk); they walk at the hall, chew through whatever
+// blocks them, and switch to the player at close range. By day, sparse roamers
+// (EnemyDef.daytime) pop up around the player to hunt for loot — they wander
+// near where they spawned, never siege the hall, and melt away when left far
+// behind. Knobs in config.horde / config.dayspawn.
 import { CFG } from '../data/config';
 import { ENEMIES, type EnemyDef } from '../data/enemies';
 import { ITEMS } from '../data/items';
@@ -20,12 +23,15 @@ export interface Foe {
   atkT: number;
   telegraphT: number; // >0 while committed to a telegraphed hit landing
   animT: number;
+  dayMob?: boolean;   // day prey: wanders near home, never sieges, despawns when far
+  homeX?: number; homeY?: number; // wander anchor (day mobs only)
 }
 
 export class HordeSystem {
   foes: Foe[] = [];
   private toSpawn = 0;
   private spawnT = 0;
+  private daySpawnT = 0;
 
   constructor(private ctx: any) {}
 
@@ -59,6 +65,17 @@ export class HordeSystem {
       if (this.spawnT <= 0) {
         this.spawnT = CFG.horde.spawnIntervalSec;
         this.spawn();
+      }
+    }
+    // by day, trickle prey up to its own (small) cap
+    if (!this.ctx.isNight() && !this.ctx.state.gameOver) {
+      const dayCount = this.foes.reduce((n, f) => n + (f.dayMob ? 1 : 0), 0);
+      if (dayCount < CFG.dayspawn.maxAlive) {
+        this.daySpawnT -= dt;
+        if (this.daySpawnT <= 0) {
+          this.daySpawnT = CFG.dayspawn.spawnIntervalSec;
+          this.spawnDayMob();
+        }
       }
     }
     for (const f of [...this.foes]) this.updateFoe(f, dt);
@@ -102,6 +119,39 @@ export class HordeSystem {
     this.toSpawn--;
   }
 
+  /** Day prey: spawns around the PLAYER at base (night-1) stats — loot on legs. */
+  private spawnDayMob() {
+    const { state, world, views } = this.ctx;
+    const pool = ENEMIES.filter((e) => e.daytime);
+    if (!pool.length) return;
+    const totalW = pool.reduce((s, e) => s + e.weight, 0);
+    let r = Math.random() * totalW;
+    let def = pool[0];
+    for (const e of pool) { r -= e.weight; if (r <= 0) { def = e; break; } }
+
+    const { minRadiusTiles: mn, maxRadiusTiles: mx } = CFG.dayspawn;
+    let x = 0, y = 0, placed = false;
+    for (let i = 0; i < 10 && !placed; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = (mn + Math.random() * (mx - mn)) * TILE;
+      x = state.player.x + Math.cos(ang) * dist;
+      y = state.player.y + Math.sin(ang) * dist;
+      placed = world.canStand(x, y, 5);
+    }
+    if (!placed) return; // hostile geography; try again next tick
+
+    const foe: Foe = {
+      uid: state.nextUid++, def,
+      x, y, px: x, py: y,
+      hp: def.hp, maxHp: def.hp,
+      dmg: def.dmg,
+      atkT: 0, telegraphT: 0, animT: Math.random(),
+      dayMob: true, homeX: x, homeY: y,
+    };
+    this.foes.push(foe);
+    views.addFoe(foe);
+  }
+
   private updateFoe(f: Foe, dt: number) {
     const { state, world } = this.ctx;
     f.px = f.x; f.py = f.y;
@@ -122,11 +172,23 @@ export class HordeSystem {
       return;
     }
 
+    // day prey left far behind melts back into the dream
+    if (f.dayMob && Math.hypot(p.x - f.x, p.y - f.y) > CFG.dayspawn.despawnTiles * TILE) {
+      this.foes = this.foes.filter((x) => x.uid !== f.uid);
+      this.ctx.views.removeFoe(f.uid);
+      return;
+    }
+
     const h = hall(state);
     const dp = Math.hypot(p.x - f.x, (p.y - 10) - f.y);
-    const targetPlayer = dp < CFG.horde.aggroRangePx || !h;
-    const tx = targetPlayer ? p.x : (h!.tx + 0.5) * TILE;
-    const ty = targetPlayer ? p.y - 10 : (h!.ty + 0.9) * TILE;
+    // day mobs are prey, not siege: aggro the player up close, otherwise wander home
+    const targetPlayer = dp < CFG.horde.aggroRangePx || (!h && !f.dayMob);
+    let tx: number, ty: number;
+    if (targetPlayer) { tx = p.x; ty = p.y - 10; }
+    else if (f.dayMob) {
+      tx = f.homeX! + Math.cos(f.animT * 0.35 + f.uid) * TILE * 2.5;
+      ty = f.homeY! + Math.sin(f.animT * 0.28 + f.uid) * TILE * 2.5;
+    } else { tx = (h!.tx + 0.5) * TILE; ty = (h!.ty + 0.9) * TILE; }
     const dist = Math.hypot(tx - f.x, ty - f.y) || 1;
 
     // in reach of the player → wind up a telegraphed bite (see block above)
@@ -138,8 +200,8 @@ export class HordeSystem {
       }
       return;
     }
-    // in reach of the hall → chew the hall
-    if (!targetPlayer && dist < 42) {
+    // in reach of the hall → chew the hall (day mobs never siege)
+    if (!targetPlayer && !f.dayMob && dist < 42) {
       if (f.atkT <= 0) {
         f.atkT = f.def.atkCooldown;
         this.damageBuilding(h!, f.dmg);
@@ -147,9 +209,9 @@ export class HordeSystem {
       return;
     }
 
-    // march
+    // march (day prey ambles while wandering, runs when it has you)
     const ux = (tx - f.x) / dist, uy = (ty - f.y) / dist;
-    const step = f.def.speed * dt;
+    const step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1);
     let blocked: Building | null = null;
     const nx = f.x + ux * step, ny = f.y + uy * step;
     if (world.canStand(nx, f.y, 5)) f.x = nx;
@@ -157,7 +219,7 @@ export class HordeSystem {
     if (world.canStand(f.x, ny, 5)) f.y = ny;
     else blocked = this.obstacle(f, 0, uy) ?? blocked;
 
-    if (blocked) {
+    if (blocked && !f.dayMob) {
       // something the racket built is in the way — eat it
       if (f.atkT <= 0) {
         f.atkT = f.def.atkCooldown;

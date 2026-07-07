@@ -17,6 +17,7 @@ export interface EnemyDef {
   fromNight: number;
   weight: number;
   boss?: boolean;      // world bosses: never spawn in the ordinary horde
+  daytime?: boolean;   // also roams by day around the player (prey, not siege)
   art: { size: number; body: RGB[]; eye: RGB };
 }
 
@@ -27,7 +28,7 @@ export const ENEMIES: EnemyDef[] = [
     id: 'gnawer', name: 'Gnawer',
     hp: 20, speed: 62, dmg: 5, atkCooldown: 1.0, telegraphSec: 0.3, xp: 14, gold: [1, 3],
     loot: [{ id: 'berry', min: 1, max: 2, chance: 0.2 }],
-    fromNight: 1, weight: 10,
+    fromNight: 1, weight: 10, daytime: true,
     art: { size: 16, body: ramp('#3a2030', '#5c2e42', '#7c3f52'), eye: ramp('#ffd9b0')[0] },
   },
   {
@@ -41,7 +42,7 @@ export const ENEMIES: EnemyDef[] = [
     id: 'wisp', name: 'Hollow Wisp',
     hp: 12, speed: 95, dmg: 3, atkCooldown: 0.7, telegraphSec: 0.28, xp: 22, gold: [2, 5],
     loot: [{ id: 'moonbell', min: 1, max: 1, chance: 0.15 }],
-    fromNight: 5, weight: 4,
+    fromNight: 5, weight: 4, daytime: true,
     art: { size: 13, body: ramp('#2a3560', '#3b82c4', '#7fb8e6'), eye: ramp('#f4f7fc')[0] },
   },
 
