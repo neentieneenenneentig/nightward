@@ -14,6 +14,7 @@ import {
 } from '../rules';
 import { phase, phaseRemaining } from '../systems/daynight';
 import type { GameState } from '../state';
+import type { LogEntry } from '../systems/log';
 import { injectStyles } from './styles';
 import { Toasts } from './toast';
 
@@ -26,10 +27,12 @@ export interface UIHooks {
   equip(id: string): void;
   toggleMute(): boolean;
   newWorld(): void;
+  isPlacing(): boolean;
   gatherView(): { label: string; frac: number } | null;
+  logEntries(): LogEntry[];
 }
 
-type Panel = 'bag' | 'craft' | 'build' | 'skills' | null;
+type Panel = 'bag' | 'craft' | 'build' | 'skills' | 'log' | null;
 
 const icon = (id: string) => iconUrl(id, ITEMS[id].icon as any);
 
@@ -151,28 +154,38 @@ export class UI {
     const bag = btn('nw-bag', '&#127890; Bag', 'I');
     const craft = btn('nw-craft', '&#9881; Craft', 'C');
     const skills = btn('nw-skills', '&#9733; Skills', 'K');
+    const log = btn('nw-log', '&#128220; Log', 'L');
     this.root.appendChild(bar);
 
     this.interactBtn.addEventListener('click', () => this.hooks.interact());
     attack.addEventListener('click', () => this.hooks.attack());
-    build.addEventListener('click', () => this.open('build'));
+    build.addEventListener('click', () => this.toggleBuild());
     bag.addEventListener('click', () => this.open('bag'));
     craft.addEventListener('click', () => this.open('craft'));
     skills.addEventListener('click', () => this.open('skills'));
+    log.addEventListener('click', () => this.open('log'));
+  }
+
+  /** Build button/key: while actively placing, this cancels placement instead of opening the list. */
+  private toggleBuild() {
+    if (this.hooks.isPlacing()) { this.hooks.enterBuild(''); this.hidePanel(); return; }
+    this.toggle('build');
   }
 
   // ----------------------------------------------------------------- keys ----
 
   private onKey(e: KeyboardEvent) {
+    if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
     const k = e.key.toLowerCase();
     if (k === 'escape') { this.close(); return; }
     if (e.repeat) return;
     if (k === 'e') this.hooks.interact();
     else if (k === ' ') this.hooks.attack();
-    else if (k === 'b') this.toggle('build');
+    else if (k === 'b') this.toggleBuild();
     else if (k === 'i') this.toggle('bag');
     else if (k === 'c') this.toggle('craft');
     else if (k === 'k') this.toggle('skills');
+    else if (k === 'l') this.toggle('log');
   }
 
   // --------------------------------------------------------------- panels ----
@@ -196,7 +209,7 @@ export class UI {
     this.panelHost.appendChild(scrim);
 
     const head = el('div', 'nw-phead');
-    const titles: Record<string, string> = { bag: 'BAG', craft: 'CRAFTING', build: 'BUILD', skills: 'SKILLS' };
+    const titles: Record<string, string> = { bag: 'BAG', craft: 'CRAFTING', build: 'BUILD', skills: 'SKILLS', log: 'LOG' };
     head.innerHTML = `<h2>${titles[this.panel]}</h2>`;
     if (this.panel === 'craft') head.appendChild(this.craftTabs());
     const x = el('div', 'nw-x'); x.innerHTML = '&times;';
@@ -228,6 +241,21 @@ export class UI {
     else if (this.panel === 'craft') this.fillCraft(body);
     else if (this.panel === 'build') this.fillBuild(body);
     else if (this.panel === 'skills') this.fillSkills(body);
+    else if (this.panel === 'log') this.fillLog(body);
+  }
+
+  private fillLog(body: HTMLElement) {
+    const entries = this.hooks.logEntries();
+    if (!entries.length) {
+      const empty = el('div', 'nw-empty'); empty.textContent = 'Nothing has happened yet. Go do something.';
+      body.appendChild(empty); return;
+    }
+    for (const e of entries) {
+      const row = el('div', 'nw-logrow nw-log-' + e.kind);
+      const t = Math.floor(e.t);
+      row.innerHTML = `<span class="nw-logt">${String((t / 60) | 0).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}</span><span class="nw-logk">${e.kind}</span><span class="nw-logm">${e.msg}</span>`;
+      body.appendChild(row);
+    }
   }
 
   private fillBag(body: HTMLElement) {
