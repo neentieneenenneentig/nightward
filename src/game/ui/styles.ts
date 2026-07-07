@@ -164,6 +164,10 @@ const CSS = `
 .nw-slot .meta b { font-size: 10px; letter-spacing: 1px; color: var(--ink-dim); text-transform: uppercase; }
 .nw-slot .meta .stat { font-size: 11px; color: var(--good); }
 .nw-slot .meta .off { font-size: 12px; color: #5a6b82; }
+.nw-soullv { font-size: 10px; color: #c9a0dc; letter-spacing: .5px; }
+.nw-soulbar { width: 100%; height: 4px; border-radius: 3px; background: #0d1a2c;
+  border: 1px solid #ffffff14; overflow: hidden; margin: 1px 0; }
+.nw-soulfill { height: 100%; background: linear-gradient(90deg, #6b4a7a, #c9a0dc); }
 .nw-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   font-size: 12px; color: var(--ink-dim); padding: 4px 2px 12px; }
 .nw-tools .hd { color: #5a6b82; letter-spacing: 1px; text-transform: uppercase; font-size: 10px; }

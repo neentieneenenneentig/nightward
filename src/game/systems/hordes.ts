@@ -4,7 +4,7 @@
 import { CFG } from '../data/config';
 import { ENEMIES, type EnemyDef } from '../data/enemies';
 import { ITEMS } from '../data/items';
-import { addXp, autoEquip, hall, invAdd, rollLoot, territoryScore } from '../rules';
+import { acquireGear, addXp, hall, invAdd, rollLoot, territoryScore } from '../rules';
 import type { Building } from '../state';
 import { TILE } from '../world/worldgen';
 import { BUILDINGS } from '../data/buildings';
@@ -189,7 +189,7 @@ export class HordeSystem {
     state.player.gold += gMin + Math.floor(Math.random() * (gMax - gMin + 1));
     for (const d of rollLoot(f.def.loot)) {
       invAdd(state, d.id, d.n);
-      autoEquip(state, d.id);
+      acquireGear(state, d.id);
       toast(`+${d.n} ${ITEMS[d.id].name}`);
     }
     if (awardXp) {

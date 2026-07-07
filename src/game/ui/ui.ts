@@ -10,8 +10,9 @@ import { iconUrl } from '../../engine/procgen/icons';
 import {
   invCount, invHasAll, skillLevel, xpProgress, slotOf,
   equippedWeaponDmg, armorDef, bestTool,
-  population, territoryScore,
+  population, territoryScore, soulXpProgress,
 } from '../rules';
+import type { SoulSlot } from '../data/soulgear';
 import { phase, phaseRemaining } from '../systems/daynight';
 import type { GameState } from '../state';
 import type { LogEntry } from '../systems/log';
@@ -268,11 +269,12 @@ export class UI {
     body.appendChild(eq);
 
     const axe = bestTool(this.state, 'axe'), pick = bestTool(this.state, 'pick');
+    const toolLv = (slot: SoulSlot) => this.state.player.soulItems?.[slot] ? ` (soul lv ${this.state.player.soulItems![slot]!.level})` : '';
     const tools = el('div', 'nw-tools');
     tools.innerHTML =
       `<span class="hd">Tools (auto)</span>` +
-      `<span>&#129683; ${axe ? ITEMS[axe.id].name : '—'}</span>` +
-      `<span>&#9935; ${pick ? ITEMS[pick.id].name : '—'}</span>`;
+      `<span>&#129683; ${axe ? ITEMS[axe.id].name + toolLv('tool_axe') : '—'}</span>` +
+      `<span>&#9935; ${pick ? ITEMS[pick.id].name + toolLv('tool_pick') : '—'}</span>`;
     body.appendChild(tools);
 
     // --- the bag itself ---
@@ -303,15 +305,16 @@ export class UI {
     body.appendChild(grid);
   }
 
-  /** One equipment slot: shows the worn item (click to unequip) or an empty placeholder. */
+  /** One equipment slot: shows the worn item + its soul level (click to unequip), or an empty placeholder. */
   private slotCell(slot: 'weapon' | 'armor', label: string, glyph: string): HTMLElement {
     const id = this.state.player.equip?.[slot];
     const cell = el('div', 'nw-slot' + (id ? ' filled' : ''));
     if (id) {
       const def = ITEMS[id];
-      const stat = slot === 'weapon' ? `+${def.weaponDmg} dmg` : `+${def.armor} armor`;
+      const soulStatVal = slot === 'weapon' ? equippedWeaponDmg(this.state) : armorDef(this.state);
+      const stat = slot === 'weapon' ? `+${soulStatVal.toFixed(1)} dmg` : `+${soulStatVal.toFixed(1)} armor`;
       cell.innerHTML =
-        `<img src="${icon(id)}" alt=""><div class="meta"><b>${label}</b><span>${def.name}</span><span class="stat">${stat}</span></div>`;
+        `<img src="${icon(id)}" alt=""><div class="meta"><b>${label}</b><span>${def.name}</span>${this.soulBarHtml(slot)}<span class="stat">${stat}</span></div>`;
       cell.style.cursor = 'pointer';
       cell.title = 'Click to unequip';
       cell.addEventListener('click', () => this.hooks.equip(id));
@@ -319,6 +322,15 @@ export class UI {
       cell.innerHTML = `<div class="ph">${glyph}</div><div class="meta"><b>${label}</b><span class="off">empty</span></div>`;
     }
     return cell;
+  }
+
+  /** Soul-tool level chip + xp bar, shared by weapon/armor/tool displays. */
+  private soulBarHtml(slot: SoulSlot): string {
+    const s = this.state.player.soulItems?.[slot];
+    if (!s) return '';
+    const [have, need] = soulXpProgress(s.xp);
+    return `<span class="nw-soullv">soul lv ${s.level}</span>
+      <div class="nw-soulbar"><div class="nw-soulfill" style="width:${(100 * have / need).toFixed(0)}%"></div></div>`;
   }
 
   private fillCraft(body: HTMLElement) {

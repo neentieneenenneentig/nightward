@@ -6,7 +6,7 @@
 import { CFG } from '../data/config';
 import { ENEMIES, type EnemyDef } from '../data/enemies';
 import { ITEMS } from '../data/items';
-import { addXp, autoEquip, hall, invAdd, rollLoot, territoryScore } from '../rules';
+import { acquireGear, addXp, hall, invAdd, rollLoot, territoryScore } from '../rules';
 import type { WorldBoss } from '../state';
 import { TILE } from '../world/worldgen';
 import { REGION, domainAtRegion, regionCenterPx } from '../world/domains';
@@ -174,7 +174,7 @@ export class WorldBossSystem {
     const [gmin, gmax] = CFG.worldBoss.goldOnKill;
     state.player.gold += gmin + Math.floor(Math.random() * (gmax - gmin + 1)) + b.level * 20;
     for (const d of rollLoot(def.loot)) {
-      invAdd(state, d.id, d.n); autoEquip(state, d.id);
+      invAdd(state, d.id, d.n); acquireGear(state, d.id);
       this.ctx.toast(`+${d.n} ${ITEMS[d.id].name}`, 'good');
     }
     if (fromPlayer) {

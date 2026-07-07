@@ -4,7 +4,8 @@ import { CFG } from '../data/config';
 import { ITEMS } from '../data/items';
 import { SKILLS } from '../data/skills';
 import type { FeatureDef } from '../data/features';
-import { addXp, autoEquip, bestTool, invAdd, rollLoot, skillLevel } from '../rules';
+import { acquireGear, addXp, awardSoulXp, bestTool, invAdd, rollLoot, skillLevel, soulStat } from '../rules';
+import type { SoulSlot } from '../data/soulgear';
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
 
@@ -22,6 +23,8 @@ export const VERB: Record<string, string> = {
 };
 
 export interface GatherTarget { tx: number; ty: number; def: FeatureDef }
+
+const toolSlotFor = (cls: 'axe' | 'pick'): SoulSlot => (cls === 'axe' ? 'tool_axe' : 'tool_pick');
 
 export class GatherSystem {
   target: GatherTarget | null = null;
@@ -67,7 +70,9 @@ export class GatherSystem {
         toast(`You need a${t.def.toolClass === 'axe' ? 'n axe' : ' pick'} for that`, 'bad');
         return;
       }
-      speed = 1 + CFG.gather.toolSpeedBonus * (tool?.power ?? 0);
+      // soul-leveled power if the slot's bound yet, else the tool's raw stat
+      const power = tool ? soulStat(state, toolSlotFor(t.def.toolClass)) || tool.power : 0;
+      speed = 1 + CFG.gather.toolSpeedBonus * power;
     }
     this.active = { ...t, progress: 0, need: t.def.gatherSec / speed };
   }
@@ -90,8 +95,17 @@ export class GatherSystem {
   private finish(a: GatherTarget) {
     const { state, world, chunks, toast } = this.ctx;
     const drops = rollLoot(a.def.loot);
-    for (const d of drops) { invAdd(state, d.id, d.n); autoEquip(state, d.id); }
+    for (const d of drops) { invAdd(state, d.id, d.n); acquireGear(state, d.id); }
     const newLevel = addXp(state, a.def.skill, a.def.xp);
+
+    if (a.def.toolClass) {
+      const slot = toolSlotFor(a.def.toolClass);
+      const toolLvl = awardSoulXp(state, slot, CFG.soulgear.toolXpPerUse);
+      if (toolLvl) {
+        toast(`Your ${a.def.toolClass} feels sharper — soul level ${toolLvl}!`, 'good');
+        this.ctx.log?.push('level', `Tool (${a.def.toolClass}) reached soul level ${toolLvl}`, state.clock);
+      }
+    }
 
     world.deplete(a.tx, a.ty, a.def.respawnSec);
     chunks.rebakeTile(a.tx, a.ty);
