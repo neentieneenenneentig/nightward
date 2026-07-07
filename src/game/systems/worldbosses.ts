@@ -64,7 +64,7 @@ export class WorldBossSystem {
       name: `${def.name} of ${dom.name}`,
       x: cx, y: cy, px: cx, py: cy,
       hp: maxHp, maxHp, dmg: this.dmgFor(level), level,
-      atkT: 0, animT: Math.random(), hunting: false, reviveAt: 0, homeGx: gx, homeGy: gy,
+      atkT: 0, animT: Math.random(), hunting: false, provokedUntil: 0, reviveAt: 0, homeGx: gx, homeGy: gy,
     };
     state.worldBosses.push(b);
     this.ctx.views.addBoss(b);
@@ -91,7 +91,7 @@ export class WorldBossSystem {
     b.homeGx = gx; b.homeGy = gy;
     b.x = b.px = cx; b.y = b.py = cy;
     b.maxHp = this.hpFor(b.level); b.hp = b.maxHp; b.dmg = this.dmgFor(b.level);
-    b.reviveAt = 0; b.hunting = false; b.atkT = 0;
+    b.reviveAt = 0; b.hunting = false; b.provokedUntil = 0; b.atkT = 0;
     this.warned.delete(b.uid);
     this.ctx.views.addBoss(b);
     this.ctx.toast(`${b.name} re-forms in the deep dream, stronger.`, 'bad');
@@ -104,21 +104,28 @@ export class WorldBossSystem {
     const p = state.player;
     const hallB = hall(state);
     const terr = territoryScore(state);
-    const roused = terr >= CFG.worldBoss.wakeTerritory || this.ctx.isNight();
+    const territoryRoused = terr >= CFG.worldBoss.wakeTerritory || this.ctx.isNight();
 
     for (const b of state.worldBosses as WorldBoss[]) {
       if (b.reviveAt > 0) { if (state.clock >= b.reviveAt) this.revive(b); continue; }
       b.px = b.x; b.py = b.y; b.animT += dt; b.atkT -= dt;
       const def = defOf(b.defId);
 
+      // roused by territory/night, OR by having just been hit — a fight always gets fought back
+      const roused = territoryRoused || b.provokedUntil > state.clock;
+
       // pick a target: hunt you/your hall when roused, otherwise drift at home
       let tx: number, ty: number;
-      if (hallB && roused) {
+      if (roused) {
         b.hunting = true;
-        const hx = (hallB.tx + 0.5) * TILE, hy = (hallB.ty + 0.9) * TILE;
-        const dHall = Math.hypot(hx - b.x, hy - b.y);
-        const dPly = Math.hypot(p.x - b.x, (p.y - 10) - b.y);
-        if (dPly < dHall * 0.8) { tx = p.x; ty = p.y - 10; } else { tx = hx; ty = hy; }
+        if (hallB) {
+          const hx = (hallB.tx + 0.5) * TILE, hy = (hallB.ty + 0.9) * TILE;
+          const dHall = Math.hypot(hx - b.x, hy - b.y);
+          const dPly = Math.hypot(p.x - b.x, (p.y - 10) - b.y);
+          if (dPly < dHall * 0.8) { tx = p.x; ty = p.y - 10; } else { tx = hx; ty = hy; }
+        } else {
+          tx = p.x; ty = p.y - 10; // no hall yet — you're the only thing worth converging on
+        }
       } else {
         b.hunting = false;
         const [cx, cy] = regionCenterPx(b.homeGx, b.homeGy);
@@ -161,10 +168,23 @@ export class WorldBossSystem {
   // ---- taking damage from the player / towers -----------------------------
   hurt(b: WorldBoss, dmg: number, fromPlayer = true) {
     if (b.reviveAt > 0) return;
-    b.hp -= dmg;
-    if (b.hp > 0) return;
-
     const { state } = this.ctx;
+    const wasHunting = b.hunting;
+    b.hp -= dmg;
+    if (b.hp > 0) {
+      // being struck wakes it up right now, whatever territory/night says —
+      // it no longer just floats there taking hits obliviously
+      if (fromPlayer) {
+        b.provokedUntil = state.clock + CFG.worldBoss.provokedSec;
+        b.hunting = true;
+        if (!wasHunting) {
+          this.ctx.toast(`${b.name} turns on you!`, 'bad');
+          this.ctx.log?.push('boss', `${b.name} turns to fight back`, state.clock);
+        }
+      }
+      return;
+    }
+
     this.ctx.views.removeBoss(b.uid);
     b.reviveAt = state.clock + CFG.worldBoss.reviveSec;
     b.hunting = false;

@@ -1,5 +1,12 @@
 # W1 — 360° parametric rig animator (player pass)
 
+> **REVERTED (2026-07-07).** Shipped as `v0.6-w1-player`, then rolled back after playtest: the look
+> was disliked, and movement is keyboard-driven (a few discrete directions), so continuous 360°
+> rotation had no payoff. Player is back on the original baked 4-direction frames
+> (`engine/procgen/sprites.ts` `makePlayerFrames`). The rig files described below were deleted. Kept
+> here as a record of the approach in case rig-based animation is revisited later — don't rebuild it
+> from this doc without checking with the user first.
+
 Branch: `feat/w1-rig`. Scope for this pass: **the player only** (per ROADMAP's own
 suggestion to split W1 into player-first, then foes/bosses as a follow-up). Read
 `ROADMAP.md` for the architectural decision this implements.

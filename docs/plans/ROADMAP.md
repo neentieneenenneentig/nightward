@@ -17,11 +17,15 @@ when it becomes the active task.
   step drops the old "bump save.ts + migrate" requirement entirely.
 
 ## Architectural decisions
-- **360° animation = parametric skeletal rigs (pseudo-3D in 2D).** Creatures are ordered *parts*
-  (body/head/limbs/held-tool) with pivot + z-order; animation is a pure function
-  `pose(action, t, facing) → per-part transforms`. Facing is a float (radians) → any angle free;
-  depth faked by part reorder + y-squash; held tool orbits the hand. One animator for all creatures.
-  Replaces static baked frames (`makePlayerFrames`/`makeBlobFrames`).
+- **360° animation — SHIPPED THEN REVERTED (2026-07-07).** Built a parametric rig (ordered parts,
+  whole-body rotation toward a float `facing`, local per-part animation) and migrated the player to
+  it in W1 (`v0.6-w1-player`). Playtest verdict: disliked the look, and correctly pointed out movement
+  is keyboard-driven (a handful of discrete directions), so true continuous 360° rotation doesn't pay
+  for itself. Reverted back to the original baked 4-direction frames (`makePlayerFrames`, `Facing =
+  'down'|'up'|'left'|'right'`) — see the revert fix commit right after `v0.7-w2-soulgear`. The rig
+  files (`engine/procgen/{parts,rig}.ts`, `world/rigview.ts`) were deleted; `docs/plans/W1-rig.md` is
+  kept as a record of the approach and why it didn't stick. **Any future animation work should assume
+  4-direction baked frames as the baseline**, not rebuild the rig, unless the user asks for it again.
 - **Weighty combat = attack state machine** `windup → active(hit-window) → recovery`; damage only in
   the active window; `attackSpeed` scales the envelope. Phases are rig poses. Spin/channel AoE-with-
   falloff falls out once facing is a float. Numbers in `config.ts`.
@@ -46,14 +50,18 @@ when it becomes the active task.
   explicitly out of scope for this batch — noted here as a later idea, not a milestone.
 
 ## Milestones (one worktree each, in order)
-- **W0 — Foundations & fixes** *(next)*: build-menu input-trap fix, auto-connecting/rotatable walls,
+- **W0 — Foundations & fixes** ✅ shipped `v0.5-w0`: build-menu input-trap fix, auto-connecting walls,
   event log, data-driven SFX table. Brief: `docs/plans/W0-foundations.md`.
-- **W1 — 360° rig animator** *(marquee)*: `engine/procgen/parts.ts` + `engine/procgen/rig.ts` +
-  `world/rigview.ts`; migrate player, then foes/bosses. Any-angle facing, slow-mo via `timeScale`.
-- **W2 — Soul Gear**: `data/soulgear.ts` templates + `SoulItem` instances in `state.player.soulItems`,
-  `systems/soulgear.ts` (xp by use + feeding + upgrades), inventory-model + save migration, UI gear detail.
-- **W3 — Weighty combat + channeling** *(needs W1)*: attack state machine in `systems/combat.ts`,
-  `attackSpeed` from equipped weapon soul-level, spin/channel AoE with falloff, enemy telegraphs.
+- **W1 — 360° rig animator** ✅ shipped `v0.6-w1-player`, then **reverted** (2026-07-07) — disliked the
+  look, and keyboard-only movement doesn't need continuous rotation. Back to 4-direction baked frames.
+  Brief (historical): `docs/plans/W1-rig.md`.
+- **W2 — Soul Gear** ✅ shipped `v0.7-w2-soulgear` (weapon/armor/tools pass; simplified from uid'd
+  instances to per-slot soul-bound leveling — see `docs/plans/W2-soulgear.md`). Rings/amulets/charms
+  and the inventory-size "Soul Satchel" deferred (need new content, not just systems work).
+- **W3 — Weighty combat + channeling** *(re-scope needed — no longer "needs W1")*: attack state machine
+  in `systems/combat.ts`, `attackSpeed` from equipped weapon soul-level, spin/channel AoE with falloff,
+  enemy telegraphs. Phases should drive the *existing* 4-direction frame swap (a windup/recovery tint or
+  brief scale-pulse, say) rather than rig poses, since the rig is gone.
 - **W4 — Multi-res art + multi-tile resources**: `SUBPIX` detail factor in `engine/procgen/sprites.ts`;
   `FeatureDef.footprint?:{w,h}` multi-tile nodes across worldgen/world/chunkmap/gather.
 - **W5 — Zoom + LOD + dream-regen**: wheel/pinch zoom, LOD chunk baking, dream-phase regen with owned-

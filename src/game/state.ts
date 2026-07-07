@@ -26,6 +26,7 @@ export interface WorldBoss {
   atkT: number;
   animT: number;
   hunting: boolean;
+  provokedUntil: number; // clock time until which a landed hit forces hunting=true
   reviveAt: number;   // 0 = alive; else clock time it rises again
   homeGx: number; homeGy: number;
 }

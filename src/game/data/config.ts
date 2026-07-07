@@ -7,7 +7,6 @@
 export const CFG = {
   player: {
     speed: 160,              // world px/s (32 px = 1 tile)
-    turnSpeed: Math.PI * 3.2, // rad/s the rig turns toward its target facing — lower = more visible slow-turn
     maxHp: 100,
     regenPerSec: 1.5,        // hp/s during the DAY only
     meleeRange: 40,          // px
@@ -76,6 +75,7 @@ export const CFG = {
     huntSpeed: 30,           // px/s once they've caught your scent
     wakeTerritory: 8,        // territory score that rouses them toward you
     convergePerTerritory: 0.6, // + hunt speed per territory point (greed pulls them in)
+    provokedSec: 25,         // landing a hit forces hunting=true for at least this long
     warnTiles: 22,           // proximity that triggers the danger warning
     attackReachPx: 30,       // how close before it can strike you / the hall
     hpBase: 700, hpPerLevel: 1.5, hpPerTerritory: 12,
