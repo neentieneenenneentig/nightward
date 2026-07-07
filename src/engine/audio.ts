@@ -30,6 +30,92 @@ const MOODS: Record<Mood, MoodDef> = {
   dead:  { root: 98.0,  scale: [0, 3, 7],           beat: 1.10, wave: 'sine',     droneHz: 44,  droneGain: 0.07, noteGain: 0.10, drums: false },
 };
 
+// ---- data-driven SFX: a recipe is a list of steps over the synth primitives
+// below (tone/burst/blip/kick/roar). Adding a sound = adding a table row.
+type SfxPrimitive = 'tone' | 'burst' | 'blip' | 'kick' | 'roar';
+
+interface SfxStep {
+  type: SfxPrimitive;
+  at?: number;                 // seconds after the sound starts (default 0)
+  hz?: number;
+  dur?: number;
+  wave?: OscillatorType;
+  gain?: number;
+  q?: number;                  // burst: filter Q
+  filter?: BiquadFilterType;   // burst: filter type (default 'bandpass')
+  sweepTo?: number;            // burst: ramp the filter's frequency to this by the end
+  bend?: number;               // blip: exponential frequency bend multiplier (default 1)
+}
+
+const arp = (root: number, degrees: number[], step: number, dur: number, wave: OscillatorType, gain: number, kind: 'tone' | 'blip' = 'blip'): SfxStep[] =>
+  degrees.map((d, i) => ({ type: kind, at: i * step, hz: semi(root, d), dur, wave, gain }));
+
+const SFX: Record<string, SfxStep[]> = {
+  chop: [
+    { type: 'burst', dur: 0.12, hz: 380, q: 4, gain: 0.5, filter: 'lowpass' },
+    { type: 'blip', hz: 150, dur: 0.1, wave: 'triangle', gain: 0.25, bend: 0.6 },
+    { type: 'blip', at: 0.05, hz: 110, dur: 0.08, wave: 'triangle', gain: 0.15, bend: 0.7 },
+  ],
+  chop2: [
+    { type: 'burst', dur: 0.1, hz: 340, q: 4, gain: 0.45, filter: 'lowpass' },
+    { type: 'blip', hz: 170, dur: 0.09, wave: 'triangle', gain: 0.22, bend: 0.65 },
+    { type: 'blip', at: 0.06, hz: 120, dur: 0.07, wave: 'triangle', gain: 0.14, bend: 0.75 },
+  ],
+  mine: [
+    { type: 'blip', hz: 760, dur: 0.06, wave: 'square', gain: 0.2, bend: 0.8 },
+    { type: 'blip', at: 0.06, hz: 560, dur: 0.07, wave: 'square', gain: 0.18, bend: 0.7 },
+    { type: 'burst', dur: 0.05, hz: 2600, q: 3, gain: 0.15 },
+  ],
+  mine2: [
+    { type: 'blip', hz: 820, dur: 0.05, wave: 'square', gain: 0.18, bend: 0.8 },
+    { type: 'blip', at: 0.05, hz: 600, dur: 0.06, wave: 'square', gain: 0.16, bend: 0.7 },
+    { type: 'burst', dur: 0.05, hz: 2400, q: 3, gain: 0.14 },
+  ],
+  forage: [
+    { type: 'blip', hz: 520, dur: 0.12, wave: 'sine', gain: 0.22, bend: 1.5 },
+    { type: 'blip', at: 0.05, hz: 700, dur: 0.07, wave: 'sine', gain: 0.12, bend: 1.3 },
+  ],
+  forage2: [
+    { type: 'blip', hz: 470, dur: 0.1, wave: 'sine', gain: 0.2, bend: 1.6 },
+    { type: 'blip', at: 0.04, hz: 640, dur: 0.06, wave: 'sine', gain: 0.11, bend: 1.4 },
+  ],
+  craft: [
+    { type: 'blip', hz: 440, dur: 0.09, wave: 'triangle', gain: 0.22 },
+    { type: 'blip', at: 0.09, hz: 660, dur: 0.12, wave: 'triangle', gain: 0.22 },
+  ],
+  build: [
+    { type: 'blip', hz: 120, dur: 0.16, wave: 'sine', gain: 0.35, bend: 0.7 },
+    { type: 'burst', dur: 0.14, hz: 500, q: 2, gain: 0.3, filter: 'lowpass' },
+  ],
+  swing: [
+    { type: 'burst', dur: 0.14, hz: 1200, q: 0.8, gain: 0.28, filter: 'bandpass', sweepTo: 300 },
+  ],
+  hit: [
+    { type: 'burst', dur: 0.09, hz: 2000, q: 2, gain: 0.35 },
+    { type: 'blip', hz: 200, dur: 0.06, wave: 'square', gain: 0.15, bend: 0.5 },
+  ],
+  enemyDie: [
+    { type: 'blip', hz: 300, dur: 0.18, wave: 'sawtooth', gain: 0.25, bend: 0.4 },
+    { type: 'burst', dur: 0.12, hz: 1400, q: 1, gain: 0.2, filter: 'lowpass' },
+  ],
+  hurt: [
+    { type: 'blip', hz: 300, dur: 0.22, wave: 'sawtooth', gain: 0.35, bend: 0.35 },
+  ],
+  gold: [
+    { type: 'blip', hz: 1180, dur: 0.05, wave: 'square', gain: 0.2, bend: 1.2 },
+    { type: 'blip', at: 0.05, hz: 1560, dur: 0.09, wave: 'square', gain: 0.18, bend: 1.2 },
+  ],
+  levelup: arp(523, [0, 4, 7, 12], 0.08, 0.16, 'triangle', 0.22),
+  nightfall: [
+    { type: 'blip', hz: 130, dur: 0.9, wave: 'sine', gain: 0.28, bend: 0.7 },
+    { type: 'burst', dur: 0.9, hz: 300, q: 0.6, gain: 0.14, filter: 'lowpass' },
+  ],
+  dawn: arp(330, [0, 5, 9], 0.12, 0.6, 'triangle', 0.14, 'tone'),
+  bossRoar: [{ type: 'roar' }],
+  discover: arp(392, [0, 7, 12], 0.1, 0.3, 'sine', 0.18),
+};
+SFX.place = SFX.build; // alias — placing is just a build confirmation chime
+
 class AudioEngine {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
@@ -160,28 +246,27 @@ class AudioEngine {
     o.connect(g); g.connect(this.sfx); o.start(t); o.stop(t + dur + 0.02);
   }
 
-  // ---- one-shot sound effects -------------------------------------------
+  // ---- one-shot sound effects: look up the recipe, render each step ------
   play(name: string) {
     const ctx = this.ctx; if (!ctx || !this.enabled) return;
+    const steps = SFX[name];
+    if (!steps) return;
     const t = ctx.currentTime + 0.001;
-    switch (name) {
-      case 'chop':   this.burst(t, 0.12, 380, 4, 0.5, 'lowpass'); this.blip(t, 150, 0.1, 'triangle', 0.25, 0.6); break;
-      case 'mine':   this.blip(t, 760, 0.06, 'square', 0.2, 0.8); this.blip(t + 0.06, 560, 0.07, 'square', 0.18, 0.7); this.burst(t, 0.05, 2600, 3, 0.15); break;
-      case 'forage': this.blip(t, 520, 0.12, 'sine', 0.22, 1.5); break;
-      case 'craft':  this.blip(t, 440, 0.09, 'triangle', 0.22); this.blip(t + 0.09, 660, 0.12, 'triangle', 0.22); break;
-      case 'build':  this.blip(t, 120, 0.16, 'sine', 0.35, 0.7); this.burst(t, 0.14, 500, 2, 0.3, 'lowpass'); break;
-      case 'swing':  this.burst(t, 0.14, 1200, 0.8, 0.28, 'bandpass').frequency.exponentialRampToValueAtTime(300, t + 0.14); break;
-      case 'hit':    this.burst(t, 0.09, 2000, 2, 0.35); this.blip(t, 200, 0.06, 'square', 0.15, 0.5); break;
-      case 'enemyDie': this.blip(t, 300, 0.18, 'sawtooth', 0.25, 0.4); this.burst(t, 0.12, 1400, 1, 0.2, 'lowpass'); break;
-      case 'hurt':   this.blip(t, 300, 0.22, 'sawtooth', 0.35, 0.35); break;
-      case 'gold':   this.blip(t, 1180, 0.05, 'square', 0.2, 1.2); this.blip(t + 0.05, 1560, 0.09, 'square', 0.18, 1.2); break;
-      case 'levelup': [0, 4, 7, 12].forEach((s, i) => this.blip(t + i * 0.08, semi(523, s), 0.16, 'triangle', 0.22)); break;
-      case 'place':  this.play('build'); break;
-      case 'nightfall': this.blip(t, 130, 0.9, 'sine', 0.28, 0.7); this.burst(t, 0.9, 300, 0.6, 0.14, 'lowpass'); break;
-      case 'dawn':   [0, 5, 9].forEach((s, i) => this.tone(t + i * 0.12, semi(330, s), 0.6, 'triangle', 0.14)); break;
-      case 'bossRoar': this.roar(t); break;
-      case 'discover': [0, 7, 12].forEach((s, i) => this.blip(t + i * 0.1, semi(392, s), 0.3, 'sine', 0.18)); break;
-      default: break;
+    for (const s of steps) this.renderStep(t, s);
+  }
+
+  private renderStep(t: number, s: SfxStep) {
+    const at = t + (s.at ?? 0);
+    switch (s.type) {
+      case 'tone': this.tone(at, s.hz!, s.dur!, s.wave ?? 'sine', s.gain!); break;
+      case 'blip': this.blip(at, s.hz!, s.dur!, s.wave ?? 'sine', s.gain!, s.bend ?? 1); break;
+      case 'burst': {
+        const f = this.burst(at, s.dur!, s.hz!, s.q ?? 1, s.gain!, s.filter ?? 'bandpass');
+        if (s.sweepTo != null) f.frequency.exponentialRampToValueAtTime(s.sweepTo, at + s.dur!);
+        break;
+      }
+      case 'kick': this.kick(at); break;
+      case 'roar': this.roar(at); break;
     }
   }
 
