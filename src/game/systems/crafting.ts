@@ -2,7 +2,7 @@
 // toast callback. Station gating (needs a furnace, etc.) hooks in later.
 import { RECIPES } from '../data/recipes';
 import { ITEMS } from '../data/items';
-import { addXp, autoEquip, invAdd, invHasAll, invTakeAll, skillLevel } from '../rules';
+import { acquireGear, addXp, invAdd, invHasAll, invTakeAll, skillLevel } from '../rules';
 import type { GameState } from '../state';
 import { Sound } from '../../engine/audio';
 import type { GameLog } from './log';
@@ -17,7 +17,7 @@ export function craft(state: GameState, recipeId: string, toast: (m: string, k?:
   if (!invHasAll(state, r.in)) { toast('Missing materials', 'bad'); return false; }
   invTakeAll(state, r.in);
   invAdd(state, r.out.id, r.out.n);
-  autoEquip(state, r.out.id); // wear a freshly-forged weapon/armor if the slot is free
+  acquireGear(state, r.out.id); // wear a freshly-forged weapon/armor if the slot is free; keep soul items bound
   const lvl = addXp(state, r.skill, r.xp);
   Sound.play('craft');
   toast(`Crafted ${ITEMS[r.out.id].name}${r.out.n > 1 ? ' ×' + r.out.n : ''} (+${r.xp}xp)`, 'good');

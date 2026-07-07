@@ -1,6 +1,8 @@
 // The single source of truth. Everything that must survive a reload lives in
 // this plain-JSON-able object; systems are functions that mutate it.
 import { CFG } from './data/config';
+import { ITEMS } from './data/items';
+import type { SoulSlot } from './data/soulgear';
 
 export interface Building {
   uid: number;
@@ -40,6 +42,7 @@ export interface GameState {
     inv: Record<string, number>;      // itemId → count
     xp: Record<string, number>;       // skillId → total xp
     equip: Equip;                     // gear worn in each slot
+    soulItems: Partial<Record<SoulSlot, SoulItem>>; // per-slot soul-bound leveling
   };
   /** tileKey "tx,ty" → clock time when the node respawns */
   depleted: Record<string, number>;
@@ -57,17 +60,36 @@ export interface Equip {
   armor?: string;
 }
 
+/** A slot's soul-bound tool: `templateId` is whichever physical item currently
+ * fills the slot (its base stat); `level`/`xp` are the tool's own cultivated
+ * power, which persists across every upgrade — see data/soulgear.ts. */
+export interface SoulItem {
+  slot: SoulSlot;
+  templateId: string;
+  level: number;
+  xp: number;
+}
+
 export const tileKey = (tx: number, ty: number) => tx + ',' + ty;
 
 export function newState(seed: number, spawn: { x: number; y: number }): GameState {
   const inv: Record<string, number> = {};
-  for (const s of CFG.player.startingItems) inv[s.id] = (inv[s.id] ?? 0) + s.n;
+  const soulItems: Partial<Record<SoulSlot, SoulItem>> = {};
+  for (const s of CFG.player.startingItems) {
+    inv[s.id] = (inv[s.id] ?? 0) + s.n;
+    // starting tools are soul-bound from the first swing too, at level 1
+    const cls = ITEMS[s.id]?.toolClass;
+    if (cls) {
+      const slot: SoulSlot = cls === 'axe' ? 'tool_axe' : 'tool_pick';
+      soulItems[slot] = { slot, templateId: s.id, level: 1, xp: 0 };
+    }
+  }
   return {
     v: 1,
     seed,
     clock: 0,
     nextUid: 1,
-    player: { x: spawn.x, y: spawn.y, hp: CFG.player.maxHp, gold: 0, inv, xp: {}, equip: {} },
+    player: { x: spawn.x, y: spawn.y, hp: CFG.player.maxHp, gold: 0, inv, xp: {}, equip: {}, soulItems },
     depleted: {},
     buildings: [],
     worldBosses: [],

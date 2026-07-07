@@ -3,7 +3,7 @@
 import { CFG } from '../data/config';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
-import { armorDef, equippedWeaponDmg, hall } from '../rules';
+import { armorDef, awardSoulXp, equippedWeaponDmg, hall } from '../rules';
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
 import type { Foe } from './hordes';
@@ -79,7 +79,11 @@ export class CombatSystem {
       views.addHitFlash(b.x, b.y - size / 4);
       landed = true;
     }
-    if (landed) Sound.play('hit');
+    if (landed) {
+      Sound.play('hit');
+      const lvl = awardSoulXp(state, 'weapon', CFG.soulgear.weaponXpPerSwing);
+      if (lvl) { this.ctx.toast(`Your weapon feels hungrier — soul level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Weapon reached soul level ${lvl}`, state.clock); }
+    }
   }
 
   private updateTowers(dt: number) {
@@ -126,6 +130,10 @@ export class CombatSystem {
     player.flash();
     Sound.play('hurt');
     this.ctx.cam.shake?.(Math.min(11, 3 + taken * 0.25));
+    if (state.player.equip?.armor) {
+      const lvl = awardSoulXp(state, 'armor', CFG.soulgear.armorXpPerHit);
+      if (lvl) { toast(`Your armor toughens — soul level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Armor reached soul level ${lvl}`, state.clock); }
+    }
     if (state.player.hp > 0) return;
 
     // down — drop gold and the dream flings you far out into the world

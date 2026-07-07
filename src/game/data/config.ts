@@ -32,6 +32,18 @@ export const CFG = {
     maxLevel: 50,
   },
 
+  // Soul Gear: every equip slot is a soul-bound tool that levels on its own
+  // (much steeper/higher-ceiling) curve — hundreds of hours to reach maxLevel,
+  // RuneScape-style. Tune live via window.NW.CFG to taste.
+  soulgear: {
+    xpBase: 90,
+    xpGrowth: 1.085,
+    maxLevel: 100,
+    weaponXpPerSwing: 3,  // per swing that lands at least one hit
+    armorXpPerHit: 2,     // per hit taken while armor is worn
+    toolXpPerUse: 4,      // per successful gather with that tool class
+  },
+
   time: {
     daySec: 240,             // length of daytime
     nightSec: 100,           // length of night
