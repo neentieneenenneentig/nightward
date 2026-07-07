@@ -64,7 +64,7 @@ export class WorldBossSystem {
       name: `${def.name} of ${dom.name}`,
       x: cx, y: cy, px: cx, py: cy,
       hp: maxHp, maxHp, dmg: this.dmgFor(level), level,
-      atkT: 0, animT: Math.random(), hunting: false, provokedUntil: 0, reviveAt: 0, homeGx: gx, homeGy: gy,
+      atkT: 0, telegraphT: 0, animT: Math.random(), hunting: false, provokedUntil: 0, reviveAt: 0, homeGx: gx, homeGy: gy,
     };
     state.worldBosses.push(b);
     this.ctx.views.addBoss(b);
@@ -91,7 +91,7 @@ export class WorldBossSystem {
     b.homeGx = gx; b.homeGy = gy;
     b.x = b.px = cx; b.y = b.py = cy;
     b.maxHp = this.hpFor(b.level); b.hp = b.maxHp; b.dmg = this.dmgFor(b.level);
-    b.reviveAt = 0; b.hunting = false; b.provokedUntil = 0; b.atkT = 0;
+    b.reviveAt = 0; b.hunting = false; b.provokedUntil = 0; b.atkT = 0; b.telegraphT = 0;
     this.warned.delete(b.uid);
     this.ctx.views.addBoss(b);
     this.ctx.toast(`${b.name} re-forms in the deep dream, stronger.`, 'bad');
@@ -110,6 +110,23 @@ export class WorldBossSystem {
       if (b.reviveAt > 0) { if (state.clock >= b.reviveAt) this.revive(b); continue; }
       b.px = b.x; b.py = b.y; b.animT += dt; b.atkT -= dt;
       const def = defOf(b.defId);
+
+      // committed to an already-telegraphed hit — frozen mid-swing; only the
+      // final distance check (vs. the player specifically) decides hit/whiff
+      if (b.telegraphT > 0) {
+        b.telegraphT -= dt;
+        if (b.telegraphT <= 0) {
+          const dPlyNow = Math.hypot(p.x - b.x, (p.y - 10) - b.y);
+          if (dPlyNow < CFG.worldBoss.attackReachPx + CFG.combat.telegraphSlackPx) {
+            this.ctx.damagePlayer(b.dmg);
+            this.ctx.cam.shake?.(7);
+          } else {
+            this.ctx.log?.push('boss', `${b.name} lunges and misses`, state.clock);
+          }
+        }
+        this.checkWarning(b, Math.hypot(p.x - b.x, p.y - b.y) / TILE);
+        continue;
+      }
 
       // roused by territory/night, OR by having just been hit — a fight always gets fought back
       const roused = territoryRoused || b.provokedUntil > state.clock;
@@ -141,7 +158,7 @@ export class WorldBossSystem {
       // attack if already on top of the player or the hall; else keep closing
       const dPly = Math.hypot(p.x - b.x, (p.y - 10) - b.y);
       if (b.hunting && dPly < CFG.worldBoss.attackReachPx) {
-        if (b.atkT <= 0) { b.atkT = def.atkCooldown; this.ctx.damagePlayer(b.dmg); this.ctx.cam.shake?.(7); }
+        if (b.atkT <= 0) { b.atkT = def.atkCooldown; b.telegraphT = def.telegraphSec; Sound.play('telegraph'); }
       } else if (hallB && b.hunting && Math.hypot((hallB.tx + 0.5) * TILE - b.x, (hallB.ty + 0.9) * TILE - b.y) < CFG.worldBoss.attackReachPx + 12) {
         if (b.atkT <= 0) { b.atkT = def.atkCooldown; this.ctx.hordes.damageBuilding(hallB, b.dmg); this.ctx.cam.shake?.(5); }
       } else if (dist > 4) {

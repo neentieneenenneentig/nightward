@@ -18,6 +18,7 @@ export interface Foe {
   hp: number; maxHp: number;
   dmg: number;
   atkT: number;
+  telegraphT: number; // >0 while committed to a telegraphed hit landing
   animT: number;
 }
 
@@ -94,7 +95,7 @@ export class HordeSystem {
       x, y, px: x, py: y,
       hp: Math.round(def.hp * hpMul), maxHp: Math.round(def.hp * hpMul),
       dmg: Math.round(def.dmg * dmgMul),
-      atkT: 0, animT: Math.random(),
+      atkT: 0, telegraphT: 0, animT: Math.random(),
     };
     this.foes.push(foe);
     views.addFoe(foe);
@@ -108,6 +109,19 @@ export class HordeSystem {
     f.animT += dt;
 
     const p = state.player;
+
+    // committed to an already-telegraphed hit — frozen mid-swing regardless of
+    // what the player does next; only the final distance check decides hit/whiff
+    if (f.telegraphT > 0) {
+      f.telegraphT -= dt;
+      if (f.telegraphT <= 0) {
+        const dpNow = Math.hypot(p.x - f.x, (p.y - 10) - f.y);
+        if (dpNow < 24 + CFG.combat.telegraphSlackPx) this.ctx.damagePlayer(f.dmg);
+        else this.ctx.log?.push('combat', `${f.def.name} lunges and misses`, state.clock);
+      }
+      return;
+    }
+
     const h = hall(state);
     const dp = Math.hypot(p.x - f.x, (p.y - 10) - f.y);
     const targetPlayer = dp < CFG.horde.aggroRangePx || !h;
@@ -115,11 +129,12 @@ export class HordeSystem {
     const ty = targetPlayer ? p.y - 10 : (h!.ty + 0.9) * TILE;
     const dist = Math.hypot(tx - f.x, ty - f.y) || 1;
 
-    // in reach of the player → bite
+    // in reach of the player → wind up a telegraphed bite (see block above)
     if (targetPlayer && dp < 24) {
       if (f.atkT <= 0) {
         f.atkT = f.def.atkCooldown;
-        this.ctx.damagePlayer(f.dmg);
+        f.telegraphT = f.def.telegraphSec;
+        Sound.play('telegraph');
       }
       return;
     }

@@ -90,6 +90,12 @@ const SFX: Record<string, SfxStep[]> = {
   swing: [
     { type: 'burst', dur: 0.14, hz: 1200, q: 0.8, gain: 0.28, filter: 'bandpass', sweepTo: 300 },
   ],
+  windup: [
+    { type: 'blip', hz: 260, dur: 0.09, wave: 'triangle', gain: 0.16, bend: 1.3 },
+  ],
+  telegraph: [
+    { type: 'blip', hz: 500, dur: 0.08, wave: 'square', gain: 0.16, bend: 1.4 },
+  ],
   hit: [
     { type: 'burst', dur: 0.09, hz: 2000, q: 2, gain: 0.35 },
     { type: 'blip', hz: 200, dur: 0.06, wave: 'square', gain: 0.15, bend: 0.5 },

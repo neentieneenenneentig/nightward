@@ -17,6 +17,12 @@ function tex(c: HTMLCanvasElement): Texture {
   return t;
 }
 
+/** Blinking warning tint while a foe/boss is committed to a telegraphed hit. */
+function telegraphTint(telegraphT: number, animT: number): number {
+  if (telegraphT <= 0) return 0xffffff;
+  return Math.floor(animT / 0.08) % 2 === 0 ? 0xffb066 : 0xff5a3a;
+}
+
 /** A foe sprite with a lazily-shown hp bar. */
 class FoeView {
   cont = new Container();
@@ -35,6 +41,7 @@ class FoeView {
     const fx = foe.px + (foe.x - foe.px) * alpha;
     const fy = foe.py + (foe.y - foe.py) * alpha;
     this.sprite.texture = this.frames[Math.floor(foe.animT / 0.22) % 2];
+    this.sprite.tint = telegraphTint(foe.telegraphT, foe.animT);
     this.cont.position.set(Math.round(fx), Math.round(fy));
     this.cont.zIndex = fy;
     const frac = foe.hp / foe.maxHp;
@@ -107,6 +114,7 @@ class BossView {
     const fx = b.px + (b.x - b.px) * alpha;
     const fy = b.py + (b.y - b.py) * alpha;
     this.sprite.texture = this.frames[Math.floor(b.animT / 0.25) % 2];
+    this.sprite.tint = telegraphTint(b.telegraphT, b.animT);
     this.cont.position.set(Math.round(fx), Math.round(fy));
     this.cont.zIndex = fy;
     const frac = Math.max(0, b.hp / b.maxHp);

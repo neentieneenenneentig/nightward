@@ -6,12 +6,14 @@ import { makePlayerFrames } from '../../engine/procgen/sprites';
 import { CFG } from '../data/config';
 
 export type Facing = 'down' | 'up' | 'left' | 'right';
+export type AttackPhase = 'idle' | 'windup' | 'active' | 'recovery';
 
 export class Player {
   x: number; y: number;
   px: number; py: number; // position at the previous sim step
   facing: Facing = 'down';
   moving = false;
+  attackPhase: AttackPhase = 'idle';
   private animT = 0;
   private flashT = 0;
   sprite: Sprite;
@@ -38,7 +40,9 @@ export class Player {
     this.flashT -= dt;
     let moved = false;
     if (ax || ay) {
-      const speed = CFG.player.speed;
+      // committing to a swing (windup/active) slows you — the weight of the hit
+      const midSwing = this.attackPhase === 'windup' || this.attackPhase === 'active';
+      const speed = CFG.player.speed * (midSwing ? CFG.combat.moveSlowMult : 1);
       const nx = this.x + ax * speed * dt;
       if (canStand(nx, this.y)) this.x = nx;
       const ny = this.y + ay * speed * dt;
@@ -57,6 +61,9 @@ export class Player {
   /** Called when the hero takes a hit — brief red tint. */
   flash() { this.flashT = 0.18; }
 
+  /** Driven by CombatSystem's attack state machine — feeds tint/squash and the move-slow. */
+  setAttackPhase(p: AttackPhase) { this.attackPhase = p; }
+
   /** Hard-set position (death respawn) with no interpolation smear. */
   teleport(x: number, y: number) {
     this.x = this.px = x;
@@ -70,8 +77,15 @@ export class Player {
     const step = this.moving ? Math.floor(this.animT / 0.18) % 2 : 0;
     const dir = this.facing === 'left' || this.facing === 'right' ? 'side' : this.facing;
     this.sprite.texture = this.tex[dir][step];
-    this.sprite.scale.x = this.facing === 'left' ? -1 : 1;
-    this.sprite.tint = this.flashT > 0 ? 0xff5555 : 0xffffff;
+
+    // attack-phase feedback (hurt-flash always wins — it's the more urgent signal)
+    let tint = 0xffffff, squashX = 1, squashY = 1;
+    if (this.flashT > 0) tint = 0xff5555;
+    else if (this.attackPhase === 'windup') { tint = 0xfff2b0; squashX = 1.06; squashY = 0.93; }
+    else if (this.attackPhase === 'recovery') tint = 0xa8a29a;
+
+    this.sprite.scale.set((this.facing === 'left' ? -1 : 1) * squashX, squashY);
+    this.sprite.tint = tint;
     this.sprite.position.set(fx, fy);
     return [fx, fy];
   }

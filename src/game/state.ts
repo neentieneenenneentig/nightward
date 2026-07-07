@@ -24,6 +24,7 @@ export interface WorldBoss {
   dmg: number;
   level: number;      // scales up each time it's slain and re-forms
   atkT: number;
+  telegraphT: number; // >0 while committed to a telegraphed hit landing
   animT: number;
   hunting: boolean;
   provokedUntil: number; // clock time until which a landed hit forces hunting=true
