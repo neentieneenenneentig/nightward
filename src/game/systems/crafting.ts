@@ -5,8 +5,9 @@ import { ITEMS } from '../data/items';
 import { addXp, autoEquip, invAdd, invHasAll, invTakeAll, skillLevel } from '../rules';
 import type { GameState } from '../state';
 import { Sound } from '../../engine/audio';
+import type { GameLog } from './log';
 
-export function craft(state: GameState, recipeId: string, toast: (m: string, k?: any) => void): boolean {
+export function craft(state: GameState, recipeId: string, toast: (m: string, k?: any) => void, log?: GameLog): boolean {
   const r = RECIPES.find((x) => x.id === recipeId);
   if (!r) return false;
   if (skillLevel(state, r.skill) < r.levelReq) {
@@ -20,7 +21,8 @@ export function craft(state: GameState, recipeId: string, toast: (m: string, k?:
   const lvl = addXp(state, r.skill, r.xp);
   Sound.play('craft');
   toast(`Crafted ${ITEMS[r.out.id].name}${r.out.n > 1 ? ' ×' + r.out.n : ''} (+${r.xp}xp)`, 'good');
-  if (lvl) { Sound.play('levelup'); toast(`${cap(r.skill)} reached level ${lvl}!`, 'good'); }
+  log?.push('craft', `Crafted ${ITEMS[r.out.id].name}${r.out.n > 1 ? ' ×' + r.out.n : ''}`, state.clock);
+  if (lvl) { Sound.play('levelup'); toast(`${cap(r.skill)} reached level ${lvl}!`, 'good'); log?.push('level', `${cap(r.skill)} reached level ${lvl}`, state.clock); }
   return true;
 }
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);

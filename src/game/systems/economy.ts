@@ -15,7 +15,9 @@ export class EconomySystem {
     if (CFG.economy.dayOnly && this.ctx.isNight()) return;
     const pop = population(this.ctx.state);
     if (pop <= 0) return;
-    this.ctx.state.player.gold += pop * CFG.economy.goldPerPop;
+    const gain = pop * CFG.economy.goldPerPop;
+    this.ctx.state.player.gold += gain;
     this.ctx.onGold?.();
+    this.ctx.log?.push('economy', `Tribute collected: +${gain} gold`, this.ctx.state.clock);
   }
 }
