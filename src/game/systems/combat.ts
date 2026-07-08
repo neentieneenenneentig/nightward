@@ -88,7 +88,7 @@ export class CombatSystem {
     const env = this.envelope();
     this.setPhase('windup');
     this.phaseT = env.windup;
-    this.swingAngle = FACING_ANGLE[this.ctx.player.facing];
+    this.swingAngle = this.ctx.player.aimAngle ?? FACING_ANGLE[this.ctx.player.facing];
     Sound.play('windup');
   }
 
@@ -96,16 +96,18 @@ export class CombatSystem {
   private resolveHit() {
     const { state, player, hordes, views } = this.ctx;
 
-    const fa = FACING_ANGLE[player.facing];
+    const fa = player.aimAngle ?? FACING_ANGLE[player.facing];
     this.swingT = 0.13;
     this.swingAngle = fa;
 
     const dmg = CFG.player.baseDmg + equippedWeaponDmg(state);
     const arc = (CFG.combat.arcDeg * Math.PI) / 180;
-    const cx = state.player.x, cy = state.player.y - 10;
+    // hit math anchors at the feet — same anchor as foe positions, so point-blank
+    // angles don't flip; the slash draws at body height for looks only
+    const cx = state.player.x, cy = state.player.y;
 
     // always draw the swing so a whiff still reads as an attack
-    views.addSlash(cx, cy, fa, CFG.player.meleeRange, arc);
+    views.addSlash(cx, cy - 10, fa, CFG.player.meleeRange, arc);
     Sound.play('swing');
 
     const inArc = (x: number, y: number, reach: number) => {

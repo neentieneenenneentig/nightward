@@ -12,6 +12,7 @@ export class Player {
   x: number; y: number;
   px: number; py: number; // position at the previous sim step
   facing: Facing = 'down';
+  aimAngle = Math.PI / 2; // true input direction (radians) — swings aim here, not at the 4-way facing
   moving = false;
   attackPhase: AttackPhase = 'idle';
   private animT = 0;
@@ -47,7 +48,13 @@ export class Player {
       if (canStand(nx, this.y)) this.x = nx;
       const ny = this.y + ay * speed * dt;
       if (canStand(this.x, ny)) this.y = ny;
-      this.facing = Math.abs(ax) >= Math.abs(ay) ? (ax < 0 ? 'left' : 'right') : (ay < 0 ? 'up' : 'down');
+      this.aimAngle = Math.atan2(ay, ax);
+      // sprite facing is 4-way; on diagonals (|ax|===|ay| after normalize) keep the
+      // current facing while its key is still held instead of snapping horizontal
+      const keeps =
+        (this.facing === 'left' && ax < 0) || (this.facing === 'right' && ax > 0) ||
+        (this.facing === 'up' && ay < 0) || (this.facing === 'down' && ay > 0);
+      if (!keeps) this.facing = Math.abs(ax) >= Math.abs(ay) ? (ax < 0 ? 'left' : 'right') : (ay < 0 ? 'up' : 'down');
       this.moving = this.x !== this.px || this.y !== this.py;
       this.animT += dt;
       moved = this.moving;
