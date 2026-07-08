@@ -12,6 +12,7 @@ export interface BuildingDef {
   territory: number;  // territory score added
   unique: boolean;
   tower?: { rangeTiles: number; dmg: number; cooldown: number };
+  dragPaint?: boolean; // hold + drag paints a line of these (walls)
   art: 'hall' | 'hut' | 'wall' | 'tower';
 }
 
@@ -34,7 +35,7 @@ export const BUILDINGS: BuildingDef[] = [
     id: 'wall', name: 'Palisade',
     desc: 'Blocks the hungry things. They will chew through it eventually.',
     hp: 260, cost: [s('log', 2), s('stone', 1)],
-    pop: 0, territory: 0, unique: false, art: 'wall',
+    pop: 0, territory: 0, unique: false, dragPaint: true, art: 'wall',
   },
   {
     id: 'tower', name: 'Watchtower',

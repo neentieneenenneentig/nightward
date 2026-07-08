@@ -200,7 +200,7 @@ export class Views {
   }
 
   // --- build ghost ---
-  setGhost(type: string | null, tx = 0, ty = 0, valid = false) {
+  setGhost(type: string | null, tx = 0, ty = 0, valid = false, rangePx = 0) {
     if (!type) { this.ghost?.cont.destroy({ children: true }); this.ghost = null; return; }
     if (!this.ghost) {
       const cont = new Container();
@@ -219,6 +219,19 @@ export class Views {
     sprite.position.set((tx + 0.5) * TILE, (ty + 1) * TILE);
     const col = valid ? 0x8fe07a : 0xe06a6a;
     foot.clear();
+    // faint tile grid around the cursor so placement reads as grid-based
+    const G = 5; // half-extent in tiles
+    for (let i = -G; i <= G + 1; i++) {
+      foot.moveTo((tx + i) * TILE, (ty - G) * TILE).lineTo((tx + i) * TILE, (ty + G + 1) * TILE)
+        .moveTo((tx - G) * TILE, (ty + i) * TILE).lineTo((tx + G + 1) * TILE, (ty + i) * TILE);
+    }
+    foot.stroke({ width: 1, color: 0xffffff, alpha: 0.08 });
+    // tower range ring — the whole point of picking a spot
+    if (rangePx > 0) {
+      foot.circle((tx + 0.5) * TILE, (ty + 0.5) * TILE, rangePx)
+        .fill({ color: 0x9fd0ff, alpha: 0.05 })
+        .stroke({ width: 1.5, color: 0x9fd0ff, alpha: 0.7 });
+    }
     foot.rect(tx * TILE + 1, ty * TILE + 1, TILE - 2, TILE - 2)
       .fill({ color: col, alpha: 0.22 })
       .stroke({ width: 2, color: col, alpha: 0.9 });

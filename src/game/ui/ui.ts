@@ -125,7 +125,7 @@ export class UI {
     const bar = el('div', 'nw-buildbar');
     bar.innerHTML = `
       <span class="ico">&#9874;</span>
-      <div class="txt"><b class="nm"></b><span class="hint">Tap the map to place &middot; drag to reposition</span></div>
+      <div class="txt"><b class="nm"></b><span class="hint">Click to place &middot; hold &amp; drag paints walls &middot; right-click / Esc / B stops</span></div>
       <div class="nw-btn cancel" style="pointer-events:auto">Cancel</div>`;
     bar.querySelector('.cancel')!.addEventListener('click', () => this.hooks.enterBuild(''));
     this.root.appendChild(bar);
@@ -369,11 +369,16 @@ export class UI {
         const ok = invCount(this.state, s.id) >= s.n;
         return `<span class="${ok ? 'have' : 'lack'}">${invCount(this.state, s.id)}/${s.n} ${ITEMS[s.id].name}</span>`;
       }).join(' &middot; ');
+      const stats = [
+        b.tower ? `${b.tower.dmg} dmg &middot; ${b.tower.rangeTiles} tile range &middot; every ${b.tower.cooldown}s` : '',
+        `${b.hp} hp`,
+      ].filter(Boolean).join(' &middot; ');
       row.innerHTML = `
         <img src="${iconBuilding(b.art)}" alt="">
         <div class="info">
           <div class="name">${b.name} ${b.pop ? `&middot; +${b.pop} pop` : ''} ${b.territory ? `&middot; +${b.territory} terr` : ''}</div>
           <div class="sub">${b.desc}</div>
+          <div class="sub">${stats}</div>
           <div class="sub">${cost}</div>
         </div>`;
       const btn = el('button', 'nw-make') as HTMLButtonElement;

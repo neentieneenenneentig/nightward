@@ -139,12 +139,22 @@ async function boot() {
   }
 
   // --- canvas pointer: build placement, and click-to-attack on desktop ---
+  // placement is press-to-aim, RELEASE-to-place: the ghost follows while the
+  // button is down (dragging paints walls), and the building lands on pointerup
   const canvas = stage.app.canvas;
-  canvas.addEventListener('pointermove', (e) => build.mode && build.hover(e.clientX, e.clientY));
+  canvas.addEventListener('pointermove', (e) => {
+    if (!build.mode) return;
+    if (e.buttons & 1) build.paint(e.clientX, e.clientY);
+    else build.hover(e.clientX, e.clientY);
+  });
   canvas.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return; // only the primary button places/attacks
-    if (build.mode) { build.place(e.clientX, e.clientY); return; }
+    if (build.mode) { build.hover(e.clientX, e.clientY); return; } // aim; place happens on release
     if (e.pointerType === 'mouse') combat.attack();
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    if (e.button !== 0 || !build.mode) return;
+    build.place(e.clientX, e.clientY);
   });
   // right-click always backs out of placement instead of opening the browser menu
   canvas.addEventListener('contextmenu', (e) => {
