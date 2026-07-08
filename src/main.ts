@@ -77,7 +77,7 @@ async function boot() {
     nightIndex: () => phase(state.clock).dayIndex,
     toast: (m: string, k?: any) => ui.toast(m, k),
     onGold: () => {},
-    damagePlayer: (d: number) => combat.damagePlayer(d),
+    damagePlayer: (d: number, src?: string) => combat.damagePlayer(d, src),
     onHallDestroyed: () => triggerGameOver(),
   };
 
@@ -118,6 +118,7 @@ async function boot() {
     if (!slot) return;
     const nowWorn = state.player.equip[slot] === id;
     ui.toast(`${nowWorn ? 'Equipped' : 'Unequipped'} ${ITEMS[id].name}`, nowWorn ? 'good' : 'info');
+    log.push('system', `${nowWorn ? 'Equipped' : 'Unequipped'} ${ITEMS[id].name}`, state.clock);
   }
 
   function useItem(id: string) {
@@ -128,6 +129,7 @@ async function boot() {
     if (state.player.inv[id] <= 0) delete state.player.inv[id];
     state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + heal);
     ui.toast(`Used ${ITEMS[id].name} (+${heal} hp)`, 'good');
+    log.push('system', `Used ${ITEMS[id].name} (+${heal} hp)`, state.clock);
   }
 
   function triggerGameOver() {
@@ -301,6 +303,18 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
         ctx.toast('debug: +materials'); break;
       case 'h': state.player.hp = CFG.player.maxHp; break;
       case 'j': hordes.onDusk(phase(state.clock).dayIndex); break; // force a wave
+      case 'u': { // god/test mode: immortal + effectively infinite everything
+        state.god = !state.god;
+        if (state.god) {
+          state.player.gold += 99999;
+          for (const id of Object.keys(ITEMS)) state.player.inv[id] = 9999;
+          for (const s of SKILLS) state.player.xp[s.id] = Math.max(state.player.xp[s.id] ?? 0, 1e7);
+          state.player.hp = CFG.player.maxHp;
+        }
+        ctx.toast(`debug: god mode ${state.god ? 'ON — immortal, everything unlocked' : 'OFF'}`, state.god ? 'good' : 'info');
+        ctx.log?.push('system', `God mode ${state.god ? 'enabled' : 'disabled'}`, state.clock);
+        break;
+      }
     }
   });
   // expose the live config for runtime tuning from the console
@@ -308,4 +322,5 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
 }
 
 import { ITEMS } from './game/data/items';
+import { SKILLS } from './game/data/skills';
 boot();

@@ -54,6 +54,7 @@ export interface GameState {
   explored: Record<string, number>;    // region key → 1 (for fog / future minimap)
   nightsSurvived: number;
   gameOver: boolean;
+  god: boolean;                        // debug/test mode: immortal, everything unlocked
 }
 
 /** Worn gear, one item id per slot (undefined = empty). */
@@ -99,5 +100,6 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     explored: {},
     nightsSurvived: 0,
     gameOver: false,
+    god: false,
   };
 }

@@ -117,6 +117,7 @@ export class HordeSystem {
     this.foes.push(foe);
     views.addFoe(foe);
     this.toSpawn--;
+    this.ctx.log?.push('spawn', `A ${def.name} joins the night wave (${foe.hp} hp)`, state.clock);
   }
 
   /** Day prey: spawns around the PLAYER at base (night-1) stats — loot on legs. */
@@ -150,6 +151,7 @@ export class HordeSystem {
     };
     this.foes.push(foe);
     views.addFoe(foe);
+    this.ctx.log?.push('spawn', `A ${def.name} prowls into view (${foe.hp} hp)`, state.clock);
   }
 
   private updateFoe(f: Foe, dt: number) {
@@ -166,7 +168,7 @@ export class HordeSystem {
       f.telegraphT -= dt;
       if (f.telegraphT <= 0) {
         const dpNow = Math.hypot(p.x - f.x, (p.y - 10) - f.y);
-        if (dpNow < 24 + CFG.combat.telegraphSlackPx) this.ctx.damagePlayer(f.dmg);
+        if (dpNow < 24 + CFG.combat.telegraphSlackPx) this.ctx.damagePlayer(f.dmg, f.def.name);
         else this.ctx.log?.push('combat', `${f.def.name} lunges and misses`, state.clock);
       }
       return;
@@ -197,6 +199,7 @@ export class HordeSystem {
         f.atkT = f.def.atkCooldown;
         f.telegraphT = f.def.telegraphSec;
         Sound.play('telegraph');
+        this.ctx.log?.push('combat', `${f.def.name} bites at you`, state.clock);
       }
       return;
     }

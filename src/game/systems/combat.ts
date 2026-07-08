@@ -179,10 +179,12 @@ export class CombatSystem {
       if (bestFoe) {
         this.towerT.set(b.uid, def.tower.cooldown);
         views.addShot(bx, by, bestFoe.x, bestFoe.y - bestFoe.def.art.size / 2);
+        this.ctx.log?.push('combat', `${def.name} shoots ${bestFoe.def.name} for ${def.tower.dmg} (${Math.max(0, bestFoe.hp - def.tower.dmg)}/${bestFoe.maxHp} hp left)`, state.clock);
         hordes.hurt(bestFoe, def.tower.dmg, false); // towers don't train your combat
       } else if (bestBoss) {
         this.towerT.set(b.uid, def.tower.cooldown);
         views.addShot(bx, by, bestBoss.x, bestBoss.y);
+        this.ctx.log?.push('combat', `${def.name} shoots ${bestBoss.name} for ${def.tower.dmg} (${Math.max(0, bestBoss.hp - def.tower.dmg)}/${bestBoss.maxHp} hp left)`, state.clock);
         worldbosses.hurt(bestBoss, def.tower.dmg, false);
       } else {
         this.towerT.set(b.uid, 0);
@@ -191,15 +193,16 @@ export class CombatSystem {
   }
 
   /** Enemy → player damage, plus death handling. */
-  damagePlayer(dmg: number) {
+  damagePlayer(dmg: number, source?: string) {
     const { state, player, toast } = this.ctx;
     if (state.gameOver) return;
+    if (state.god) { this.ctx.log?.push('combat', `${source ?? 'Something'} hits you for 0 (god mode)`, state.clock); return; }
     const taken = Math.max(1, dmg - armorDef(state)); // armor softens, never fully negates
     state.player.hp -= taken;
     player.flash();
     Sound.play('hurt');
     this.ctx.cam.shake?.(Math.min(11, 3 + taken * 0.25));
-    this.ctx.log?.push('combat', `Took ${taken} dmg (${Math.max(0, Math.ceil(state.player.hp))}/${CFG.player.maxHp} hp left)`, state.clock);
+    this.ctx.log?.push('combat', `${source ?? 'Something'} hits you for ${taken} (${Math.max(0, Math.ceil(state.player.hp))}/${CFG.player.maxHp} hp left)`, state.clock);
     if (state.player.equip?.armor) {
       const lvl = awardSoulXp(state, 'armor', CFG.soulgear.armorXpPerHit);
       if (lvl) { toast(`Your armor toughens — soul level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Armor reached soul level ${lvl}`, state.clock); }

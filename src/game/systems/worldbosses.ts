@@ -118,7 +118,7 @@ export class WorldBossSystem {
         if (b.telegraphT <= 0) {
           const dPlyNow = Math.hypot(p.x - b.x, (p.y - 10) - b.y);
           if (dPlyNow < CFG.worldBoss.attackReachPx + CFG.combat.telegraphSlackPx) {
-            this.ctx.damagePlayer(b.dmg);
+            this.ctx.damagePlayer(b.dmg, b.name);
             this.ctx.cam.shake?.(7);
           } else {
             this.ctx.log?.push('boss', `${b.name} lunges and misses`, state.clock);
@@ -158,12 +158,22 @@ export class WorldBossSystem {
       // attack if already on top of the player or the hall; else keep closing
       const dPly = Math.hypot(p.x - b.x, (p.y - 10) - b.y);
       if (b.hunting && dPly < CFG.worldBoss.attackReachPx) {
-        if (b.atkT <= 0) { b.atkT = def.atkCooldown; b.telegraphT = def.telegraphSec; Sound.play('telegraph'); }
+        if (b.atkT <= 0) { b.atkT = def.atkCooldown; b.telegraphT = def.telegraphSec; Sound.play('telegraph'); this.ctx.log?.push('boss', `${b.name} winds up a strike`, state.clock); }
       } else if (hallB && b.hunting && Math.hypot((hallB.tx + 0.5) * TILE - b.x, (hallB.ty + 0.9) * TILE - b.y) < CFG.worldBoss.attackReachPx + 12) {
         if (b.atkT <= 0) { b.atkT = def.atkCooldown; this.ctx.hordes.damageBuilding(hallB, b.dmg); this.ctx.cam.shake?.(5); }
       } else if (dist > 4) {
-        b.x += (tx - b.x) / dist * speed * dt;
-        b.y += (ty - b.y) / dist * speed * dt;
+        const ux = (tx - b.x) / dist, uy = (ty - b.y) / dist;
+        const nx = b.x + ux * speed * dt, ny = b.y + uy * speed * dt;
+        // bosses are big dream-things but a palisade still blocks them — chew through
+        const blk = b.hunting ? this.ctx.world.buildingAt(Math.floor(nx / TILE), Math.floor((ny - 4) / TILE)) : null;
+        if (blk && blk.type !== 'hall') {
+          if (b.atkT <= 0) {
+            b.atkT = def.atkCooldown;
+            this.ctx.hordes.damageBuilding(blk, b.dmg);
+            this.ctx.cam.shake?.(5);
+            this.ctx.log?.push('boss', `${b.name} smashes your ${blk.type} for ${b.dmg}`, state.clock);
+          }
+        } else { b.x = nx; b.y = ny; }
       }
 
       this.checkWarning(b, Math.hypot(p.x - b.x, p.y - b.y) / TILE);
