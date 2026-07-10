@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "pixi.js": "^8.6.0"
+    "pixi.js": "^8.6.0",
+    "rpgui": "^1.0.3"
   },
   "devDependencies": {
     "typescript": "^5.6.0",
