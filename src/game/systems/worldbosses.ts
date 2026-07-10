@@ -6,7 +6,7 @@
 import { CFG } from '../data/config';
 import { ENEMIES, type EnemyDef } from '../data/enemies';
 import { ITEMS } from '../data/items';
-import { acquireGear, addXp, hall, invAdd, rollLoot, territoryScore } from '../rules';
+import { acquireGear, addXp, awardSoulXp, hall, invAdd, rollLoot, territoryScore } from '../rules';
 import type { WorldBoss } from '../state';
 import { TILE } from '../world/worldgen';
 import { REGION, domainAtRegion, regionCenterPx } from '../world/domains';
@@ -227,6 +227,10 @@ export class WorldBossSystem {
     if (fromPlayer) {
       const lvl = addXp(state, 'combat', def.xp);
       if (lvl) { this.ctx.toast(`Combat reached level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Combat reached level ${lvl}`, state.clock); }
+      if (state.player.equip?.charm) {
+        const cl = awardSoulXp(state, 'charm', CFG.soulgear.charmXpPerKill * 10); // bosses feed charms well
+        if (cl) { this.ctx.toast(`Your charm drinks deep — soul level ${cl}!`, 'good'); this.ctx.log?.push('level', `Charm reached soul level ${cl}`, state.clock); }
+      }
     }
     Sound.play('enemyDie');
     this.ctx.toast(`You have slain ${b.name}! The dream recoils.`, 'good');

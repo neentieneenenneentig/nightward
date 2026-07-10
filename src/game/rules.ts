@@ -93,11 +93,13 @@ export function bestTool(state: GameState, cls: 'axe' | 'pick') {
   return best;
 }
 
-/** Best owned weapon damage bonus (the sharpest thing you carry). */
+/** Best owned weapon damage bonus (the sharpest thing you carry — not trinkets). */
 export function bestWeaponDmg(state: GameState): number {
   let best = 0;
   for (const id of Object.keys(state.player.inv)) {
-    const d = ITEMS[id]?.weaponDmg ?? 0;
+    const def = ITEMS[id];
+    if (def?.trinket) continue; // rings carry weaponDmg but aren't weapons
+    const d = def?.weaponDmg ?? 0;
     if (d > best) best = d;
   }
   return best;
@@ -105,29 +107,43 @@ export function bestWeaponDmg(state: GameState): number {
 
 // ------------------------------------------------------------ equipment ----
 
-/** Which equip slot an item belongs to, or null if it isn't gear. */
-export function slotOf(id: string): 'weapon' | 'armor' | null {
+/** The slots the player can wear items in (tools are carried, not worn). */
+export type EquipSlot = 'weapon' | 'armor' | 'ring' | 'amulet' | 'charm';
+
+/** Which equip slot an item belongs to, or null if it isn't gear. Trinkets
+ * declare theirs explicitly (their stat fields overlap weapons/armor). */
+export function slotOf(id: string): EquipSlot | null {
   const d = ITEMS[id];
   if (!d) return null;
+  if (d.trinket) return d.trinket;
   if (d.weaponDmg != null) return 'weapon';
   if (d.armor != null) return 'armor';
   return null;
 }
 
-/** Damage bonus from the equipped weapon — soul-leveled, not the item's flat stat. */
-export function equippedWeaponDmg(state: GameState): number {
-  const w = state.player.equip?.weapon;
-  return w && invCount(state, w) > 0 ? soulStat(state, 'weapon') : 0;
+/** Soul-leveled stat of a worn slot, or 0 if empty / item no longer owned. */
+function wornStat(state: GameState, slot: EquipSlot): number {
+  const id = state.player.equip?.[slot];
+  return id && invCount(state, id) > 0 ? soulStat(state, slot) : 0;
 }
 
-/** Flat damage reduction from the equipped armor — soul-leveled, not the item's flat stat. */
+/** Total damage bonus from worn gear (weapon + ring) — soul-leveled. */
+export function equippedWeaponDmg(state: GameState): number {
+  return wornStat(state, 'weapon') + wornStat(state, 'ring');
+}
+
+/** Total flat damage reduction from worn gear (armor + amulet) — soul-leveled. */
 export function armorDef(state: GameState): number {
-  const a = state.player.equip?.armor;
-  return a && invCount(state, a) > 0 ? soulStat(state, 'armor') : 0;
+  return wornStat(state, 'armor') + wornStat(state, 'amulet');
+}
+
+/** Bonus hp/s the worn charm adds to daytime regen — soul-leveled. */
+export function charmRegen(state: GameState): number {
+  return wornStat(state, 'charm');
 }
 
 /** Equip an item into its slot, or unequip if it's already worn there. */
-export function toggleEquip(state: GameState, id: string): 'weapon' | 'armor' | null {
+export function toggleEquip(state: GameState, id: string): EquipSlot | null {
   const slot = slotOf(id);
   if (!slot) return null;
   state.player.equip ??= {};
@@ -144,7 +160,7 @@ export function autoEquip(state: GameState, id: string) {
   state.player.equip ??= {};
   const cur = state.player.equip[slot];
   // upgrade to the better item, or fill an empty slot
-  const stat = (x?: string) => (x ? (slot === 'weapon' ? ITEMS[x]?.weaponDmg : ITEMS[x]?.armor) ?? 0 : 0);
+  const stat = (x?: string) => (x ? baseStatFor(slot, x) : 0);
   if (!cur || stat(id) > stat(cur)) state.player.equip[slot] = id;
 }
 

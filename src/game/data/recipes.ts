@@ -39,4 +39,11 @@ export const RECIPES: Recipe[] = [
   // alchemy
   R('tonic_minor', 'alchemy', 1, 22, s('tonic_minor'), s('sunleaf', 1), s('berry', 2)),
   R('tonic_major', 'alchemy', 8, 60, s('tonic_major'), s('moonbell', 1), s('berry', 3)),
+  // trinkets (rings sharpen, amulets ward, charms mend — each its own soul slot)
+  R('amulet_stone', 'crafting', 3, 40, s('amulet_stone'), s('stone', 2), s('sunleaf', 1)),
+  R('charm_ember',  'crafting', 5, 55, s('charm_ember'), s('log', 2), s('berry', 3)),
+  R('ring_copper',  'smithing', 4, 50, s('ring_copper'), s('copper_bar', 1)),
+  R('ring_iron',    'smithing', 13, 110, s('ring_iron'), s('iron_bar', 1)),
+  R('amulet_iron',  'smithing', 14, 120, s('amulet_iron'), s('iron_bar', 1), s('moonbell', 1)),
+  R('charm_moon',   'alchemy', 10, 90, s('charm_moon'), s('moonbell', 2), s('fine_log', 1)),
 ];

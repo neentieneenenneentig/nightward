@@ -87,6 +87,31 @@ export function makeIcon(spec: IconSpec): HTMLCanvasElement {
       p.rect(11, 8, 11, 11, darken(c, 15));
       p.set(6, 7, lighten(c, 45));              // shine
       break;
+    case 'ring':
+      // band as a square donut + gem on top
+      p.rect(5, 7, 10, 7, c); p.rect(5, 12, 10, 12, darken(c, 12));
+      p.rect(5, 8, 5, 11, c); p.rect(10, 8, 10, 11, darken(c, 8));
+      p.set(6, 8, lighten(c, 30));               // band shine
+      p.rect(7, 4, 8, 5, a); p.set(7, 4, lighten(a, 30)); // gem
+      break;
+    case 'amulet':
+      // cord down to a pendant
+      p.set(5, 3, darken(c, 20)); p.set(4, 4, darken(c, 20)); p.set(4, 5, darken(c, 20));
+      p.set(10, 3, darken(c, 20)); p.set(11, 4, darken(c, 20)); p.set(11, 5, darken(c, 20));
+      p.set(7, 3, darken(c, 20)); p.set(8, 3, darken(c, 20));
+      p.rect(6, 7, 9, 11, c);                    // pendant body
+      p.set(7, 8, a); p.set(8, 9, lighten(a, 20)); // inset stone
+      p.rect(6, 11, 9, 11, darken(c, 18));
+      break;
+    case 'charm':
+      // little carved totem with a glowing eye
+      p.rect(6, 4, 9, 12, c);
+      p.rect(6, 4, 9, 4, lighten(c, 20));
+      p.set(7, 6, a); p.set(8, 6, a);            // eye band
+      p.rect(6, 9, 9, 9, darken(c, 20));         // carve line
+      p.set(5, 8, darken(c, 10)); p.set(10, 8, darken(c, 10)); // side notches
+      p.set(7, 11, lighten(a, 15));              // lower glint
+      break;
     default:
       p.rect(4, 4, 11, 11, c);
   }

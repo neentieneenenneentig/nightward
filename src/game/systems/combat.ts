@@ -4,7 +4,7 @@
 import { CFG } from '../data/config';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
-import { armorDef, awardSoulXp, equippedWeaponDmg, hall } from '../rules';
+import { armorDef, awardSoulXp, charmRegen, equippedWeaponDmg, hall } from '../rules';
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
 import type { Foe } from './hordes';
@@ -33,7 +33,7 @@ export class CombatSystem {
     const { state } = this.ctx;
     // daylight heals; night doesn't
     if (!this.ctx.isNight() && state.player.hp < CFG.player.maxHp) {
-      state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + CFG.player.regenPerSec * dt);
+      state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + (CFG.player.regenPerSec + charmRegen(state)) * dt);
     }
     this.updateTowers(dt);
     this.updatePhase(dt);
@@ -150,6 +150,10 @@ export class CombatSystem {
       this.ctx.log?.push('combat', `Hit ${hitLines.join('; ')}`, state.clock);
       const lvl = awardSoulXp(state, 'weapon', CFG.soulgear.weaponXpPerSwing);
       if (lvl) { this.ctx.toast(`Your weapon feels hungrier — soul level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Weapon reached soul level ${lvl}`, state.clock); }
+      if (state.player.equip?.ring) {
+        const rl = awardSoulXp(state, 'ring', CFG.soulgear.ringXpPerSwing);
+        if (rl) { this.ctx.toast(`Your ring tightens — soul level ${rl}!`, 'good'); this.ctx.log?.push('level', `Ring reached soul level ${rl}`, state.clock); }
+      }
     } else {
       this.ctx.log?.push('combat', 'Swung and missed', state.clock);
     }
@@ -206,6 +210,10 @@ export class CombatSystem {
     if (state.player.equip?.armor) {
       const lvl = awardSoulXp(state, 'armor', CFG.soulgear.armorXpPerHit);
       if (lvl) { toast(`Your armor toughens — soul level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Armor reached soul level ${lvl}`, state.clock); }
+    }
+    if (state.player.equip?.amulet) {
+      const lvl = awardSoulXp(state, 'amulet', CFG.soulgear.amuletXpPerHit);
+      if (lvl) { toast(`Your amulet hums — soul level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Amulet reached soul level ${lvl}`, state.clock); }
     }
     if (state.player.hp > 0) return;
 

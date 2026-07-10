@@ -52,6 +52,9 @@ export const CFG = {
     weaponXpPerSwing: 3,  // per swing that lands at least one hit
     armorXpPerHit: 2,     // per hit taken while armor is worn
     toolXpPerUse: 4,      // per successful gather with that tool class
+    ringXpPerSwing: 2,    // per landed swing while a ring is worn
+    amuletXpPerHit: 2,    // per hit taken while an amulet is worn
+    charmXpPerKill: 5,    // per kill while a charm is worn (×10 from bosses)
   },
 
   time: {
@@ -120,13 +123,13 @@ export const CFG = {
   horde: {
     firstNight: 1,           // nights before this one are quiet
     baseCount: 9,            // enemies on the first hostile night (W4: 6→9)
-    perNight: 5,             // + per night survived (W4: 3.5→5)
+    perNight: 5.5,           // + per night survived (W4: 3.5→5; +0.5 danger pass)
     perTerritory: 0.22,      // + per point of territory score (greed = risk)
     maxAlive: 90,            // hard cap for perf & sanity
     spawnRadiusTiles: 14,    // distance from hall (or player) they emerge at
     spawnIntervalSec: 1.1,   // trickle rate (W4: 1.5→1.1 — faster = scarier)
-    hpGrowth: 1.18,          // per-night multiplier on enemy hp (W4: 1.14→1.18)
-    dmgGrowth: 1.12,         // per-night multiplier on enemy damage (W4: 1.09→1.12)
+    hpGrowth: 1.21,          // per-night multiplier on enemy hp (danger pass: 1.18→1.21)
+    dmgGrowth: 1.15,         // per-night multiplier on enemy damage (danger pass: 1.12→1.15)
     aggroRangePx: 170,       // enemies switch to the player inside this
     dawnFlee: true,          // survivors melt away at sunrise
   },

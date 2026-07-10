@@ -61,6 +61,9 @@ export interface GameState {
 export interface Equip {
   weapon?: string;
   armor?: string;
+  ring?: string;
+  amulet?: string;
+  charm?: string;
 }
 
 /** A slot's soul-bound tool: `templateId` is whichever physical item currently

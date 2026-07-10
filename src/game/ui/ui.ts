@@ -9,7 +9,8 @@ import { BUILDINGS } from '../data/buildings';
 import { iconUrl } from '../../engine/procgen/icons';
 import {
   invCount, invHasAll, skillLevel, xpProgress, slotOf,
-  equippedWeaponDmg, armorDef, bestTool,
+  soulStat, bestTool, type EquipSlot,
+  equippedWeaponDmg, armorDef,
   population, territoryScore, soulXpProgress,
 } from '../rules';
 import type { SoulSlot } from '../data/soulgear';
@@ -266,6 +267,9 @@ export class UI {
     const eq = el('div', 'nw-equip');
     eq.appendChild(this.slotCell('weapon', 'Weapon', '&#9876;'));
     eq.appendChild(this.slotCell('armor', 'Armor', '&#128737;'));
+    eq.appendChild(this.slotCell('ring', 'Ring', '&#128141;'));
+    eq.appendChild(this.slotCell('amulet', 'Amulet', '&#128255;'));
+    eq.appendChild(this.slotCell('charm', 'Charm', '&#128302;'));
     body.appendChild(eq);
 
     const axe = bestTool(this.state, 'axe'), pick = bestTool(this.state, 'pick');
@@ -306,13 +310,14 @@ export class UI {
   }
 
   /** One equipment slot: shows the worn item + its soul level (click to unequip), or an empty placeholder. */
-  private slotCell(slot: 'weapon' | 'armor', label: string, glyph: string): HTMLElement {
+  private slotCell(slot: EquipSlot, label: string, glyph: string): HTMLElement {
     const id = this.state.player.equip?.[slot];
     const cell = el('div', 'nw-slot' + (id ? ' filled' : ''));
     if (id) {
       const def = ITEMS[id];
-      const soulStatVal = slot === 'weapon' ? equippedWeaponDmg(this.state) : armorDef(this.state);
-      const stat = slot === 'weapon' ? `+${soulStatVal.toFixed(1)} dmg` : `+${soulStatVal.toFixed(1)} armor`;
+      const unit = slot === 'weapon' || slot === 'ring' ? 'dmg'
+        : slot === 'charm' ? 'hp/s (day)' : 'armor';
+      const stat = `+${soulStat(this.state, slot).toFixed(1)} ${unit}`;
       cell.innerHTML =
         `<img src="${icon(id)}" alt=""><div class="meta"><b>${label}</b><span>${def.name}</span>${this.soulBarHtml(slot)}<span class="stat">${stat}</span></div>`;
       cell.style.cursor = 'pointer';

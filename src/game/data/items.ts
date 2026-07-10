@@ -4,7 +4,8 @@ import { type RGB, hex } from '../../engine/procgen/palette';
 
 export type IconKind =
   | 'log' | 'plank' | 'stone' | 'ore' | 'bar'
-  | 'herb' | 'berry' | 'axe' | 'pick' | 'sword' | 'potion' | 'armor';
+  | 'herb' | 'berry' | 'axe' | 'pick' | 'sword' | 'potion' | 'armor'
+  | 'ring' | 'amulet' | 'charm';
 
 export interface ItemDef {
   id: string;
@@ -19,6 +20,11 @@ export interface ItemDef {
   armor?: number;
   /** potions: hp restored on use */
   heal?: number;
+  /** trinkets get their own equip slot; the stat field still says what they do
+   * (ring→weaponDmg, amulet→armor, charm→regen) */
+  trinket?: 'ring' | 'amulet' | 'charm';
+  /** charms: bonus hp/s added to daytime regen when worn */
+  regen?: number;
 }
 
 const I = (
@@ -61,4 +67,12 @@ export const ITEMS: Record<string, ItemDef> = Object.fromEntries([
   // potions
   I('tonic_minor', 'Minor Tonic', 'potion', '#d97b7b', '#f2f2f2', { heal: 30 }),
   I('tonic_major', 'Major Tonic', 'potion', '#c9a0dc', '#f2f2f2', { heal: 75 }),
+  // trinkets — each gets its own soul-bound equip slot (rings sharpen, amulets
+  // ward, charms mend); craftable + rare drops from brutes/wisps/bosses
+  I('ring_copper', 'Copper Ring', 'ring', '#c47b3b', '#e6c86e', { trinket: 'ring', weaponDmg: 1 }),
+  I('ring_iron', 'Iron Ring', 'ring', '#9aa7b8', '#7fb8e6', { trinket: 'ring', weaponDmg: 2 }),
+  I('amulet_stone', 'Stone Amulet', 'amulet', '#737887', '#569a53', { trinket: 'amulet', armor: 1 }),
+  I('amulet_iron', 'Iron Amulet', 'amulet', '#9aa7b8', '#c9a0dc', { trinket: 'amulet', armor: 2 }),
+  I('charm_ember', 'Ember Charm', 'charm', '#c85a2e', '#ffd27a', { trinket: 'charm', regen: 0.5 }),
+  I('charm_moon', 'Moon Charm', 'charm', '#4a6ea8', '#c9a0dc', { trinket: 'charm', regen: 1 }),
 ].map((d) => [d.id, d]));
