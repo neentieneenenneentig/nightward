@@ -24,6 +24,8 @@ export interface UIHooks {
   interact(): void;
   attack(): void;
   enterBuild(id: string): void;
+  startBuild(): void;
+  cycleBuild(dir: number): void;
   craft(id: string): void;
   useItem(id: string): void;
   equip(id: string): void;
@@ -34,7 +36,7 @@ export interface UIHooks {
   logEntries(): LogEntry[];
 }
 
-type Panel = 'bag' | 'craft' | 'build' | 'skills' | 'log' | null;
+type Panel = 'bag' | 'craft' | 'skills' | 'log' | null;
 
 const icon = (id: string) => iconUrl(id, ITEMS[id].icon as any);
 
@@ -125,19 +127,34 @@ export class UI {
   private buildBuildBar() {
     const bar = el('div', 'nw-buildbar');
     bar.innerHTML = `
-      <span class="ico">&#9874;</span>
-      <div class="txt"><b class="nm"></b><span class="hint">Click to place &middot; hold &amp; drag paints walls &middot; right-click / Esc / B stops</span></div>
-      <div class="nw-btn cancel" style="pointer-events:auto">Cancel</div>`;
+      <div class="nw-btn cyc prev">&lsaquo;</div>
+      <img class="bimg" alt="">
+      <div class="txt"><b class="nm"></b><span class="cost"></span>
+        <span class="hint">Tab / wheel cycles &middot; click places &middot; drag paints walls &middot; right-click / Esc / B stops</span></div>
+      <div class="nw-btn cyc next">&rsaquo;</div>
+      <div class="nw-btn cancel">Cancel</div>`;
+    bar.querySelector('.prev')!.addEventListener('click', () => this.hooks.cycleBuild(-1));
+    bar.querySelector('.next')!.addEventListener('click', () => this.hooks.cycleBuild(1));
     bar.querySelector('.cancel')!.addEventListener('click', () => this.hooks.enterBuild(''));
     this.root.appendChild(bar);
     this.buildBar = bar;
   }
 
-  /** Show/hide the placement banner (called by the build system). */
-  setBuildBanner(name: string | null) {
+  /** The build carousel banner (called by the build system with the current
+   * blueprint, or null to hide). Shows icon, cost coloring, afford count. */
+  setBuildBanner(sel: { def: any; afford: number } | null) {
     if (!this.buildBar) return;
-    if (!name) { this.buildBar.classList.remove('on'); return; }
-    this.buildBar.querySelector('.nm')!.textContent = 'Placing ' + name;
+    if (!sel) { this.buildBar.classList.remove('on'); return; }
+    const d = sel.def;
+    (this.buildBar.querySelector('.bimg') as HTMLImageElement).src = iconBuilding(d.art);
+    this.buildBar.querySelector('.nm')!.textContent =
+      d.name + (d.unique ? '' : ` — ${sel.afford} affordable`);
+    const cost = d.cost.map((s: any) => {
+      const ok = invCount(this.state, s.id) >= s.n;
+      return `<span class="${ok ? 'have' : 'lack'}">${s.n} ${ITEMS[s.id].name}</span>`;
+    }).join(' &middot; ');
+    const tower = d.tower ? ` &middot; ${d.tower.dmg} dmg / ${d.tower.rangeTiles}t` : '';
+    this.buildBar.querySelector('.cost')!.innerHTML = cost + tower;
     this.buildBar.classList.add('on');
   }
 
@@ -168,10 +185,11 @@ export class UI {
     log.addEventListener('click', () => this.open('log'));
   }
 
-  /** Build button/key: while actively placing, this cancels placement instead of opening the list. */
+  /** Build button/key: toggles placement browsing directly — no popup menu. */
   private toggleBuild() {
-    if (this.hooks.isPlacing()) { this.hooks.enterBuild(''); this.hidePanel(); return; }
-    this.toggle('build');
+    if (this.hooks.isPlacing()) { this.hooks.enterBuild(''); return; }
+    this.hidePanel(); // placement needs the map visible
+    this.hooks.startBuild();
   }
 
   // ----------------------------------------------------------------- keys ----
@@ -180,6 +198,11 @@ export class UI {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
     const k = e.key.toLowerCase();
     if (k === 'escape') { this.close(); return; }
+    if (k === 'tab' && this.hooks.isPlacing()) {
+      e.preventDefault(); // keep focus in the game — tab flips blueprints
+      this.hooks.cycleBuild(e.shiftKey ? -1 : 1);
+      return;
+    }
     if (e.repeat) return;
     if (k === 'e') this.hooks.interact();
     else if (k === ' ') this.hooks.attack();
@@ -211,7 +234,7 @@ export class UI {
     this.panelHost.appendChild(scrim);
 
     const head = el('div', 'nw-phead');
-    const titles: Record<string, string> = { bag: 'BAG', craft: 'CRAFTING', build: 'BUILD', skills: 'SKILLS', log: 'LOG' };
+    const titles: Record<string, string> = { bag: 'BAG', craft: 'CRAFTING', skills: 'SKILLS', log: 'LOG' };
     head.innerHTML = `<h2>${titles[this.panel]}</h2>`;
     if (this.panel === 'craft') head.appendChild(this.craftTabs());
     const x = el('div', 'nw-x'); x.innerHTML = '&times;';
@@ -241,7 +264,6 @@ export class UI {
   private fillBody(body: HTMLElement) {
     if (this.panel === 'bag') this.fillBag(body);
     else if (this.panel === 'craft') this.fillCraft(body);
-    else if (this.panel === 'build') this.fillBuild(body);
     else if (this.panel === 'skills') this.fillSkills(body);
     else if (this.panel === 'log') this.fillLog(body);
   }
@@ -365,40 +387,7 @@ export class UI {
     }
   }
 
-  private fillBuild(body: HTMLElement) {
-    for (const b of BUILDINGS) {
-      const has = invHasAll(this.state, b.cost);
-      const already = b.unique && this.state.buildings.some((x) => x.type === b.id);
-      const row = el('div', 'nw-row');
-      const cost = b.cost.map((s) => {
-        const ok = invCount(this.state, s.id) >= s.n;
-        return `<span class="${ok ? 'have' : 'lack'}">${invCount(this.state, s.id)}/${s.n} ${ITEMS[s.id].name}</span>`;
-      }).join(' &middot; ');
-      const stats = [
-        b.tower ? `${b.tower.dmg} dmg &middot; ${b.tower.rangeTiles} tile range &middot; every ${b.tower.cooldown}s` : '',
-        `${b.hp} hp`,
-      ].filter(Boolean).join(' &middot; ');
-      row.innerHTML = `
-        <img src="${iconBuilding(b.art)}" alt="">
-        <div class="info">
-          <div class="name">${b.name} ${b.pop ? `&middot; +${b.pop} pop` : ''} ${b.territory ? `&middot; +${b.territory} terr` : ''}</div>
-          <div class="sub">${b.desc}</div>
-          <div class="sub">${stats}</div>
-          <div class="sub">${cost}</div>
-        </div>`;
-      const btn = el('button', 'nw-make') as HTMLButtonElement;
-      btn.textContent = already ? 'Built' : has ? 'Place' : 'Need materials';
-      btn.disabled = already;
-      if (!has) btn.classList.add('short');
-      btn.addEventListener('click', () => {
-        if (already) return;
-        this.hooks.enterBuild(b.id);   // enter() toasts what's missing if short
-        if (invHasAll(this.state, b.cost)) this.hidePanel(); // entered placement — get out of the way
-      });
-      row.appendChild(btn);
-      body.appendChild(row);
-    }
-  }
+  // (the popup build menu is gone — placement browsing lives in the carousel banner)
 
   private fillSkills(body: HTMLElement) {
     const kindLabel: Record<string, string> = { gather: 'Gathering', craft: 'Crafting', combat: 'Combat' };

@@ -136,7 +136,11 @@ body, canvas { cursor: url(${curDefault}), auto; }
   color: var(--ink); max-width: 94vw;
 }
 .nw-buildbar.on { display: flex; animation: nw-buildpulse 1.1s ease-in-out infinite; }
-.nw-buildbar .ico { font-size: 18px; color: var(--good); }
+.nw-buildbar .bimg { width: 40px; height: 40px; image-rendering: pixelated; }
+.nw-buildbar .cyc { min-width: 0; padding: 8px 10px 10px; }
+.nw-buildbar .cost { font-size: 11px; color: var(--ink-dim); }
+.nw-buildbar .cost .have { color: var(--good); }
+.nw-buildbar .cost .lack { color: var(--bad); }
 .nw-buildbar .txt { display: flex; flex-direction: column; line-height: 1.4; min-width: 0; }
 .nw-buildbar .nm { font-family: var(--font-pixel); font-size: 9px; color: #fff2c8;
   text-shadow: 1px 1px 0 #000; }

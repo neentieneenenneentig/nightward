@@ -94,6 +94,8 @@ async function boot() {
     interact: () => gather.tryStart(),
     attack: () => combat.attack(),
     enterBuild: (id: string) => (id ? build.enter(id) : build.cancel()),
+    startBuild: () => build.start(),
+    cycleBuild: (dir: number) => build.cycle(dir),
     craft: (id: string) => craft(state, id, ctx.toast, log),
     useItem: (id: string) => useItem(id),
     equip: (id: string) => equipItem(id),
@@ -108,8 +110,8 @@ async function boot() {
     },
   });
 
-  // hand the build system a way to drive the placement banner
-  ctx.setBuildBanner = (n: string | null) => ui.setBuildBanner(n);
+  // hand the build system a way to drive the placement carousel banner
+  ctx.setBuildBanner = (sel: { def: any; afford: number } | null) => ui.setBuildBanner(sel);
 
   function labelFor(def: any) { return (VERB[def.skill] ?? 'Gather') + ' ' + def.name; }
 
@@ -162,6 +164,12 @@ async function boot() {
   canvas.addEventListener('contextmenu', (e) => {
     if (build.mode) { e.preventDefault(); build.cancel(); }
   });
+  // wheel flips through blueprints while placing (zoom will gate on !build.mode later)
+  canvas.addEventListener('wheel', (e) => {
+    if (!build.mode) return;
+    e.preventDefault();
+    build.cycle(e.deltaY > 0 ? 1 : -1);
+  }, { passive: false });
 
   setupDebug(ctx, hordes, worldbosses);
 

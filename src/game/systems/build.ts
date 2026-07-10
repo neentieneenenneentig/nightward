@@ -2,7 +2,6 @@
 // valid tile to place. Costs & rules from data; walls chain-place.
 import { CFG } from '../data/config';
 import { BUILDINGS, type BuildingDef } from '../data/buildings';
-import { ITEMS } from '../data/items';
 import { invCount, invHasAll, invTakeAll } from '../rules';
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
@@ -18,31 +17,60 @@ export interface BuildMode {
 
 export class BuildSystem {
   mode: BuildMode | null = null;
-  private enteredAt = 0; // guards against the menu click falling through to the canvas
+  private enteredAt = 0; // guards against the entry click falling through to the canvas
+  private idx = 0;       // carousel position, remembered across build sessions
 
   constructor(private ctx: any) {}
 
+  /** Blueprints you can currently pick: everything except already-built uniques.
+   * Missing materials do NOT hide a blueprint — you can browse it, just not place. */
+  private selectable(): BuildingDef[] {
+    const { state } = this.ctx;
+    return BUILDINGS.filter((b) => !(b.unique && state.buildings.some((x: any) => x.type === b.id)));
+  }
+
+  /** B key / Build button: enter placement browsing where you left off. */
+  start() {
+    const list = this.selectable();
+    if (!list.length) return;
+    this.idx = Math.min(this.idx, list.length - 1);
+    this.beginWith(list[this.idx]);
+  }
+
+  /** Jump straight to one blueprint (kept for hooks/tests). */
   enter(id: string) {
-    const { state, toast } = this.ctx;
     const def = BUILDINGS.find((b) => b.id === id);
     if (!def) return;
-    if (def.unique && state.buildings.some((b: any) => b.type === id)) {
-      toast(`You already have a ${def.name}`, 'bad');
+    if (def.unique && this.ctx.state.buildings.some((b: any) => b.type === id)) {
+      this.ctx.toast(`You already have a ${def.name}`, 'bad');
       return;
     }
-    if (!invHasAll(state, def.cost)) {
-      const miss = def.cost
-        .filter((c) => invCount(state, c.id) < c.n)
-        .map((c) => `${c.n - invCount(state, c.id)} more ${ITEMS[c.id].name}`)
-        .join(', ');
-      toast(`Need ${miss}`, 'bad');
-      return;
-    }
-    // ghost starts at the tile in front of the player
-    const tx = Math.floor(state.player.x / TILE);
-    const ty = Math.floor(state.player.y / TILE) - 1;
+    const at = this.selectable().findIndex((b) => b.id === id);
+    if (at >= 0) this.idx = at;
+    this.beginWith(def);
+  }
+
+  private beginWith(def: BuildingDef) {
+    const { state } = this.ctx;
+    // keep the ghost where it was if already browsing; else start in front of the player
+    const tx = this.mode ? this.mode.tx : Math.floor(state.player.x / TILE);
+    const ty = this.mode ? this.mode.ty : Math.floor(state.player.y / TILE) - 1;
     this.mode = { def, tx, ty, valid: false, lastTx: NaN, lastTy: NaN };
     this.enteredAt = performance.now();
+    this.validate();
+    this.updateBanner();
+  }
+
+  /** Tab / wheel / arrow buttons: flip to the next (or previous) blueprint. */
+  cycle(dir: number) {
+    const m = this.mode;
+    if (!m) return;
+    const list = this.selectable();
+    if (!list.length) return;
+    const cur = list.findIndex((b) => b.id === m.def.id);
+    this.idx = ((cur >= 0 ? cur : this.idx) + dir + list.length) % list.length;
+    m.def = list[this.idx];
+    m.lastTx = NaN; m.lastTy = NaN;
     this.validate();
     this.updateBanner();
   }
@@ -56,9 +84,7 @@ export class BuildSystem {
 
   private updateBanner() {
     const m = this.mode;
-    if (!m) return;
-    const n = this.affordable();
-    this.ctx.setBuildBanner?.(`${m.def.name}${m.def.unique ? '' : ` — ${n} affordable`}`);
+    this.ctx.setBuildBanner?.(m ? { def: m.def, afford: this.affordable() } : null);
   }
 
   cancel() {
