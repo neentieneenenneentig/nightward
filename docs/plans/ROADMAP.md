@@ -85,11 +85,25 @@ when it becomes the active task.
   phases+telegraphs were the actual milestone content. Revisit spin as its own small follow-up if
   wanted. Brief: `docs/plans/W3-combat.md`. **Playtest gate: STOP here** — combat *feel* is subjective;
   get the user's verdict before starting W4 (W1 lesson).
-- **W4 — Day hunts & the balance pass** *(active next — see content-first pivot above)*: daytime
-  roaming mobs around the player (sparse, capped, wander near their spawn, despawn when left far
-  behind; data-driven via a `daytime` flag on `EnemyDef` + a `config.dayspawn` block), harder nights
-  (config.horde retune), and ×10 xp curves (skills AND soul gear — user asked for "everything").
-  Brief: `docs/plans/W4-dayhunts.md`. **Playtest gate** — this is a balance-feel milestone.
+- **W4 — Day hunts & the balance pass** ✅ shipped `v0.9-w4-dayhunts` (2026-07-07): daytime prey
+  mobs (data-driven `daytime` flag + `config.dayspawn`, wander/despawn/no hall aggro), night retune,
+  ×10 xp curves. Brief: `docs/plans/W4-dayhunts.md`. The automated playtest agent
+  (`.claude/agents/playtest.md`, added same day) screened the build and found two real aim bugs —
+  fixed in the follow-up batch below. **Balance verdict from the user is still OPEN** (night
+  pressure / grind speed); building-UX feedback arrived instead and was handled as fixes.
+- **Fix batch v0.9.1–v0.9.3 (2026-07-08, on main, no worktree — bug fixes to shipped work):**
+  `v0.9.1-aimfix` melee aim (true-angle swings via `player.aimAngle`, sticky diagonal facing,
+  feet-anchored hit arc); `v0.9.2-buildux` build placement rework (click-through grace, press-aim/
+  release-place, drag-paint walls, ghost grid + tower range ring, reason-specific errors, afford
+  count in banner); `v0.9.3-godmode-logging` god/test mode on **U** (immortal + all items/skills —
+  also unblocks the playtest agent), bosses smash palisades instead of phasing, info-level logging
+  (every mob/boss attack, tower shot, spawn, equip/use; log ring 200→500).
+- **W4.5 — Pixel UI skin** *(active next — user verdict 2026-07-10: "awesome polished feel", DOM
+  UI clashes with the game art)*: re-skin the existing DOM overlay with **procgen 9-slice pixel
+  chrome** (seeded canvas panels/buttons → CSS `border-image` data-URIs, palette sampled from the
+  game's own art) instead of adopting an off-the-shelf pixel CSS kit. No layout or logic changes —
+  `styles.ts` + a new `engine/procgen/uiskin.ts`. Brief: `docs/plans/W4.5-uiskin.md`.
+  **Playtest gate** — pure look milestone, user verdict before W5.
 - **W5 — Zoom & the wide view**: mouse-wheel (+ pinch) zoom, pulled forward from the old
   zoom/LOD/dream-regen milestone. Needs LOD chunk baking to stay performant zoomed out. Zoom-out is
   **capped at a wide tactical view** — the world is unbounded procgen, so "see the whole map" literally
