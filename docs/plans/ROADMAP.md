@@ -98,12 +98,20 @@ when it becomes the active task.
   count in banner); `v0.9.3-godmode-logging` god/test mode on **U** (immortal + all items/skills —
   also unblocks the playtest agent), bosses smash palisades instead of phasing, info-level logging
   (every mob/boss attack, tower shot, spawn, equip/use; log ring 200→500).
-- **W4.5 — Pixel UI skin** *(active next — user verdict 2026-07-10: "awesome polished feel", DOM
-  UI clashes with the game art)*: re-skin the existing DOM overlay with **procgen 9-slice pixel
-  chrome** (seeded canvas panels/buttons → CSS `border-image` data-URIs, palette sampled from the
-  game's own art) instead of adopting an off-the-shelf pixel CSS kit. No layout or logic changes —
-  `styles.ts` + a new `engine/procgen/uiskin.ts`. Brief: `docs/plans/W4.5-uiskin.md`.
-  **Playtest gate** — pure look milestone, user verdict before W5.
+- **W4.5 — Pixel UI skin** ✅ shipped `v0.10-w4.5-rpgui` (2026-07-10). **Pivoted per user: yoink
+  RPGUI** (zlib license, bundled via npm — the brief's procgen-9-slice option was passed over).
+  Amends the no-assets non-negotiable for UI CHROME only: RPGUI's frame/button/cursor art + the
+  vendored OFL "Press Start 2P" font (`src/game/ui/fonts/`) are build-time-bundled; game art stays
+  100% procgen. RPGUI's CSS is NOT imported — `styles.ts` consumes only its images via Vite asset
+  imports, so layout/classes were untouched. Brief (historical option analysis):
+  `docs/plans/W4.5-uiskin.md`. **Playtest gate: user verdict on the look still open.**
+- **W4.6 — Trinket gear slots** ✅ shipped `v0.11-trinkets` (2026-07-10, user: "more gear slots
+  then we flesh out progression"): ring (+dmg, levels on landed swings), amulet (+armor, levels on
+  hits taken), charm (+day regen, levels on kills, ×10 from bosses) — three new soul-bound slots on
+  the existing machinery (`ItemDef.trinket` routes `slotOf`). Six craftables + brute/wisp/boss
+  drops. Also a danger pass: `perNight 5→5.5`, `hpGrowth 1.18→1.21`, `dmgGrowth 1.12→1.15` (night 1
+  untouched — user is happy with the start). Deeper progression (soul-feeding, satchel, paper-doll)
+  stays W7/W8 scope.
 - **W5 — Zoom & the wide view**: mouse-wheel (+ pinch) zoom, pulled forward from the old
   zoom/LOD/dream-regen milestone. Needs LOD chunk baking to stay performant zoomed out. Zoom-out is
   **capped at a wide tactical view** — the world is unbounded procgen, so "see the whole map" literally
