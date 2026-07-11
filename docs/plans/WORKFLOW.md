@@ -11,6 +11,11 @@ Formalized workflow so each milestone is isolated, verifiable, and mergeable on 
 2. **Read the brief:** `docs/plans/ROADMAP.md` for the whole picture, `docs/plans/W<n>-*.md` for the task.
 3. **Implement** to the spec. Keep the non-negotiables (procgen, data-driven, determinism).
 4. **Verify in the worktree** (static checks only — live preview CANNOT run here, see note):
+   - `npm run wasm` FIRST on any fresh clone/worktree — `src/wasm/pkg/` is gitignored, so
+     typecheck and build both fail until the core is built (the shared cargo target dir makes
+     worktree rebuilds fast; needs `~/.cargo/bin` on PATH).
+   - `cargo test` in `rust/nightward-core/` → all Rust logic tests green (this is where the core's
+     logic is tested; the browser only ever runs release wasm).
    - typecheck → clean, build → green. Worktrees have no `node_modules`; junction it from main
      (`New-Item -ItemType Junction`) or run tools via the main repo's install, e.g.
      `node <mainrepo>/node_modules/typescript/bin/tsc --noEmit -p <worktree>/tsconfig.json`.
@@ -48,6 +53,10 @@ Formalized workflow so each milestone is isolated, verifiable, and mergeable on 
 
 ## Handy commands
 - Dev server: `preview_start` with `nightward-dev` (`.claude/launch.json`), port 5173. Add `?gl` to force WebGL.
+- Build the Rust/wasm core: `npm run wasm` (wasm-pack → `src/wasm/pkg/`). Required once per fresh
+  clone AND per fresh worktree before typecheck/build, since `pkg/` is gitignored. The cargo target
+  dir is shared under `node_modules/.cargo-target` (OneDrive dodge), so worktree builds reuse the cache.
+- Rust tests: `cargo test` in `rust/nightward-core/` (host-native; part of the static verify list).
 - Typecheck: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json`
 - Build: `node node_modules/vite/bin/vite.js build`
 - Dev test hook: `window.__nw` — `.state`, `.ctx`, `.sys.*`, `.step(n, dt)` (advance sim deterministically),
