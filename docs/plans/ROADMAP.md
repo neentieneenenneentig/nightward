@@ -174,6 +174,14 @@ sub-tile (falling-sand scale, where Rust genuinely becomes necessary).
 - W7 (loot economy) gets richer inputs from this batch: charcoal/ash (fire), crops (farming).
 - W8 (grid inventory) unaffected.
 
+### Brief convention (this batch)
+R-briefs are **implementation-grade**: exact file contents/contracts an implementer follows
+without inventing APIs, ending in an **Acceptance checklist** that is the post-merge verification
+contract (run verbatim — single-eval blocks at a fixed `?seed=`, per the W3 harness lesson).
+R2–R4 get their briefs written to this standard when they go ACTIVE (after the preceding gate
+passes), never earlier — pre-written briefs go stale (W1 lesson; the R1 implementation will
+reshape R2's details).
+
 ### Milestones (one worktree each, in order)
 - **R0 — Rust toolchain + wasm spike.** rustup/wasm-pack install, `nightward-core` crate, `ping()`
   + zero-copy checkerboard demo baked to a debug texture, Vite + deploy.yml integration,
