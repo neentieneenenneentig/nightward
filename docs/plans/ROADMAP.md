@@ -1,4 +1,4 @@
-# NIGHTWARD — Batch 2 roadmap: The Living World & Soul Gear
+# NIGHTWARD — Roadmap (batches 2+; batch 4 "World Engine" is ACTIVE)
 
 Status baseline: `v0.4-world-and-dread` (M0–M3 + World & Dread pass shipped).
 This roadmap is the source of truth for the current batch. Each milestone is built in its
@@ -112,7 +112,9 @@ when it becomes the active task.
   drops. Also a danger pass: `perNight 5→5.5`, `hpGrowth 1.18→1.21`, `dmgGrowth 1.12→1.15` (night 1
   untouched — user is happy with the start). Deeper progression (soul-feeding, satchel, paper-doll)
   stays W7/W8 scope.
-- **W5 — Zoom & the wide view**: mouse-wheel (+ pinch) zoom, pulled forward from the old
+- **W5 — Zoom & the wide view** *(re-sequenced 2026-07-11: runs AFTER R2 — see Batch 4 below;
+  R1/R2 rewrite chunk rendering, so the LOD baker gets built once, over the final world model)*:
+  mouse-wheel (+ pinch) zoom, pulled forward from the old
   zoom/LOD/dream-regen milestone. Needs LOD chunk baking to stay performant zoomed out. Zoom-out is
   **capped at a wide tactical view** — the world is unbounded procgen, so "see the whole map" literally
   can't exist; a minimap of explored regions is the honest complement (candidate stretch scope).
@@ -131,6 +133,83 @@ when it becomes the active task.
   placement balloons; same cut-line pattern that worked for W3's spin). Paper-doll equip panel; the
   natural home for W2's deferred rings/amulets/charms and the "Soul Satchel" capacity upgrades.
   **Design sign-off gate:** agree the inventory style with the user BEFORE building — look/feel milestone.
+
+## Batch 4 — The World Engine (R-batch: Rust/wasm runtime world) — ACTIVE (approved 2026-07-11)
+
+User verdict on the current world: too few blocks, nothing reacts — "no room for physics for
+skills." Root cause: terrain is a pure function of (seed, x, y); the only runtime-mutable world
+state is `depleted` + buildings. This batch makes the world **writable**, then **alive**, with a
+Rust→WebAssembly core (`rust/nightward-core`) doing the heavy lifting. Rust is a deliberate
+learning-experience choice — at tile scale JS typed arrays would suffice (honest math in the R0
+brief) — so every module is designed "wasm-shaped" and the investment compounds if we later go
+sub-tile (falling-sand scale, where Rust genuinely becomes necessary).
+
+### Amended non-negotiables (this batch)
+- **Two-language rule:** Rust is *generic machinery only* — the sim engine. ALL content and balance
+  stays in TS data rows (`src/game/data/*`), flat-packed and uploaded into the core at init and
+  re-uploadable at runtime, so `window.NW.CFG` live-editing keeps working. Adding a material or
+  tuning fire spread must NEVER require touching Rust.
+- **Boundary style:** batch APIs only. World state lives in wasm linear memory as flat arrays; JS
+  reads through zero-copy typed-array views; steady-state boundary crossings are O(1) per frame
+  (`tick`, event drain) — never per-tile call loops. Changes flow out via an event ring buffer.
+- Determinism stands: base world stays a pure function of seed; sim RNG is a counter-based hash
+  seeded from the world seed; wasm float semantics are IEEE-deterministic across machines.
+- No persistence stands: overrides and fields die with the tab. On-theme and saves us a save format.
+- `src/wasm/pkg/` (wasm-bindgen output) and cargo build dirs are build artifacts — gitignored,
+  rebuilt locally via `npm run wasm` and in CI.
+
+### Toolchain decisions (details + steps in the R0 brief)
+- rustup with the **`stable-gnu` host toolchain** (avoids the Visual Studio Build Tools install;
+  MSVC is the documented fallback) + `wasm32-unknown-unknown` target; **wasm-pack via its npm
+  package** (prebuilt binary — never `cargo install` it).
+- **Cargo target dir = `node_modules/.cargo-target`** (set in `rust/nightward-core/.cargo/config.toml`):
+  OneDrive does not sync `node_modules`, so multi-GB build churn never hits the sync client, and
+  git already ignores it. The repo lives inside OneDrive — this is load-bearing, don't skip it.
+- deploy.yml gains a Rust toolchain step; `npm run build` runs the wasm build first.
+
+### Re-sequencing the W-queue
+- **W5 (zoom/LOD) moves AFTER R2** — R1/R2 rewrite chunk rendering (effective materials + dynamic
+  field overlay); build the LOD baker once over the final model instead of twice.
+- W6 (lifespan/scoreboards) is independent — a fine breather between R-milestones if wanted.
+- W7 (loot economy) gets richer inputs from this batch: charcoal/ash (fire), crops (farming).
+- W8 (grid inventory) unaffected.
+
+### Milestones (one worktree each, in order)
+- **R0 — Rust toolchain + wasm spike.** rustup/wasm-pack install, `nightward-core` crate, `ping()`
+  + zero-copy checkerboard demo baked to a debug texture, Vite + deploy.yml integration,
+  `window.__nw.core`. No gameplay changes. Brief: `docs/plans/R0-rust-spike.md`.
+  *Learn: what wasm, linear memory, and wasm-bindgen actually are.*
+- **R1 — The writable world.** `data/materials.ts` supersedes the biome table (~16 materials: the
+  9 existing + dirt, ash, ice, mud, gravel, tilled soil, shallow water); wasm chunk-slot pool with
+  a sparse override store; `set_material` + changed-tile events → chunk rebakes; walkability +
+  movement speed from material props; god-mode paint brush. Rule: an override REMOVES the procgen
+  feature on that tile (the world remembers your touch). Brief: `docs/plans/R1-writable-world.md`.
+  **Playtest gate** (new material art/feel). *Learn: sparse overlays — "the world is a database
+  whose default value is a function"; zero-copy views.*
+- **R2 — Fire (the living world, part 1).** Per-active-chunk fuel/burn/wet fields, 10 Hz cellular-
+  automata tick in Rust: spread driven by material flammability + a slow wind drift, burnout →
+  `burnsTo` override (forest → ash + charcoal drops), burn damage to entities standing in it,
+  water/wetness extinguishes. New overlay renderer (per-chunk 16×16 RGBA glow texture, ≤20 Hz,
+  additive — NOT base-chunk rebakes; a spreading fire must not thrash the baker). **Firemaking
+  skill** (data rows): torch tool, campfire building (small light + night-fear radius), controlled
+  burns for charcoal. `CFG.fire` uploaded + live re-upload. Brief written at activation.
+  **Playtest gate — this is the batch's flagship.** *Learn: cellular automata, active-set
+  simulation, sim↔render decoupling.*
+- **R3 — Physical skills.** Entity kinematics in TS: knockback impulses on weapon hits, ice
+  slides, mud slows, foes knocked into deep water drown; ground-slam skill (radial impulse +
+  scorched crater ring via `set_material`); freeze verb (water→ice with a TTL decay queue in the
+  core — ice melts back); Excavation skill (dig for clay/gravel/rare finds). Mostly TS — the core
+  only adds TTL decay. **Playtest gate.** *Learn: impulse integration, material-driven movement.*
+- **R4 — Water, growth & farming (the living world, part 2).** Wetness spread + rain events
+  (`CFG.weather`); dug pits beside water flood into shallow water → **moats that actually block
+  night mobs** (tower-defense payoff); growth field regrows grass/saplings over ash/dirt across
+  in-game days; Farming skill: till → plant (planted feature-overrides, the replanting half of
+  R1's rule) → grow → harvest crops (food/cooking hook, W7 synergy). Candidate: unify `depleted`
+  into the override system. **Playtest gate.** *Learn: coupling multiple CA fields.*
+- **R5 — stretch, unscheduled.** Port worldgen itself into the core (SINGLE source — delete the TS
+  fbm path and batch-generate per chunk; never maintain two implementations) to make more
+  octaves/sub-biomes/materials cheap; flow-field pathfinding for big hordes; far-future: sub-tile
+  falling sand — the scale where Rust stops being a hobby and becomes the requirement.
 
 ### Deferred (old batch-2 back-half — engine/feel work, revisit after W8)
 - **Multi-res art + multi-tile resources** (old W4): `SUBPIX` detail factor in `engine/procgen/sprites.ts`;
