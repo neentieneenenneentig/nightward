@@ -49,6 +49,28 @@ export class ChunkMap {
     if (((ty % CHUNK) + CHUNK) % CHUNK === 0) this.rebuild(cx, cy - 1);
   }
 
+  /** Re-bake every chunk touched by a batch of changed tiles (from the world
+   * core's event drain), each at most once. Deduping is what keeps R2's fire
+   * from thrashing the baker. Returns how many loaded chunks were rebuilt. */
+  rebakeTiles(tiles: [number, number][]): number {
+    if (!tiles.length) return 0;
+    const dirty = new Set<string>();
+    for (const [tx, ty] of tiles) {
+      const cx = Math.floor(tx / CHUNK), cy = Math.floor(ty / CHUNK);
+      dirty.add(cx + ',' + cy);
+      // south-border tree rule: tall sprites poke up into the chunk above
+      if (((ty % CHUNK) + CHUNK) % CHUNK === 0) dirty.add(cx + ',' + (cy - 1));
+    }
+    let n = 0;
+    for (const key of dirty) {
+      if (!this.chunks.has(key)) continue; // not loaded — will bake fresh when scrolled in
+      const [cx, cy] = key.split(',').map(Number);
+      this.rebuild(cx, cy);
+      n++;
+    }
+    return n;
+  }
+
   private rebuild(cx: number, cy: number) {
     const key = cx + ',' + cy;
     const c = this.chunks.get(key);
@@ -63,11 +85,12 @@ export class ChunkMap {
     canvas.width = canvas.height = CHUNK_PX;
     const ctx = canvas.getContext('2d')!;
 
-    // ground
+    // ground — read the EFFECTIVE material (procgen base + any override), never
+    // gen.tileAt directly, so painted tiles bake with their new material's art
     for (let ty = 0; ty < CHUNK; ty++) {
       for (let tx = 0; tx < CHUNK; tx++) {
         const gtx = cx * CHUNK + tx, gty = cy * CHUNK + ty;
-        ctx.drawImage(this.art.tile(this.world.gen.tileAt(gtx, gty), gtx, gty), tx * TILE, ty * TILE);
+        ctx.drawImage(this.art.tile(this.world.materialAt(gtx, gty), gtx, gty), tx * TILE, ty * TILE);
       }
     }
     // features — include one extra row south of the chunk, because tall

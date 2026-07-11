@@ -1,9 +1,9 @@
 // Boot + the game loop. Fixed-timestep simulation (30 Hz) decoupled from
 // rendering: the sim stays deterministic and cheap, the renderer interpolates
 // between sim steps so motion is smooth at any refresh rate.
-import { Graphics, Sprite, Texture } from 'pixi.js';
+import { Graphics } from 'pixi.js';
 import { createRenderer } from './engine/renderer';
-import { initCore, mem, ping, Spike } from './wasm/core';
+import { initCore, Core } from './wasm/core';
 import { createInput } from './engine/input';
 import { CFG } from './game/data/config';
 import { newState, type GameState } from './game/state';
@@ -11,6 +11,8 @@ import { GameLog } from './game/systems/log';
 import { WorldGen, TILE } from './game/world/worldgen';
 import { WorldArt } from './game/world/art';
 import { World } from './game/world/world';
+import { WorldCore } from './game/world/core';
+import { M, MATERIALS, packMaterials, STRIDE } from './game/data/materials';
 import { ChunkMap } from './game/world/chunkmap';
 import { Views } from './game/world/views';
 import { Player } from './game/world/player';
@@ -31,29 +33,37 @@ import { Sound } from './engine/audio';
 
 const STEP = 1000 / 30;
 
-function seedFromHash(): number | null {
+/** `?seed=<int>` (query) overrides the random seed and makes acceptance scripts
+ * deterministic; `#s=<int>` (hash) is the legacy "new world" link. */
+function seedFromUrl(): number | null {
+  const q = new URLSearchParams(location.search).get('seed');
+  if (q !== null && /^-?\d+$/.test(q.trim())) return parseInt(q, 10) | 0;
   const m = location.hash.match(/s=(-?\d+)/);
   return m ? parseInt(m[1], 10) | 0 : null;
 }
 
 async function boot() {
-  let seed = seedFromHash();
+  let seed = seedFromUrl();
   if (seed === null) {
     seed = (Math.random() * 2 ** 31) | 0;
     history.replaceState(null, '', '#s=' + seed);
   }
 
   // the Rust/wasm core comes online before anything reads it — R1 stores the
-  // writable world in its linear memory, so wire the await seam now (R0 no-op).
+  // writable world in its linear memory. Boot order: init → new Core →
+  // set_materials → (worldgen) → WorldCore → newState → World → systems.
   await initCore();
+  const core = new Core(seed >>> 0, 4096);
+  core.set_materials(packMaterials(), STRIDE);
 
   const stage = await createRenderer(document.getElementById('app')!);
   const gen = new WorldGen(seed);
   const art = new WorldArt(seed);
+  const worldCore = new WorldCore(core, gen);
   const spawn = gen.findSpawn();
 
   const state: GameState = newState(seed, spawn);
-  const world = new World(gen, state);
+  const world = new World(gen, state, worldCore);
   const chunks = new ChunkMap(world, art, stage.ground);
   const views = new Views(stage.entities, art, world);
   views.reset(state.buildings);
@@ -77,7 +87,7 @@ async function boot() {
 
   // shared context every system reads/writes
   const ctx: any = {
-    state, world, chunks, views, cam, player, spawnPoint: spawn, log,
+    state, world, worldCore, chunks, views, cam, player, spawnPoint: spawn, log,
     isNight: () => phase(state.clock).isNight,
     nightIndex: () => phase(state.clock).dayIndex,
     toast: (m: string, k?: any) => ui.toast(m, k),
@@ -192,50 +202,22 @@ async function boot() {
   let acc = STEP;
   let wasNight = phase(state.clock).isNight;
   let frames = 0;
-  let dbgSprite: Sprite | null = null; // R0 wasm checker overlay (toggled by debugChecker)
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
-    sys: { gather, economy, build, hordes, combat, worldbosses }, world, player,
+    sys: { gather, economy, build, hordes, combat, worldbosses }, world, player, gen,
     get log() { return log.entries; },
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
     craft: (id: string) => craft(state, id, ctx.toast, log),
-    // R0: the wasm seam. `ping()` is a scalar round-trip; `debugChecker()` builds
-    // a 64×64 checker INSIDE wasm linear memory, reads it back through a zero-copy
-    // view, self-verifies the pattern, and toggles a grayscale sprite of it.
-    core: {
-      ping,
-      debugChecker(): boolean {
-        const s = new Spike(64, 64);
-        const view = mem().subarray(s.ptr(), s.ptr() + s.len()); // zero-copy window
-        let ok = true;
-        for (let y = 0; y < 64; y++)
-          for (let x = 0; x < 64; x++)
-            ok &&= view[y * 64 + x] === (((x >> 3) + (y >> 3)) % 2 === 0 ? 255 : 0);
-        // visual payoff: bake the view to a canvas → Pixi sprite, top-left; a
-        // second call toggles it back off (must read the view BEFORE s.free()).
-        if (dbgSprite) { dbgSprite.destroy(); dbgSprite = null; }
-        else {
-          const cv = document.createElement('canvas');
-          cv.width = cv.height = 64;
-          const cx = cv.getContext('2d')!;
-          const img = cx.createImageData(64, 64);
-          for (let i = 0; i < 64 * 64; i++) {
-            const g = view[i];
-            img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = g;
-            img.data[i * 4 + 3] = 255;
-          }
-          cx.putImageData(img, 0, 0);
-          const tex = Texture.from(cv);
-          tex.source.scaleMode = 'nearest';
-          dbgSprite = new Sprite(tex);
-          dbgSprite.scale.set(2);
-          dbgSprite.position.set(8, 8);
-          stage.app.stage.addChild(dbgSprite);
-        }
-        s.free(); // wasm-bindgen classes hold linear memory — free it explicitly
-        return ok;
-      },
+    // R1: the writable-world seam. __nw.core is the WorldCore wrapper (materialAt,
+    // setMaterial, overrideAt, pushMaterials, stats, _activate, _deactivate).
+    core: worldCore,
+    // paint a square of material (radius r) — the console verb behind the god brush
+    paint: (matId: number, tx: number, ty: number, r = 0) => {
+      for (let dy = -r; dy <= r; dy++)
+        for (let dx = -r; dx <= r; dx++)
+          worldCore.setMaterial(tx + dx, ty + dy, matId);
+      log.push('world', `Painted ${MATERIALS[matId]?.name ?? matId}${r ? ` r${r}` : ''} at (${tx},${ty})`, state.clock);
     },
   };
 
@@ -258,7 +240,8 @@ async function boot() {
     wasNight = ph.isNight;
 
     const a = ui.isOpen() ? { x: 0, y: 0 } : input.axis();
-    const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y));
+    const feetSpeed = world.speedAt(Math.floor(player.x / TILE), Math.floor(player.y / TILE));
+    const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y), feetSpeed);
     state.player.x = player.x;
     state.player.y = player.y;
 
@@ -296,6 +279,9 @@ async function boot() {
     cam.follow(fx, fy);
 
     const w = stage.app.screen.width, h = stage.app.screen.height;
+    // world core first — activate/deactivate chunks so the baker below reads the
+    // EFFECTIVE (override-aware) materials for anything freshly scrolled in
+    worldCore.ensureAround(fx, fy, w / cam.zoom, h / cam.zoom);
     chunks.ensureAround(fx, fy, w / cam.zoom, h / cam.zoom);
 
     views.syncFoes(hordes.foes, alpha);
@@ -325,6 +311,12 @@ async function boot() {
 
     Sound.setMood(state.gameOver ? 'dead' : bossNear ? 'boss' : ph.isNight ? 'night' : 'day');
     ui.refresh();
+
+    // sim tick (no-op in R1 — R2's fire CA fills it), then flush world changes:
+    // drain the core's changed-tile events and rebake exactly those chunks once.
+    core.tick(STEP / 1000);
+    const changed = worldCore.drainEvents();
+    if (changed.length) worldCore.bumpRebakes(chunks.rebakeTiles(changed));
   }
 }
 
@@ -332,9 +324,24 @@ async function boot() {
 function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem) {
   if (!CFG.debug.enabled) return;
   const { state } = ctx;
+  let brush = M.DIRT; // god-brush material, cycled with Shift+P
   window.addEventListener('keydown', (e) => {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
     switch (e.key) {
+      case 'p': { // god brush: paint the current material at the player's feet tile
+        if (!state.god) break;
+        const tx = Math.floor(state.player.x / TILE), ty = Math.floor(state.player.y / TILE);
+        ctx.worldCore.setMaterial(tx, ty, brush);
+        ctx.toast(`Painted ${MATERIALS[brush].name}`, 'info');
+        ctx.log?.push('world', `Painted ${MATERIALS[brush].name} at (${tx},${ty})`, state.clock);
+        break;
+      }
+      case 'P': { // Shift+P: cycle the brush material
+        if (!state.god) break;
+        brush = (brush + 1) % MATERIALS.length;
+        ctx.toast(`Brush: ${MATERIALS[brush].name}`, 'info');
+        break;
+      }
       case '.': state.clock += 30; ctx.toast('debug: +30s'); break;
       case 'y': { // summon the nearest world boss right on top of you
         const b = state.worldBosses.find((x: any) => x.reviveAt === 0);
@@ -368,8 +375,9 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
       }
     }
   });
-  // expose the live config for runtime tuning from the console
-  (window as any).NW = { CFG, state };
+  // expose the live config + materials table for runtime tuning from the console
+  // (edit NW.MATS[i].* then __nw.core.pushMaterials() to re-upload — see materials.ts)
+  (window as any).NW = { CFG, state, MATS: MATERIALS };
 }
 
 import { ITEMS } from './game/data/items';
