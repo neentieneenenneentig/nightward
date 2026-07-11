@@ -264,6 +264,7 @@ body, canvas { cursor: url(${curDefault}), auto; }
 .nw-log-gather .nw-logk, .nw-log-craft .nw-logk, .nw-log-build .nw-logk { color: var(--good); }
 .nw-log-region .nw-logk { color: #c9b6e6; }
 .nw-log-spawn .nw-logk { color: #7fb8e6; }
+.nw-log-world .nw-logk { color: #6fd3c0; }
 
 /* ---- toasts ---- */
 .nw-toasts { position: absolute; left: 50%; top: 54px; transform: translateX(-50%);

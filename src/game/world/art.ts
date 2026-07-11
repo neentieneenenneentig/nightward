@@ -6,7 +6,7 @@ import {
   makeTileVariants, makeTreeVariants, makeRockVariants, makeHerbVariants,
   makeBushVariants, makeStump, makeBuilding, makeBlobFrames, makeWall,
 } from '../../engine/procgen/sprites';
-import { BIOMES } from '../data/biomes';
+import { MATERIALS } from '../data/materials';
 import { FEATURES } from '../data/features';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
@@ -24,7 +24,9 @@ export class WorldArt {
 
   constructor(seed: number) {
     this.wallSeed = seed ^ hashId('wall-variant');
-    this.tiles = BIOMES.map((b, i) => makeTileVariants(b, seed, i, 4));
+    // one variant set per material id; makeTileVariants reads the art recipe
+    // (ramp/detail/accents), which every MaterialDef carries under `.art`.
+    this.tiles = MATERIALS.map((m, i) => makeTileVariants(m.art, seed, i, 4));
 
     for (const f of FEATURES) {
       const a = f.art;

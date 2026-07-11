@@ -212,9 +212,11 @@ export class HordeSystem {
       return;
     }
 
-    // march (day prey ambles while wandering, runs when it has you)
+    // march (day prey ambles while wandering, runs when it has you). Terrain
+    // under the foe's feet scales its speed too (mud bogs the horde down).
     const ux = (tx - f.x) / dist, uy = (ty - f.y) / dist;
-    const step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1);
+    const terrain = world.speedAt(Math.floor(f.x / TILE), Math.floor(f.y / TILE));
+    const step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain;
     let blocked: Building | null = null;
     const nx = f.x + ux * step, ny = f.y + uy * step;
     if (world.canStand(nx, f.y, 5)) f.x = nx;

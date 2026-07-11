@@ -35,15 +35,16 @@ export class Player {
     this.sprite.anchor.set(0.5, 1); // anchored at the feet
   }
 
-  update(dt: number, ax: number, ay: number, canStand: (x: number, y: number) => boolean): boolean {
+  update(dt: number, ax: number, ay: number, canStand: (x: number, y: number) => boolean, speedMul = 1): boolean {
     this.px = this.x;
     this.py = this.y;
     this.flashT -= dt;
     let moved = false;
     if (ax || ay) {
-      // committing to a swing (windup/active) slows you — the weight of the hit
+      // committing to a swing (windup/active) slows you — the weight of the hit;
+      // the terrain under your feet (mud/ice/sand/hill) scales it too (speedMul)
       const midSwing = this.attackPhase === 'windup' || this.attackPhase === 'active';
-      const speed = CFG.player.speed * (midSwing ? CFG.combat.moveSlowMult : 1);
+      const speed = CFG.player.speed * (midSwing ? CFG.combat.moveSlowMult : 1) * speedMul;
       const nx = this.x + ax * speed * dt;
       if (canStand(nx, this.y)) this.x = nx;
       const ny = this.y + ay * speed * dt;
