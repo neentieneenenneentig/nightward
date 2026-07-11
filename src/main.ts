@@ -1,8 +1,9 @@
 // Boot + the game loop. Fixed-timestep simulation (30 Hz) decoupled from
 // rendering: the sim stays deterministic and cheap, the renderer interpolates
 // between sim steps so motion is smooth at any refresh rate.
-import { Graphics } from 'pixi.js';
+import { Graphics, Sprite, Texture } from 'pixi.js';
 import { createRenderer } from './engine/renderer';
+import { initCore, mem, ping, Spike } from './wasm/core';
 import { createInput } from './engine/input';
 import { CFG } from './game/data/config';
 import { newState, type GameState } from './game/state';
@@ -41,6 +42,10 @@ async function boot() {
     seed = (Math.random() * 2 ** 31) | 0;
     history.replaceState(null, '', '#s=' + seed);
   }
+
+  // the Rust/wasm core comes online before anything reads it — R1 stores the
+  // writable world in its linear memory, so wire the await seam now (R0 no-op).
+  await initCore();
 
   const stage = await createRenderer(document.getElementById('app')!);
   const gen = new WorldGen(seed);
@@ -187,6 +192,7 @@ async function boot() {
   let acc = STEP;
   let wasNight = phase(state.clock).isNight;
   let frames = 0;
+  let dbgSprite: Sprite | null = null; // R0 wasm checker overlay (toggled by debugChecker)
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
     sys: { gather, economy, build, hordes, combat, worldbosses }, world, player,
@@ -194,6 +200,43 @@ async function boot() {
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
     craft: (id: string) => craft(state, id, ctx.toast, log),
+    // R0: the wasm seam. `ping()` is a scalar round-trip; `debugChecker()` builds
+    // a 64×64 checker INSIDE wasm linear memory, reads it back through a zero-copy
+    // view, self-verifies the pattern, and toggles a grayscale sprite of it.
+    core: {
+      ping,
+      debugChecker(): boolean {
+        const s = new Spike(64, 64);
+        const view = mem().subarray(s.ptr(), s.ptr() + s.len()); // zero-copy window
+        let ok = true;
+        for (let y = 0; y < 64; y++)
+          for (let x = 0; x < 64; x++)
+            ok &&= view[y * 64 + x] === (((x >> 3) + (y >> 3)) % 2 === 0 ? 255 : 0);
+        // visual payoff: bake the view to a canvas → Pixi sprite, top-left; a
+        // second call toggles it back off (must read the view BEFORE s.free()).
+        if (dbgSprite) { dbgSprite.destroy(); dbgSprite = null; }
+        else {
+          const cv = document.createElement('canvas');
+          cv.width = cv.height = 64;
+          const cx = cv.getContext('2d')!;
+          const img = cx.createImageData(64, 64);
+          for (let i = 0; i < 64 * 64; i++) {
+            const g = view[i];
+            img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = g;
+            img.data[i * 4 + 3] = 255;
+          }
+          cx.putImageData(img, 0, 0);
+          const tex = Texture.from(cv);
+          tex.source.scaleMode = 'nearest';
+          dbgSprite = new Sprite(tex);
+          dbgSprite.scale.set(2);
+          dbgSprite.position.set(8, 8);
+          stage.app.stage.addChild(dbgSprite);
+        }
+        s.free(); // wasm-bindgen classes hold linear memory — free it explicitly
+        return ok;
+      },
+    },
   };
 
   stage.app.ticker.add((tk) => {

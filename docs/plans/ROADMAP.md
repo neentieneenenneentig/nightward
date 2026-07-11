@@ -187,6 +187,15 @@ reshape R2's details).
   + zero-copy checkerboard demo baked to a debug texture, Vite + deploy.yml integration,
   `window.__nw.core`. No gameplay changes. Brief: `docs/plans/R0-rust-spike.md`.
   *Learn: what wasm, linear memory, and wasm-bindgen actually are.*
+  - **Deviation (2026-07-11):** wasm-pack does **not** honour `build.target-dir` from
+    `.cargo/config.toml` — it hardcodes `<crate>/target` when locating the compiled `.wasm`, so
+    cargo (which builds into `node_modules/.cargo-target`) and wasm-pack disagreed and the build
+    failed (fails on CI too, same reason). wasm-pack *does* honour the `CARGO_TARGET_DIR` env var,
+    and an absolute value is resolved identically by cargo and wasm-pack. Minimal fix: the `wasm`
+    npm script is `node scripts/wasm.mjs`, a tiny wrapper that sets `CARGO_TARGET_DIR` to the
+    absolute `node_modules/.cargo-target` and spawns wasm-pack. The `.cargo/config.toml` is kept —
+    it still routes bare `cargo test`/`cargo build` to the same dir (so `rust/nightward-core/target`
+    never appears). Everything else in the brief is verbatim.
 - **R1 — The writable world.** `data/materials.ts` supersedes the biome table (~16 materials: the
   9 existing + dirt, ash, ice, mud, gravel, tilled soil, shallow water); wasm chunk-slot pool with
   a sparse override store; `set_material` + changed-tile events → chunk rebakes; walkability +
