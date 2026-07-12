@@ -228,12 +228,13 @@ async function boot() {
 
   stage.app.ticker.add((tk) => {
     frames++;
-    acc = Math.min(acc + tk.deltaMS, 250); // clamp after tab-sleep
+    const frameMs = Math.min(tk.deltaMS, 250); // clamp after tab-sleep
+    acc = Math.min(acc + tk.deltaMS, 250);
     while (acc >= STEP) {
       sim(STEP / 1000);
       acc -= STEP;
     }
-    render(acc / STEP);
+    render(acc / STEP, frameMs);
   });
 
   function sim(dt: number) {
@@ -279,7 +280,7 @@ async function boot() {
     }
   }
 
-  function render(alpha: number) {
+  function render(alpha: number, frameMs: number) {
     const [fx, fy] = player.render(alpha);
     player.cont.zIndex = fy;
     cam.follow(fx, fy);
@@ -320,11 +321,14 @@ async function boot() {
     Sound.setMood(state.gameOver ? 'dead' : bossNear ? 'boss' : ph.isNight ? 'night' : 'day');
     ui.refresh();
 
-    // sim tick — R2: this is where the fire CA actually advances (paced at its own 10Hz
-    // internally, independent of render fps) — then flush world changes: drain the core's
-    // changed-tile events (paint AND fire burnout both ride this one channel) and rebake
-    // exactly those chunks once.
-    core.tick(STEP / 1000);
+    // sim tick — R2: this is where the fire CA actually advances. Feed REAL elapsed wall-clock
+    // time (frameMs), not the fixed sim step: render() runs once per rendered frame regardless
+    // of display refresh rate, so a constant dt here would make the CA's true tick rate scale
+    // with fps (2x too fast at 60Hz, ~4.8x at 144Hz) — exactly the coupling the core's own
+    // internal accumulator (fire_params[0], paced at 10Hz) is designed to avoid. Then flush
+    // world changes: drain the core's changed-tile events (paint AND fire burnout both ride
+    // this one channel) and rebake exactly those chunks once.
+    core.tick(frameMs / 1000);
     const changed = worldCore.drainEvents();
     fire.onWorldEvents(changed);
     if (changed.length) worldCore.bumpRebakes(chunks.rebakeTiles(changed));
