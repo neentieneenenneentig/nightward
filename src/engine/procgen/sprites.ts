@@ -396,7 +396,7 @@ function roof(p: Pix, apexX: number, apexY: number, baseY: number, x0: number, x
   }
 }
 
-export function makeBuilding(kind: 'hall' | 'hut' | 'wall' | 'tower', seed: number): HTMLCanvasElement {
+export function makeBuilding(kind: 'hall' | 'hut' | 'wall' | 'tower' | 'campfire', seed: number): HTMLCanvasElement {
   let p: Pix;
   switch (kind) {
     case 'wall': {
@@ -440,6 +440,21 @@ export function makeBuilding(kind: 'hall' | 'hut' | 'wall' | 'tower', seed: numb
       for (let y = 8, i = 0; y <= 22; y++, i++) p.set(38, y, WOOD[0]); // banner pole
       p.rect(33, 9, 37, 15, BANNER);           // the racket's colors
       p.set(35, 11, lighten(BANNER, 40));
+      break;
+    }
+    case 'campfire': {
+      // the STATIC baseline sprite — the actual light/motion comes from the fire glow overlay
+      // treating this tile as a permanently-burning tile (see Core::add_campfire), so this stays
+      // simple: a stone ring around crossed logs with a couple of ember pixels at the center.
+      p = new Pix(20, 14);
+      const stones: [number, number][] = [[2, 11], [4, 12], [8, 12], [12, 12], [16, 12], [17, 10], [15, 9], [3, 9]];
+      for (let i = 0; i < stones.length; i++) {
+        const [x, y] = stones[i];
+        p.rect(x, y, x + 1, y + 1, STONE[i % 2 === 0 ? 1 : 2]);
+      }
+      for (let i = 0; i < 9; i++) p.set(5 + i, 10 - ((i / 3) | 0), WOOD[1]);
+      for (let i = 0; i < 9; i++) p.set(14 - i, 10 - ((i / 3) | 0), WOOD[0]);
+      p.set(9, 8, [255, 140, 60]); p.set(10, 7, [255, 200, 120]); p.set(10, 9, [255, 90, 30]);
       break;
     }
   }

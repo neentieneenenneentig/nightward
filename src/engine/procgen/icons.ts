@@ -112,6 +112,15 @@ export function makeIcon(spec: IconSpec): HTMLCanvasElement {
       p.set(5, 8, darken(c, 10)); p.set(10, 8, darken(c, 10)); // side notches
       p.set(7, 11, lighten(a, 15));              // lower glint
       break;
+    case 'torch':
+      for (let i = 0; i < 9; i++) p.set(4 + i, 14 - i, c);       // handle, diagonal like axe/pick
+      p.set(12, 4, a); p.set(13, 3, lighten(a, 20)); p.set(14, 5, a); // flame
+      p.set(13, 5, lighten(a, 10)); p.set(12, 6, darken(a, 10));
+      break;
+    case 'charcoal':
+      p.rect(3, 8, 8, 12, c); p.rect(7, 6, 12, 10, darken(c, 8)); p.rect(4, 5, 9, 8, c);
+      p.set(5, 9, a); p.set(9, 7, a); p.set(6, 6, lighten(a, 12));
+      break;
     default:
       p.rect(4, 4, 11, 11, c);
   }

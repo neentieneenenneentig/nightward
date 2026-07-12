@@ -23,6 +23,7 @@ import { Toasts } from './toast';
 export interface UIHooks {
   interact(): void;
   attack(): void;
+  ignite(): void;
   enterBuild(id: string): void;
   startBuild(): void;
   cycleBuild(dir: number): void;
@@ -169,6 +170,7 @@ export class UI {
     };
     this.interactBtn = btn('nw-interact', 'Interact', 'E', 'primary');
     const attack = btn('nw-attack', '&#9876; Attack', 'Space');
+    const ignite = btn('nw-ignite', '&#128293; Ignite', 'F');
     const build = btn('nw-build', '&#9874; Build', 'B');
     const bag = btn('nw-bag', '&#127890; Bag', 'I');
     const craft = btn('nw-craft', '&#9881; Craft', 'C');
@@ -178,6 +180,7 @@ export class UI {
 
     this.interactBtn.addEventListener('click', () => this.hooks.interact());
     attack.addEventListener('click', () => this.hooks.attack());
+    ignite.addEventListener('click', () => this.hooks.ignite());
     build.addEventListener('click', () => this.toggleBuild());
     bag.addEventListener('click', () => this.open('bag'));
     craft.addEventListener('click', () => this.open('craft'));
@@ -206,6 +209,7 @@ export class UI {
     if (e.repeat) return;
     if (k === 'e') this.hooks.interact();
     else if (k === ' ') this.hooks.attack();
+    else if (k === 'f') this.hooks.ignite();
     else if (k === 'b') this.toggleBuild();
     else if (k === 'i') this.toggle('bag');
     else if (k === 'c') this.toggle('craft');

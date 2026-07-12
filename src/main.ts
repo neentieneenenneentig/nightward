@@ -24,6 +24,7 @@ import { BuildSystem } from './game/systems/build';
 import { HordeSystem } from './game/systems/hordes';
 import { CombatSystem } from './game/systems/combat';
 import { WorldBossSystem } from './game/systems/worldbosses';
+import { FireSystem } from './game/systems/fire';
 import { craft } from './game/systems/crafting';
 import { toggleEquip } from './game/rules';
 import { phase, tintAt } from './game/systems/daynight';
@@ -60,6 +61,7 @@ async function boot() {
   const gen = new WorldGen(seed);
   const art = new WorldArt(seed);
   const worldCore = new WorldCore(core, gen);
+  worldCore.pushFireParams();
   const spawn = gen.findSpawn();
 
   const state: GameState = newState(seed, spawn);
@@ -104,10 +106,13 @@ async function boot() {
   ctx.hordes = hordes;
   const worldbosses = new WorldBossSystem(ctx);
   ctx.worldbosses = worldbosses;
+  const fire = new FireSystem(ctx);
+  ctx.fire = fire;
 
   const ui = new UI(state, {
     interact: () => gather.tryStart(),
     attack: () => combat.attack(),
+    ignite: () => fire.tryIgnite(),
     enterBuild: (id: string) => (id ? build.enter(id) : build.cancel()),
     startBuild: () => build.start(),
     cycleBuild: (dir: number) => build.cycle(dir),
@@ -204,7 +209,7 @@ async function boot() {
   let frames = 0;
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
-    sys: { gather, economy, build, hordes, combat, worldbosses }, world, player, gen, chunks,
+    sys: { gather, economy, build, hordes, combat, worldbosses, fire }, world, player, gen, chunks,
     get log() { return log.entries; },
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
@@ -256,6 +261,7 @@ async function boot() {
     combat.update(dt);
     hordes.update(dt);
     worldbosses.update(dt);
+    fire.update(dt);
   }
 
   function enterRegion(ptx: number, pty: number, rk: string) {
@@ -284,6 +290,7 @@ async function boot() {
     worldCore.ensureAround(fx, fy, w / cam.zoom, h / cam.zoom);
     chunks.ensureAround(fx, fy, w / cam.zoom, h / cam.zoom);
     chunks.tickFoam(performance.now());
+    chunks.tickGlow(performance.now());
 
     views.syncFoes(hordes.foes, alpha);
     views.syncBosses(state.worldBosses, alpha);
@@ -313,10 +320,13 @@ async function boot() {
     Sound.setMood(state.gameOver ? 'dead' : bossNear ? 'boss' : ph.isNight ? 'night' : 'day');
     ui.refresh();
 
-    // sim tick (no-op in R1 — R2's fire CA fills it), then flush world changes:
-    // drain the core's changed-tile events and rebake exactly those chunks once.
+    // sim tick — R2: this is where the fire CA actually advances (paced at its own 10Hz
+    // internally, independent of render fps) — then flush world changes: drain the core's
+    // changed-tile events (paint AND fire burnout both ride this one channel) and rebake
+    // exactly those chunks once.
     core.tick(STEP / 1000);
     const changed = worldCore.drainEvents();
+    fire.onWorldEvents(changed);
     if (changed.length) worldCore.bumpRebakes(chunks.rebakeTiles(changed));
   }
 }
@@ -376,11 +386,14 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
       }
     }
   });
-  // expose the live config + materials table for runtime tuning from the console
-  // (edit NW.MATS[i].* then __nw.core.pushMaterials() to re-upload — see materials.ts)
-  (window as any).NW = { CFG, state, MATS: MATERIALS };
+  // expose the live config + materials table for runtime tuning from the console (edit
+  // NW.MATS[i].* then __nw.core.pushMaterials() to re-upload — see materials.ts; NW.ENEMIES is
+  // a small testability addition so acceptance scripts can construct a synthetic Foe without a
+  // synchronous "spawn one now" hook otherwise)
+  (window as any).NW = { CFG, state, MATS: MATERIALS, ENEMIES };
 }
 
 import { ITEMS } from './game/data/items';
 import { SKILLS } from './game/data/skills';
+import { ENEMIES } from './game/data/enemies';
 boot();
