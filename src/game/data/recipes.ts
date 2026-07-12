@@ -46,4 +46,6 @@ export const RECIPES: Recipe[] = [
   R('ring_iron',    'smithing', 13, 110, s('ring_iron'), s('iron_bar', 1)),
   R('amulet_iron',  'smithing', 14, 120, s('amulet_iron'), s('iron_bar', 1), s('moonbell', 1)),
   R('charm_moon',   'alchemy', 10, 90, s('charm_moon'), s('moonbell', 2), s('fine_log', 1)),
+  // firemaking
+  R('torch',        'crafting', 1, 15, s('torch'), s('log', 1), s('stone', 1)),
 ];

@@ -13,4 +13,5 @@ export const SKILLS: SkillDef[] = [
   { id: 'smithing',    name: 'Smithing',    kind: 'craft' },
   { id: 'alchemy',     name: 'Alchemy',     kind: 'craft' },
   { id: 'combat',      name: 'Combat',      kind: 'combat' },
+  { id: 'firemaking',  name: 'Firemaking',  kind: 'gather' },
 ];

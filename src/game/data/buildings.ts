@@ -13,7 +13,7 @@ export interface BuildingDef {
   unique: boolean;
   tower?: { rangeTiles: number; dmg: number; cooldown: number };
   dragPaint?: boolean; // hold + drag paints a line of these (walls)
-  art: 'hall' | 'hut' | 'wall' | 'tower';
+  art: 'hall' | 'hut' | 'wall' | 'tower' | 'campfire';
 }
 
 const s = (id: string, n: number): Stack => ({ id, n });
@@ -43,5 +43,11 @@ export const BUILDINGS: BuildingDef[] = [
     hp: 180, cost: [s('plank', 6), s('stone', 6), s('copper_bar', 1)],
     pop: 0, territory: 2, unique: false,
     tower: { rangeTiles: 5.5, dmg: 7, cooldown: 0.8 }, art: 'tower',
+  },
+  {
+    id: 'campfire', name: 'Campfire',
+    desc: 'Warmth, light, and a ward against the dark. Feeds on whatever tinder catches beneath it.',
+    hp: 60, cost: [s('log', 3), s('stone', 2)],
+    pop: 0, territory: 0, unique: false, art: 'campfire',
   },
 ];

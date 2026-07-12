@@ -5,7 +5,7 @@ import { type RGB, hex } from '../../engine/procgen/palette';
 export type IconKind =
   | 'log' | 'plank' | 'stone' | 'ore' | 'bar'
   | 'herb' | 'berry' | 'axe' | 'pick' | 'sword' | 'potion' | 'armor'
-  | 'ring' | 'amulet' | 'charm';
+  | 'ring' | 'amulet' | 'charm' | 'torch' | 'charcoal';
 
 export interface ItemDef {
   id: string;
@@ -75,4 +75,7 @@ export const ITEMS: Record<string, ItemDef> = Object.fromEntries([
   I('amulet_iron', 'Iron Amulet', 'amulet', '#9aa7b8', '#c9a0dc', { trinket: 'amulet', armor: 2 }),
   I('charm_ember', 'Ember Charm', 'charm', '#c85a2e', '#ffd27a', { trinket: 'charm', regen: 0.5 }),
   I('charm_moon', 'Moon Charm', 'charm', '#4a6ea8', '#c9a0dc', { trinket: 'charm', regen: 1 }),
+  // firemaking — a reusable tool (no charges, like the axe/pick) and its resource sink
+  I('torch', 'Torch', 'torch', '#c47b3b', '#ffd27a'),
+  I('charcoal', 'Charcoal', 'charcoal', '#232023', '#3a3a3e'),
 ].map((d) => [d.id, d]));
