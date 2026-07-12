@@ -8,7 +8,7 @@ import { type RGB, PLAYER_POOL, lighten, darken } from './palette';
 /** Detail styles a tile recipe can ask for (game data picks one per biome). */
 export type Detail =
   | 'none' | 'grass' | 'flowers' | 'speckle' | 'waves'
-  | 'forest' | 'cracks' | 'pebbles' | 'sparkle';
+  | 'forest' | 'cracks' | 'pebbles' | 'sparkle' | 'wet' | 'furrows';
 
 export interface TileRecipe {
   ramp: RGB[];          // dark → mid → light
@@ -135,6 +135,26 @@ export function makeTileVariants(recipe: TileRecipe, seed: number, biomeId: numb
           if (i < 2) {
             p.set(x - 1, y, light); p.set(x + 1, y, light);
             p.set(x, y - 1, light); p.set(x, y + 1, light);
+          }
+        }
+        break;
+      case 'wet':
+        for (let i = 0; i < 3; i++) {
+          const x = R(), y = R(), len = 3 + ((rand() * 3) | 0);
+          for (let j = 0; j < len; j++) p.set(x + j, y, lighten(light, 22));
+        }
+        for (let i = 0; i < 2; i++) {
+          const x = R(), y = R();
+          p.set(x, y, darken(dark, 18));
+          p.set(x + 1, y, lighten(light, 16));
+        }
+        break;
+      case 'furrows':
+        for (let row = 3; row < 32; row += 7) {
+          for (let x = 0; x < 32; x++) {
+            const jy = ((hash2(x, row, seed ^ biomeId) - 0.5) * 1.6) | 0;
+            p.set(x, row + jy, darken(dark, 16));
+            p.set(x, row + jy - 1, lighten(light, 10));
           }
         }
         break;

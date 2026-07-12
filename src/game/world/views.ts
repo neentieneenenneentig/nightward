@@ -35,7 +35,10 @@ class FoeView {
     this.sprite = new Sprite(this.frames[0]);
     this.sprite.anchor.set(0.5, 0.5);
     this.w = foe.def.art.size + 6;
-    this.cont.addChild(this.sprite, this.bar);
+    const sz = foe.def.art.size;
+    const shadow = new Graphics();
+    shadow.ellipse(0, sz * 0.38, sz * 0.4, sz * 0.16).fill({ color: 0x0a080e, alpha: 0.3 });
+    this.cont.addChild(shadow, this.sprite, this.bar);
   }
   sync(foe: Foe, alpha: number) {
     const fx = foe.px + (foe.x - foe.px) * alpha;
@@ -57,6 +60,7 @@ class FoeView {
 
 class BuildingView {
   cont = new Container();
+  private sprite: Sprite;
   private bar = new Graphics();
   private maxHp: number;
   private isWall: boolean;
@@ -64,9 +68,11 @@ class BuildingView {
     const def = BUILDINGS.find((d) => d.id === b.type)!;
     this.maxHp = def.hp;
     this.isWall = def.art === 'wall';
-    const s = new Sprite(tex(this.isWall ? art.wall(mask) : art.buildings.get(b.type)!));
-    s.anchor.set(0.5, 1);
-    this.cont.addChild(s, this.bar);
+    this.sprite = new Sprite(tex(this.isWall ? art.wall(mask) : art.buildings.get(b.type)!));
+    this.sprite.anchor.set(0.5, 1);
+    const shadow = new Graphics();
+    shadow.ellipse(0, -2, this.sprite.width * 0.35, this.sprite.width * 0.14).fill({ color: 0x0a080e, alpha: 0.3 });
+    this.cont.addChild(shadow, this.sprite, this.bar);
     // anchored at the tile's bottom-center
     this.cont.position.set((b.tx + 0.5) * TILE, (b.ty + 1) * TILE);
     this.cont.zIndex = (b.ty + 1) * TILE;
@@ -76,16 +82,15 @@ class BuildingView {
     const frac = b.hp / this.maxHp;
     this.bar.clear();
     if (frac < 1) {
-      this.bar.rect(-14, -this.spriteH() - 4, 28, 3).fill(0x110a10);
-      this.bar.rect(-14, -this.spriteH() - 4, 28 * frac, 3).fill(frac > 0.5 ? 0x8fd05a : 0xd05a5a);
+      this.bar.rect(-14, -this.sprite.height - 4, 28, 3).fill(0x110a10);
+      this.bar.rect(-14, -this.sprite.height - 4, 28 * frac, 3).fill(frac > 0.5 ? 0x8fd05a : 0xd05a5a);
     }
   }
   /** Re-pick the wall art for a new neighbor mask (auto-connect). */
   refreshWall(mask: number) {
     if (!this.isWall) return;
-    (this.cont.children[0] as Sprite).texture = tex(this.art.wall(mask));
+    this.sprite.texture = tex(this.art.wall(mask));
   }
-  private spriteH() { return (this.cont.children[0] as Sprite).height; }
   destroy() { this.cont.destroy({ children: true }); }
 }
 
@@ -103,12 +108,14 @@ class BossView {
     this.sprite = new Sprite(this.frames[0]);
     this.sprite.anchor.set(0.5, 0.5);
     this.size = def.art.size;
+    const shadow = new Graphics();
+    shadow.ellipse(0, this.size * 0.38, this.size * 0.42, this.size * 0.17).fill({ color: 0x0a080e, alpha: 0.32 });
     this.label = new Text({
       text: b.name,
       style: { fill: 0xffd2d2, fontSize: 10, fontFamily: 'monospace', stroke: { color: 0x000000, width: 3 } },
     });
     this.label.anchor.set(0.5, 1);
-    this.cont.addChild(this.sprite, this.bar, this.label);
+    this.cont.addChild(shadow, this.sprite, this.bar, this.label);
   }
   sync(b: WorldBoss, alpha: number) {
     const fx = b.px + (b.x - b.px) * alpha;
