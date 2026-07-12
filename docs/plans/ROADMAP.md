@@ -290,12 +290,37 @@ reshape R2's details).
   water/wetness extinguishes. New overlay renderer (per-chunk 16×16 RGBA glow texture, ≤20 Hz,
   additive — NOT base-chunk rebakes; a spreading fire must not thrash the baker). **Firemaking
   skill** (data rows): torch tool, campfire building (small light + night-fear radius), controlled
-  burns for charcoal. `CFG.fire` uploaded + live re-upload. Brief written at activation.
+  burns for charcoal. `CFG.fire` uploaded + live re-upload. Brief: `docs/plans/R2-fire.md`.
   **Prereq noted at R1 review (2026-07-12):** `Core::activate_chunk`'s override-drain scans ALL
   overrides (O(world), not O(chunk)) — fine at god-brush scale, but fire will mass-produce standing
   overrides while chunk streaming churns; add a chunk-keyed override index in the core as R2's
-  first task. **Playtest gate — this is the batch's flagship.** *Learn: cellular automata,
-  active-set simulation, sim↔render decoupling.*
+  first task. **Merged + tagged `v0.15-r2-fire` (2026-07-12).** Prereq done first as its own commit
+  (`overrides_by_chunk` index; cargo test proves 100 chunk activations stay fast with 50k unrelated
+  overrides present elsewhere). 20 Rust unit tests pass (11 R1 regression + 9 new fire tests
+  covering ignite/burnout, cross-instance spread determinism, wetness extinguish/ignition-refusal,
+  wind determinism, inactive-chunk isolation, campfire refuel/die-out, uploaded-stride unpack);
+  typecheck/build green (one `.wasm` in dist, 51.39 kB). All 10 live acceptance items verified on
+  main at `?seed=1234`: wetness data row + determinism regression, ignite/burn-state, **spread
+  determinism** (identical 11×11 override footprint across two independent fresh boots given the
+  same seed+ignition+50 ticks — confirms the snapshot-read/collect-deltas/apply-once CA discipline
+  actually decouples the result from Rust's randomized HashMap iteration order), burnout→ASH
+  override with rebake events, wetness extinguish (a shoreline FOREST tile doused with fuel still
+  >0, proving extinguish ≠ natural burnout — this one required activating the WATER neighbor's
+  chunk too, not just the ignited tile's, a live harness lesson worth keeping), fire glow overlay
+  lazily created/torn-down exactly tracking "does this chunk have any burning tile" (verified a
+  wildfire spreading within one chunk correctly keeps the glow alive after the originally-ignited
+  tile itself burned out, and tears down only once the whole local fire is out), player + foe burn
+  damage (traced exact hp deltas against the shared damage-tick timer and concurrent day regen —
+  numbers matched the CFG math precisely once both effects were accounted for), controlled-burn
+  charcoal payout, and the campfire fear radius (spawn-rejection distance exact, and an A/B
+  same-path speed-multiplier test on a synthetic foe landed the ratio at exactly
+  `campfireFearSpeedMult` = 0.5). **New harness note:** this session's preview tab was again
+  `document.hidden === true` at the browser level (same R1.5 gotcha) — every check drove
+  `worldCore`/`chunks` methods directly via console rather than waiting on rAF; no screenshots
+  attempted (would hang) — evidence here is the quantitative traces above.
+  **Playtest gate — this is the batch's flagship, STOP after tagging:** next step is fixing the
+  playtest agent's stale tool list, then a structured pass, then the user's verdict. Do not start
+  R3 or W5. *Learn: cellular automata, active-set simulation, sim↔render decoupling.*
 - **R3 — Physical skills.** Entity kinematics in TS: knockback impulses on weapon hits, ice
   slides, mud slows, foes knocked into deep water drown; ground-slam skill (radial impulse +
   scorched crater ring via `set_material`); freeze verb (water→ice with a TTL decay queue in the
