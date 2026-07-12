@@ -6,7 +6,8 @@
 // (sparse override map), mirroring ChunkMap's load radius so the renderer and
 // the sim agree on what's live. THE effective-material path for the whole game
 // goes through materialAt().
-import { mem, memI32, type Core } from '../../wasm/core';
+import { mem, memF32, memI32, type Core } from '../../wasm/core';
+import { packFireParams } from '../data/config';
 import { MATERIALS, packMaterials, STRIDE } from '../data/materials';
 import { TILE, type WorldGen } from './worldgen';
 
@@ -109,6 +110,36 @@ export class WorldCore {
   // ---- test-only helpers (used by the acceptance script) ------------------
   _activate(cx: number, cy: number) { this.activate(cx, cy); }
   _deactivate(cx: number, cy: number) { this.deactivate(cx, cy); }
+
+  // ---- R2: fire -------------------------------------------------------------
+
+  /** Player-deliberate ignition (torch/firemaking). false if unloaded/already burning/wet/no fuel. */
+  ignite(tx: number, ty: number): boolean { return this.core.ignite(tx, ty); }
+  isBurning(tx: number, ty: number): boolean { return this.core.is_burning(tx, ty); }
+  fuelAt(tx: number, ty: number): number { return this.core.fuel_at(tx, ty); }
+  burnAt(tx: number, ty: number): number { return this.core.burn_at(tx, ty); }
+  wetAt(tx: number, ty: number): number { return this.core.wet_at(tx, ty); }
+
+  /** A campfire building: an eternal ignition source on its tile (see FireSystem). */
+  addCampfire(tx: number, ty: number) { this.core.add_campfire(tx, ty); }
+  removeCampfire(tx: number, ty: number) { this.core.remove_campfire(tx, ty); }
+
+  /** Re-pack CFG.fire's sim-tuning subset and re-upload — live console tinkering. */
+  pushFireParams() { this.core.set_fire_params(packFireParams()); }
+
+  /** Console/test convenience — drives the SAME underlying wasm Core instance main.ts's
+   * render() already ticks via the raw `core` reference, so this is not a second, competing
+   * tick source; it's just a reachable name for scripted test sequences. */
+  tick(dt: number) { this.core.tick(dt); }
+
+  wind(): [number, number] { return [this.core.wind_x(), this.core.wind_y()]; }
+
+  /** Zero-copy view of a loaded chunk's 256 burn values, for the glow overlay. Re-fetch every
+   * call (memory may have grown since the last read). null if the chunk isn't active. */
+  burnView(cx: number, cy: number): Float32Array | null {
+    const ptr = this.core.burn_ptr(cx, cy);
+    return ptr ? memF32(ptr, CHUNK * CHUNK) : null;
+  }
 }
 
 // re-export so callers reading materials by id don't need a second import

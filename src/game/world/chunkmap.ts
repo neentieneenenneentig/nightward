@@ -6,6 +6,7 @@ import { hash2 } from '../../engine/rng';
 import { darken, lighten, type RGB } from '../../engine/procgen/palette';
 import { TILE } from './worldgen';
 import { M, MATERIALS } from '../data/materials';
+import { CFG } from '../data/config';
 import type { World } from './world';
 import type { WorldArt } from './art';
 
@@ -27,11 +28,18 @@ function outranks(a: number, b: number): boolean {
 }
 
 interface Foam { view: Sprite; texs: Texture[] }
-interface Chunk { sprite: Sprite; tex: Texture; foam: Foam | null }
+/** R2's fire glow: the same "chunk owns a secondary overlay sprite/texture, updated on its own
+ * cadence" pattern foam pioneered — but re-rendered live from the fuel/burn fields every tick
+ * instead of swapping between 3 pre-baked frames, since fire's footprint actually changes. */
+interface Glow { view: Sprite; tex: Texture; canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D }
+interface Chunk { sprite: Sprite; tex: Texture; foam: Foam | null; glow: Glow | null }
+
+const GLOW_RADIUS = 20; // px — bleeds a few px past the 32px tile so neighboring flame reads as one glow
 
 export class ChunkMap {
   private chunks = new Map<string, Chunk>();
   private foamFrame = -1;
+  private lastGlowMs = -1;
 
   constructor(
     private world: World,
@@ -99,6 +107,34 @@ export class ChunkMap {
     }
   }
 
+  /** Redraw every loaded chunk's fire glow overlay from the live burn[] field, ≤ CFG.fire.glowHz.
+   * Lazily creates the overlay when a chunk first catches and tears it down once it's fully out
+   * — most of the map pays nothing, same as foam. Called once per render frame from main.ts. */
+  tickGlow(nowMs: number) {
+    if (nowMs - this.lastGlowMs < 1000 / CFG.fire.glowHz) return;
+    this.lastGlowMs = nowMs;
+    for (const [key, c] of this.chunks) {
+      const [cx, cy] = key.split(',').map(Number);
+      const burn = this.world.core.burnView(cx, cy);
+      let hasFire = false;
+      if (burn) {
+        for (let i = 0; i < burn.length; i++) {
+          if (burn[i] > 0) { hasFire = true; break; }
+        }
+      }
+      if (!hasFire) {
+        if (c.glow) {
+          c.glow.view.destroy();
+          c.glow.tex.destroy(true);
+          c.glow = null;
+        }
+        continue;
+      }
+      if (!c.glow) c.glow = this.makeGlow(cx, cy);
+      this.redrawGlow(c.glow, burn!, cx, cy, nowMs);
+    }
+  }
+
   // ---- test-only debug hooks (acceptance checklist) -----------------------
 
   /** Sample one pixel from a loaded chunk's baked canvas at tile-local pixel
@@ -116,6 +152,22 @@ export class ChunkMap {
   hasFoam(tx: number, ty: number): boolean {
     const cx = Math.floor(tx / CHUNK), cy = Math.floor(ty / CHUNK);
     return !!this.chunks.get(cx + ',' + cy)?.foam;
+  }
+
+  hasGlow(tx: number, ty: number): boolean {
+    const cx = Math.floor(tx / CHUNK), cy = Math.floor(ty / CHUNK);
+    return !!this.chunks.get(cx + ',' + cy)?.glow;
+  }
+
+  /** Sample one pixel from a loaded chunk's fire glow overlay canvas (not the base bake). null
+   * if the chunk isn't loaded or has no active glow. */
+  debugGlowPixel(tx: number, ty: number, offX = 16, offY = 16): [number, number, number, number] | null {
+    const cx = Math.floor(tx / CHUNK), cy = Math.floor(ty / CHUNK);
+    const glow = this.chunks.get(cx + ',' + cy)?.glow;
+    if (!glow) return null;
+    const lx = ((tx % CHUNK) + CHUNK) % CHUNK, ly = ((ty % CHUNK) + CHUNK) % CHUNK;
+    const d = glow.ctx.getImageData(lx * TILE + offX, ly * TILE + offY, 1, 1).data;
+    return [d[0], d[1], d[2], d[3]];
   }
 
   // ---------------------------------------------------------------------
@@ -140,6 +192,44 @@ export class ChunkMap {
       c.foam.view.destroy();
       for (const t of c.foam.texs) t.destroy(true);
     }
+    if (c.glow) {
+      c.glow.view.destroy();
+      c.glow.tex.destroy(true);
+    }
+  }
+
+  /** Lazily create a chunk's fire glow overlay — additive-blended, drawn on top of everything
+   * else in the layer (base bake + foam), redrawn live by tickGlow. */
+  private makeGlow(cx: number, cy: number): Glow {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = CHUNK_PX;
+    const ctx = canvas.getContext('2d')!;
+    const tex = Texture.from(canvas);
+    tex.source.scaleMode = 'nearest';
+    const view = new Sprite(tex);
+    view.blendMode = 'add';
+    view.position.set(cx * CHUNK_PX, cy * CHUNK_PX);
+    this.layer.addChild(view);
+    return { view, tex, canvas, ctx };
+  }
+
+  /** Redraw a chunk's glow canvas from its live burn[] snapshot (256 f32s) and re-upload the
+   * texture. Flicker is entirely render-side — a hash of (global tile, time bucket) — decoupled
+   * from the sim's strictly on/off `burn` value, which is the whole point of the boundary. */
+  private redrawGlow(glow: Glow, burn: Float32Array, cx: number, cy: number, nowMs: number) {
+    const { ctx } = glow;
+    ctx.clearRect(0, 0, CHUNK_PX, CHUNK_PX);
+    const timeBucket = Math.floor(nowMs / 80);
+    for (let ly = 0; ly < CHUNK; ly++) {
+      for (let lx = 0; lx < CHUNK; lx++) {
+        const i = ly * CHUNK + lx;
+        if (burn[i] <= 0) continue;
+        const tx = cx * CHUNK + lx, ty = cy * CHUNK + ly;
+        const flicker = 0.75 + 0.25 * hash2(tx, ty, timeBucket ^ 0x2f1e);
+        this.art.glow(ctx, lx * TILE + TILE / 2, ly * TILE + TILE / 2, GLOW_RADIUS, 0.5 * flicker);
+      }
+    }
+    glow.tex.source.update();
   }
 
   private rebuild(cx: number, cy: number) {
@@ -271,6 +361,8 @@ export class ChunkMap {
       foam = { view, texs };
     }
 
-    return { sprite, tex, foam };
+    // fire glow overlay is created lazily by tickGlow — fire state changes independently of
+    // terrain bakes (a chunk can catch/lose fire between bakes without a rebake happening)
+    return { sprite, tex, foam, glow: null };
   }
 }
