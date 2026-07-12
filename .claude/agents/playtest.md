@@ -1,7 +1,7 @@
 ---
 name: playtest
 description: Automated playtester for NIGHTWARD. Drives the live game through the preview harness via window.__nw hooks, plays a structured session (move/gather/craft/build/fight/survive nights), measures pacing and balance numbers, hunts bugs, and returns a structured playtest report. Use after a milestone is merged to main, before asking the user for their feel verdict.
-tools: Read, Grep, Glob, mcp__Claude_Preview__preview_start, mcp__Claude_Preview__preview_list, mcp__Claude_Preview__preview_eval, mcp__Claude_Preview__preview_console_logs, mcp__Claude_Preview__preview_logs, mcp__Claude_Preview__preview_snapshot, mcp__Claude_Preview__preview_screenshot
+tools: Read, Grep, Glob, mcp__Claude_Browser__preview_start, mcp__Claude_Browser__preview_list, mcp__Claude_Browser__javascript_tool, mcp__Claude_Browser__read_console_messages, mcp__Claude_Browser__preview_logs, mcp__Claude_Browser__read_page, mcp__Claude_Browser__computer, mcp__Claude_Browser__navigate, mcp__Claude_Browser__tabs_context
 model: sonnet
 ---
 
@@ -27,28 +27,46 @@ feels Y" — never claim to know how it feels.
 # Booting
 `preview_start` with name `nightward-dev` (port 5173, serves the MAIN repo directory —
 never a worktree; this is a confirmed harness fact). Then verify `window.__nw` exists via
-`preview_eval`.
+`javascript_tool` (action `javascript_exec`) — this is the tool that runs JS in the page
+and returns the result; it's what every eval below means by "run this."
 
 # CRITICAL harness fact — check this FIRST
-Read `__nw.frames` twice, a call apart. Two cases:
-- **Ticker live** (frames incrementing): real sim time passes between your tool calls, so
-  any timed/step-by-step measurement split across multiple `preview_eval` calls will be
-  corrupted. Run each timed sequence INSIDE ONE synchronous eval (drive
-  `sys.<system>.update(dt)` or `__nw.step(n, dt)` in a loop and return the whole trace).
-- **Ticker paused** (tab hidden, rAF stopped, frames frozen): `__nw.step(n)` across
-  separate calls is deterministic and safe; screenshots may time out — don't rely on them.
+Read `document.hidden` and `__nw.frames` (twice, a call apart). Three cases:
+- **Tab hidden at the browser level** (`document.hidden === true`, `__nw.frames` stays 0
+  across calls): rAF never fires at all — `main.ts`'s `render()` (chunk streaming,
+  event-drain rebakes, overlay ticks, UI refresh) never runs on its own. Drive render-side
+  methods directly instead of waiting on anything: `worldCore.ensureAround`/
+  `chunks.ensureAround` to bake chunks on demand, `chunks.tickFoam`/`chunks.tickGlow` with
+  explicit timestamps, and `worldCore.tick(dt)` / raw `core.tick(dt)` in a loop to advance
+  fire's CA (it paces its own 10Hz internally, independent of caller dt). Screenshots and
+  `computer` zoom calls HANG for ~30s here — don't attempt them; drive state via JS instead.
+- **Ticker live** (`document.hidden === false`, frames incrementing): real sim time passes
+  between your tool calls, so any timed/step-by-step measurement split across multiple
+  `javascript_exec` calls will be corrupted. Run each timed sequence INSIDE ONE synchronous
+  eval (drive `sys.<system>.update(dt)` or `__nw.step(n, dt)` in a loop and return the
+  whole trace).
+- **Ticker paused but tab visible** (frames frozen, `document.hidden === false`):
+  `__nw.step(n)` across separate calls is deterministic and safe. Note `__nw.step(n)` only
+  ever runs `sim()`, never `render()`, in ALL three cases — render-side effects (rebakes,
+  overlay ticks) need the explicit calls described above regardless of ticker state.
 
 # The API you play through
 - `window.__nw`: `.state` (the whole GameState), `.ctx` (systems context), `.player`
   (render-side player: `.facing`, `.teleport(x,y)`), `.sys` = `{ gather, economy, build,
-  hordes, combat, worldbosses }`, `.step(n, dt)` (advance sim), `.craft(id)`, `.log`
+  hordes, combat, worldbosses, fire }`, `.core` (WorldCore — `materialAt`, `ignite`,
+  `isBurning`, `fuelAt`/`burnAt`/`wetAt`, `tick(dt)`, `wind()`, `pushMaterials`,
+  `pushFireParams`), `.chunks` (ChunkMap — `tickFoam`/`tickGlow`, `hasGlow`,
+  `debugGlowPixel`, `debugPixel`), `.step(n, dt)` (advance sim), `.craft(id)`, `.log`
   (event log entries — your best evidence trail), `.ui`.
-- `window.NW.CFG`: the live balance config — read it to know intended numbers.
+- `window.NW`: `.CFG` (the live balance config — read it to know intended numbers),
+  `.MATS` (materials table), `.ENEMIES` (enemy defs — handy for fabricating a Foe).
 - **Honest input**: the game listens on window. Dispatch real events to actually play:
   `window.dispatchEvent(new KeyboardEvent('keydown', {key: 'd'}))` … then `'keyup'` to
-  stop — WASD moves, `' '` attacks, `'e'` interacts, `'b'/'i'/'c'/'k'/'l'` panels. With
-  the ticker live this is genuine play; with it paused, combine keydown + `step(n)`.
-- UI hooks as fallback: `__nw.ui` and `__nw.sys.combat.attack()`, `sys.gather.tryStart()`.
+  stop — WASD moves, `' '` attacks, `'f'` ignites, `'e'` interacts, `'b'/'i'/'c'/'k'/'l'`
+  panels. With the ticker live this is genuine play; with it paused, combine keydown +
+  `step(n)`.
+- UI hooks as fallback: `__nw.ui` and `__nw.sys.combat.attack()`, `sys.gather.tryStart()`,
+  `sys.fire.tryIgnite()` / `sys.fire.ignite(tx,ty)`.
 - Debug hotkeys (config.debug): `.` +30s clock, `n` jump to dusk, `g` +50 gold, `m` +10
   basic materials, `h` full heal, `j` force a wave, `y` summon nearest world boss. Use
   them to set up scenarios; note in the report wherever you cheated versus played.
@@ -71,7 +89,7 @@ Read `__nw.frames` twice, a call apart. Two cases:
    for early levels and sanity-check against the design intent (post-W4: ×10 curves).
 8. The milestone under test: exercise its specific features per the brief's verify section.
 9. Death/edge: die on purpose, confirm respawn scatter + gold loss; poke a world boss.
-10. After each beat: `preview_console_logs` (level error) + skim `__nw.log` for coherence.
+10. After each beat: `read_console_messages` (onlyErrors) + skim `__nw.log` for coherence.
 
 # Report format (your final message — this is the deliverable)
 - **TL;DR** — 2-3 sentences: ship / fix-first / broken, and the single biggest issue.
