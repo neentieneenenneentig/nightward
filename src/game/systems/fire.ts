@@ -36,6 +36,7 @@ export class FireSystem {
       for (let tx = ptx - 2; tx <= ptx + 2; tx++) {
         const mat = MATERIALS[world.materialAt(tx, ty)];
         if (mat.flammable <= 0 || worldCore.isBurning(tx, ty) || worldCore.fuelAt(tx, ty) <= 0) continue;
+        if (worldCore.wetAt(tx, ty) >= CFG.fire.wetExtinguish) continue; // too wet to catch — don't offer it
         const d = Math.hypot((tx + 0.5) * TILE - x, (ty + 0.5) * TILE - y);
         if (d <= reachPx && d < bestD) { best = { tx, ty }; bestD = d; }
       }
@@ -80,13 +81,23 @@ export class FireSystem {
     }
   }
 
-  /** Sim tick: entity burn damage, throttled so it reads as periodic ticks, not per-frame spam. */
+  /** Sim tick: entity burn damage (throttled so it reads as periodic ticks, not per-frame spam)
+   * and a sweep for tracked ignitions that were doused by wetness rather than burning out —
+   * those never reach onWorldEvents (only a completed burnout pushes a changed-tile event), so
+   * without this they'd sit in ignitedByPlayer for the rest of the session. */
   update(dt: number) {
+    const { state, world, worldCore, hordes, damagePlayer } = this.ctx;
+
+    for (const [key, tracked] of this.ignitedByPlayer) {
+      const [tx, ty] = key.split(',').map(Number);
+      if (worldCore.isBurning(tx, ty)) continue; // still burning — wait for its burnout event
+      if (world.materialAt(tx, ty) !== tracked.expectMat) this.ignitedByPlayer.delete(key);
+    }
+
     this.dmgT -= dt;
     if (this.dmgT > 0) return;
     this.dmgT = CFG.fire.burnTickSec;
     const dmg = CFG.fire.burnDmgPerSec * CFG.fire.burnTickSec;
-    const { state, worldCore, hordes, damagePlayer } = this.ctx;
     const ptx = Math.floor(state.player.x / TILE), pty = Math.floor(state.player.y / TILE);
     if (worldCore.isBurning(ptx, pty)) damagePlayer(dmg, 'Fire');
     for (const f of hordes.foes) {
