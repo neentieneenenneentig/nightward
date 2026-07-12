@@ -163,7 +163,8 @@ export class WorldBossSystem {
         if (b.atkT <= 0) { b.atkT = def.atkCooldown; this.ctx.hordes.damageBuilding(hallB, b.dmg); this.ctx.cam.shake?.(5); }
       } else if (dist > 4) {
         const ux = (tx - b.x) / dist, uy = (ty - b.y) / dist;
-        const nx = b.x + ux * speed * dt, ny = b.y + uy * speed * dt;
+        const terrain = this.ctx.world.speedAt(Math.floor(b.x / TILE), Math.floor(b.y / TILE));
+        const nx = b.x + ux * speed * dt * terrain, ny = b.y + uy * speed * dt * terrain;
         // bosses are big dream-things but a palisade still blocks them — chew through
         const blk = b.hunting ? this.ctx.world.buildingAt(Math.floor(nx / TILE), Math.floor((ny - 4) / TILE)) : null;
         if (blk && blk.type !== 'hall') {

@@ -1,4 +1,4 @@
-# NIGHTWARD — Batch 2 roadmap: The Living World & Soul Gear
+# NIGHTWARD — Roadmap (batches 2+; batch 4 "World Engine" is ACTIVE)
 
 Status baseline: `v0.4-world-and-dread` (M0–M3 + World & Dread pass shipped).
 This roadmap is the source of truth for the current batch. Each milestone is built in its
@@ -112,7 +112,9 @@ when it becomes the active task.
   drops. Also a danger pass: `perNight 5→5.5`, `hpGrowth 1.18→1.21`, `dmgGrowth 1.12→1.15` (night 1
   untouched — user is happy with the start). Deeper progression (soul-feeding, satchel, paper-doll)
   stays W7/W8 scope.
-- **W5 — Zoom & the wide view**: mouse-wheel (+ pinch) zoom, pulled forward from the old
+- **W5 — Zoom & the wide view** *(re-sequenced 2026-07-11: runs AFTER R2 — see Batch 4 below;
+  R1/R2 rewrite chunk rendering, so the LOD baker gets built once, over the final world model)*:
+  mouse-wheel (+ pinch) zoom, pulled forward from the old
   zoom/LOD/dream-regen milestone. Needs LOD chunk baking to stay performant zoomed out. Zoom-out is
   **capped at a wide tactical view** — the world is unbounded procgen, so "see the whole map" literally
   can't exist; a minimap of explored regions is the honest complement (candidate stretch scope).
@@ -131,6 +133,184 @@ when it becomes the active task.
   placement balloons; same cut-line pattern that worked for W3's spin). Paper-doll equip panel; the
   natural home for W2's deferred rings/amulets/charms and the "Soul Satchel" capacity upgrades.
   **Design sign-off gate:** agree the inventory style with the user BEFORE building — look/feel milestone.
+
+## Batch 4 — The World Engine (R-batch: Rust/wasm runtime world) — ACTIVE (approved 2026-07-11)
+
+User verdict on the current world: too few blocks, nothing reacts — "no room for physics for
+skills." Root cause: terrain is a pure function of (seed, x, y); the only runtime-mutable world
+state is `depleted` + buildings. This batch makes the world **writable**, then **alive**, with a
+Rust→WebAssembly core (`rust/nightward-core`) doing the heavy lifting. Rust is a deliberate
+learning-experience choice — at tile scale JS typed arrays would suffice (honest math in the R0
+brief) — so every module is designed "wasm-shaped" and the investment compounds if we later go
+sub-tile (falling-sand scale, where Rust genuinely becomes necessary).
+
+### Amended non-negotiables (this batch)
+- **Two-language rule:** Rust is *generic machinery only* — the sim engine. ALL content and balance
+  stays in TS data rows (`src/game/data/*`), flat-packed and uploaded into the core at init and
+  re-uploadable at runtime, so `window.NW.CFG` live-editing keeps working. Adding a material or
+  tuning fire spread must NEVER require touching Rust.
+- **Boundary style:** batch APIs only. World state lives in wasm linear memory as flat arrays; JS
+  reads through zero-copy typed-array views; steady-state boundary crossings are O(1) per frame
+  (`tick`, event drain) — never per-tile call loops. Changes flow out via an event ring buffer.
+- Determinism stands: base world stays a pure function of seed; sim RNG is a counter-based hash
+  seeded from the world seed; wasm float semantics are IEEE-deterministic across machines.
+- No persistence stands: overrides and fields die with the tab. On-theme and saves us a save format.
+- `src/wasm/pkg/` (wasm-bindgen output) and cargo build dirs are build artifacts — gitignored,
+  rebuilt locally via `npm run wasm` and in CI.
+
+### Toolchain decisions (details + steps in the R0 brief)
+- rustup with the **`stable-gnu` host toolchain** (avoids the Visual Studio Build Tools install;
+  MSVC is the documented fallback) + `wasm32-unknown-unknown` target; **wasm-pack via its npm
+  package** (prebuilt binary — never `cargo install` it).
+- **Cargo target dir = `node_modules/.cargo-target`** (set in `rust/nightward-core/.cargo/config.toml`):
+  OneDrive does not sync `node_modules`, so multi-GB build churn never hits the sync client, and
+  git already ignores it. The repo lives inside OneDrive — this is load-bearing, don't skip it.
+- deploy.yml gains a Rust toolchain step; `npm run build` runs the wasm build first.
+
+### Re-sequencing the W-queue
+- **W5 (zoom/LOD) moves AFTER R2** — R1/R1.5/R2 rewrite chunk rendering (effective materials +
+  autotile/depth bake + dynamic field overlay); build the LOD baker once over the final model
+  instead of three times. Order within the batch: R1.5 (art) → R2 (fire) → then W5.
+- W6 (lifespan/scoreboards) is independent — a fine breather between R-milestones if wanted.
+- W7 (loot economy) gets richer inputs from this batch: charcoal/ash (fire), crops (farming).
+- W8 (grid inventory) unaffected.
+
+### Brief convention (this batch)
+R-briefs are **implementation-grade**: exact file contents/contracts an implementer follows
+without inventing APIs, ending in an **Acceptance checklist** that is the post-merge verification
+contract (run verbatim — single-eval blocks at a fixed `?seed=`, per the W3 harness lesson).
+R1.5–R4 get their briefs written to this standard when they go ACTIVE (after the preceding gate
+passes), never earlier — pre-written briefs go stale (W1 lesson; the R1 implementation will
+reshape R2's details).
+
+### Milestones (one worktree each, in order)
+- **R0 — Rust toolchain + wasm spike.** rustup/wasm-pack install, `nightward-core` crate, `ping()`
+  + zero-copy checkerboard demo baked to a debug texture, Vite + deploy.yml integration,
+  `window.__nw.core`. No gameplay changes. Brief: `docs/plans/R0-rust-spike.md`.
+  *Learn: what wasm, linear memory, and wasm-bindgen actually are.*
+  - **Deviation (2026-07-11):** wasm-pack does **not** honour `build.target-dir` from
+    `.cargo/config.toml` — it hardcodes `<crate>/target` when locating the compiled `.wasm`, so
+    cargo (which builds into `node_modules/.cargo-target`) and wasm-pack disagreed and the build
+    failed (fails on CI too, same reason). wasm-pack *does* honour the `CARGO_TARGET_DIR` env var,
+    and an absolute value is resolved identically by cargo and wasm-pack. Minimal fix: the `wasm`
+    npm script is `node scripts/wasm.mjs`, a tiny wrapper that sets `CARGO_TARGET_DIR` to the
+    absolute `node_modules/.cargo-target` and spawns wasm-pack. The `.cargo/config.toml` is kept —
+    it still routes bare `cargo test`/`cargo build` to the same dir (so `rust/nightward-core/target`
+    never appears). Everything else in the brief is verbatim.
+- **R1 — The writable world.** `data/materials.ts` supersedes the biome table (~16 materials: the
+  9 existing + dirt, ash, ice, mud, gravel, tilled soil, shallow water); wasm chunk-slot pool with
+  a sparse override store; `set_material` + changed-tile events → chunk rebakes; walkability +
+  movement speed from material props; god-mode paint brush. Rule: an override REMOVES the procgen
+  feature on that tile (the world remembers your touch). Brief: `docs/plans/R1-writable-world.md`.
+  **Merged + tagged `v0.13-r1-writable-world` (2026-07-12).** All 9 Rust unit tests pass; typecheck/
+  build green (one `.wasm` in dist, 30.48 kB); all 9 live acceptance items verified on main at
+  `?seed=1234` (ice-bridge undo, feature kill+return, mud speed ratio 0.55±0.1, persistence across
+  chunk deactivate/reactivate, determinism, live `pushMaterials` re-tune, events→rebake counters
+  incl. no-dupe-on-same-value, chunk-pool perf/exhaustion sanity via 196-chunk stress test, buildable-
+  false on ICE). One caveat found during verification: `window.__nw.step(n)` (the deterministic
+  test-advance hook) only calls `sim()` — it does **not** run `ensureAround`/`drainEvents`/
+  `rebakeTiles`, which live in the rAF-tied `render()` loop. Scripted movement tests must paint a
+  vertically-thick pad (canStand samples a row 8px above the feet — a 1-tile-thick strip causes
+  false collisions against the row above) and use real wall-clock waits (not `step()`) to observe
+  event/rebake counters. Also: this preview harness does not reliably hold synthetic keydown state
+  across a real-time wait (backgrounded-tab throttling/blur), so "sprint across the world" perf
+  checks are better done via direct `_activate()` stress than simulated held-key movement.
+  **Playtest gate — RESOLVED 2026-07-12.** Automated pass (static review — the playtest agent's
+  tool list was stale, since flagged for repair) found no logic bugs and matched the brief
+  line-for-line; flags: DIRT vs MUD near-identical art (real gameplay stakes, 1.0× vs 0.55×),
+  GRAVEL's −5% likely imperceptible, ICE not actually "risky" until R3, build-rejection toast
+  doesn't name the blocking terrain. User verdict: mechanics/speed unchallenged, but the world's
+  LOOK is the problem — "kinda looks disappointing currently tbh," asked about triangles and
+  "art that makes it look a lil more 3d." Verdict spawns **R1.5** (below); the DIRT/MUD and toast
+  flags fold into it. *Learn: sparse overlays — "the world is a database whose default value is a
+  function"; zero-copy views.*
+- **R1.5 — The Painted World (look & depth pass).** Direct answer
+  to the R1 gate verdict: the world reads as a flat checkerboard of colored squares; make it read
+  as a *place* — without changing what a tile IS. Brief: `docs/plans/R1.5-painted-world.md`.
+  **Merged + tagged `v0.14-r15-painted-world` (2026-07-12).** No Rust changes (pure rendering +
+  data, as scoped); typecheck/build green, all 9 Rust tests unaffected. All 9 live acceptance
+  checks verified on main at `?seed=1234`: heightClass data row, determinism regression, dual-grid
+  feather (border pixel measurably nudged toward the outranking neighbor while the tile interior
+  stayed pure), cliff shading (south edge summed-RGB 177 vs north-edge 413 on the same painted HILL
+  tile), contact shadow (smooth radial falloff profile around a natural tree, distinct from the
+  trunk's hard silhouette), foam presence+animation (shoreline chunk `hasFoam===true`, inland
+  `false`, frame-to-frame fleck pixels differ), DIRT/MUD legibility (re-ramped, summed-channel diff
+  262, MUD darker as designed), build-rejection toast naming ("Can't build on Ice"), and the
+  4-directional rebake dedupe (painting a chunk-west-edge tile rebuilt exactly 2 chunks: own +
+  west neighbor). **New harness gotcha, worth its own note:** this session's preview tab ran with
+  `document.hidden === true` at the true browser level (not just the JS-visible flag — overriding
+  `document.hidden`/`visibilityState` via `defineProperty` did NOT restart it), so `requestAnimationFrame`
+  never fired, `__nw.frames` stayed `0` for the whole session, and `main.ts`'s `render()` (chunk
+  streaming, event-drain rebakes, foam ticking, UI refresh) never ran on its own — real-time waits
+  are useless here. Screenshot/zoom calls hung and timed out (30s) rather than returning a blank
+  frame, consistent with the renderer never having composited anything. Worked around it by calling
+  the render-side methods directly through the console instead of waiting on rAF:
+  `worldCore.ensureAround`/`chunks.ensureAround` to bake chunks on demand, `chunks.rebakeTile`/
+  `rebakeTiles` to force a rebake instead of relying on the automatic event-drain path, and
+  `chunks.tickFoam(ms)` to step the foam frame explicitly. TS `private` class fields are NOT runtime-
+  enforced, so `__nw.chunks.chunks` (the private chunk map) was reachable from the console for deep
+  pixel-level assertions when the public `debugPixel` hook (which only reads the base canvas, not
+  overlay layers like foam) wasn't enough. Screenshots could not be captured this session — visual
+  proof is the quantitative pixel-probe evidence above instead of images.
+  **Playtest gate — STOP after tagging, OPEN:** next step is the playtest agent or a structured
+  self-playtest, then the user's verdict on the look. Do not start R2 first.
+  **Decision recorded — square tiles stay.** Triangles/hexes were considered and rejected: cell
+  shape is load-bearing everywhere (16×16 chunk arrays in wasm, CA neighbor math R2 depends on,
+  collision feet-box, feature placement, bake layout) — retiling all of it, in two languages,
+  buys nothing that *presentation* can't buy cheaper. "Looks 3D" is a rendering property, not a
+  topology property (LttP/Stardew are square grids). Revisit only if a future milestone needs
+  non-square *gameplay* semantics.
+  Scope sketch (implementation-grade brief written at activation, per batch convention):
+  1. **Dual-grid autotile transitions** — the render pass samples the 4 nearest tile corners
+     (marching-squares/dual-grid) and bakes procgen transition masks between materials: feathered
+     grass↔dirt, foam-lipped water edges, blended biome borders. This alone kills the hard-square
+     look. Must read through `world.materialAt` (override-aware) and stay compatible with
+     `rebakeTiles` (a paint dirties up to 4 render cells around it — the dedupe already handles
+     neighbor chunks via the south-border rule; extend it, don't fork it).
+  2. **Pseudo-3D height ledges** — each material gets a small `heightClass` (data field: water 0,
+     ground 1, hill 2, mountain/snow 3); where height drops toward the viewer (south edge), bake a
+     short darker cliff-face strip + a light top-lip highlight. Terraced depth, zero geometry.
+  3. **Contact shadows** — soft baked ellipse under trees/rocks; drop shadow under buildings and
+     entities (sprite-level, cheap).
+  4. **Water life** — 2–3 frame shoreline-foam animation (alternate baked chunk frames or a small
+     overlay sprite pass at ≤5 Hz, NOT per-tile sprites; the R2 fire overlay will reuse whichever
+     mechanism this builds).
+  5. **Material legibility pass** — re-ramp DIRT vs MUD so they're tellable at a glance (playtest
+     flag; art is data, `MaterialDef.art`), make TILLED read as furrows, keep the 9 original biome
+     hues recognizable.
+  6. **Toast fix (rider):** `canPlaceAt` rejection names the blocking material ("can't build on
+     Ice") — closes the other playtest flag.
+  Constraints: 100% procgen art (non-negotiable stands), everything still per-chunk baked canvases
+  (perf), bake cost per chunk stays same order of magnitude (LOD/zoom is W5's problem, don't solve
+  it here). **Playtest gate — look milestone, STOP after tagging for the user's verdict.**
+  *Learn: dual-grid autotiling, painter's-algorithm depth cues on a flat grid.*
+- **R2 — Fire (the living world, part 1).** Per-active-chunk fuel/burn/wet fields, 10 Hz cellular-
+  automata tick in Rust: spread driven by material flammability + a slow wind drift, burnout →
+  `burnsTo` override (forest → ash + charcoal drops), burn damage to entities standing in it,
+  water/wetness extinguishes. New overlay renderer (per-chunk 16×16 RGBA glow texture, ≤20 Hz,
+  additive — NOT base-chunk rebakes; a spreading fire must not thrash the baker). **Firemaking
+  skill** (data rows): torch tool, campfire building (small light + night-fear radius), controlled
+  burns for charcoal. `CFG.fire` uploaded + live re-upload. Brief written at activation.
+  **Prereq noted at R1 review (2026-07-12):** `Core::activate_chunk`'s override-drain scans ALL
+  overrides (O(world), not O(chunk)) — fine at god-brush scale, but fire will mass-produce standing
+  overrides while chunk streaming churns; add a chunk-keyed override index in the core as R2's
+  first task. **Playtest gate — this is the batch's flagship.** *Learn: cellular automata,
+  active-set simulation, sim↔render decoupling.*
+- **R3 — Physical skills.** Entity kinematics in TS: knockback impulses on weapon hits, ice
+  slides, mud slows, foes knocked into deep water drown; ground-slam skill (radial impulse +
+  scorched crater ring via `set_material`); freeze verb (water→ice with a TTL decay queue in the
+  core — ice melts back); Excavation skill (dig for clay/gravel/rare finds). Mostly TS — the core
+  only adds TTL decay. **Playtest gate.** *Learn: impulse integration, material-driven movement.*
+- **R4 — Water, growth & farming (the living world, part 2).** Wetness spread + rain events
+  (`CFG.weather`); dug pits beside water flood into shallow water → **moats that actually block
+  night mobs** (tower-defense payoff); growth field regrows grass/saplings over ash/dirt across
+  in-game days; Farming skill: till → plant (planted feature-overrides, the replanting half of
+  R1's rule) → grow → harvest crops (food/cooking hook, W7 synergy). Candidate: unify `depleted`
+  into the override system. **Playtest gate.** *Learn: coupling multiple CA fields.*
+- **R5 — stretch, unscheduled.** Port worldgen itself into the core (SINGLE source — delete the TS
+  fbm path and batch-generate per chunk; never maintain two implementations) to make more
+  octaves/sub-biomes/materials cheap; flow-field pathfinding for big hordes; far-future: sub-tile
+  falling sand — the scale where Rust stops being a hobby and becomes the requirement.
 
 ### Deferred (old batch-2 back-half — engine/feel work, revisit after W8)
 - **Multi-res art + multi-tile resources** (old W4): `SUBPIX` detail factor in `engine/procgen/sprites.ts`;

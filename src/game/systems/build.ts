@@ -2,9 +2,12 @@
 // valid tile to place. Costs & rules from data; walls chain-place.
 import { CFG } from '../data/config';
 import { BUILDINGS, type BuildingDef } from '../data/buildings';
+import { MATERIALS } from '../data/materials';
 import { invCount, invHasAll, invTakeAll } from '../rules';
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
+
+const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
 export interface BuildMode {
   def: BuildingDef;
@@ -128,18 +131,25 @@ export class BuildSystem {
     this.commit();
   }
 
-  /** Why the current spot is invalid — mirrors world.canPlaceAt's checks. */
+  /** Why the current spot is invalid — mirrors world.canPlaceAt's checks, in
+   * the same order, so the toast names the actual blocker instead of a
+   * generic catch-all (R1.5: playtest flagged the old message as unhelpful). */
   private placeError(): string {
     const m = this.mode!;
     const { state, world } = this.ctx;
     if (!invHasAll(state, m.def.cost)) return 'Not enough materials';
+    if (world.buildingAt(m.tx, m.ty)) return "Something's already built there";
+    const f = world.featureAt(m.tx, m.ty);
+    if (f && f.blocking && !world.isDepleted(m.tx, m.ty)) return `Blocked by ${f.name} — clear it first`;
+    const mat = MATERIALS[world.materialAt(m.tx, m.ty)];
+    if (!mat.passable || !mat.buildable) return `Can't build on ${cap(mat.name)}`;
     const h = state.buildings.find((b: any) => b.type === 'hall');
     if (m.def.id !== 'hall') {
       if (!h) return 'Build the Racket Hall first — everything roots to it';
       const d = Math.max(Math.abs(m.tx - h.tx), Math.abs(m.ty - h.ty));
       if (d > CFG.build.maxDistFromHall) return `Too far from the Hall (max ${CFG.build.maxDistFromHall} tiles)`;
     }
-    return "Blocked ground — can't build on water, rock or another building";
+    return "Can't build there";
   }
 
   /** Pointer dragged with the button held — paint walls along the path. */

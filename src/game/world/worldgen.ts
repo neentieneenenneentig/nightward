@@ -3,7 +3,7 @@
 // (trees/rocks/herbs) is one more hash roll against data-driven densities.
 import { fbm } from '../../engine/noise';
 import { hash2 } from '../../engine/rng';
-import { T, BIOMES } from '../data/biomes';
+import { M, MATERIALS } from '../data/materials';
 import { FEATURES, type FeatureDef } from '../data/features';
 import { lordAt } from './domains';
 
@@ -17,11 +17,13 @@ export class WorldGen {
   private featTable: { def: FeatureDef; cum: number }[][];
 
   constructor(readonly seed: number) {
-    this.featTable = BIOMES.map((b) => {
+    // one cumulative feature table per material id; new materials (9–15) have no
+    // feature densities, so their rows are simply empty.
+    this.featTable = MATERIALS.map((m) => {
       let cum = 0;
       const rows: { def: FeatureDef; cum: number }[] = [];
       for (const f of FEATURES) {
-        const d = f.density[b.name];
+        const d = f.density[m.name];
         if (d) {
           cum += d;
           rows.push({ def: f, cum });
@@ -41,15 +43,15 @@ export class WorldGen {
     const e = spread(fbm(wx * 0.018, wy * 0.018, this.seed, 5) + lord.elevBias, 1.35); // elevation
     const m = fbm(tx * 0.03 + 511, ty * 0.03 + 287, this.seed ^ 0x0157, 4) + lord.moistureBias; // moisture
 
-    if (e < 0.34) return T.DEEP;
-    if (e < 0.42) return T.WATER;
-    if (e < 0.455) return T.SAND;
-    if (e > 0.82) return T.SNOW;
-    if (e > 0.74) return T.MOUNTAIN;
-    if (e > 0.66) return T.HILL;
-    if (m > 0.58) return T.FOREST;
-    if (m > 0.47) return T.MEADOW;
-    return T.GRASS;
+    if (e < 0.34) return M.DEEP;
+    if (e < 0.42) return M.WATER;
+    if (e < 0.455) return M.SAND;
+    if (e > 0.82) return M.SNOW;
+    if (e > 0.74) return M.MOUNTAIN;
+    if (e > 0.66) return M.HILL;
+    if (m > 0.58) return M.FOREST;
+    if (m > 0.47) return M.MEADOW;
+    return M.GRASS;
   }
 
   featureAt(tx: number, ty: number): FeatureDef | null {
@@ -62,7 +64,7 @@ export class WorldGen {
 
   /** Terrain-only walkability (features included, but no game-state overrides). */
   staticPassable(tx: number, ty: number): boolean {
-    if (!BIOMES[this.tileAt(tx, ty)].passable) return false;
+    if (!MATERIALS[this.tileAt(tx, ty)].passable) return false;
     const f = this.featureAt(tx, ty);
     return !(f && f.blocking);
   }
@@ -71,7 +73,7 @@ export class WorldGen {
   findSpawn(): { x: number; y: number } {
     const open = (tx: number, ty: number) => {
       const b = this.tileAt(tx, ty);
-      if (b !== T.GRASS && b !== T.MEADOW) return false;
+      if (b !== M.GRASS && b !== M.MEADOW) return false;
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           if (!this.staticPassable(tx + dx, ty + dy)) return false;

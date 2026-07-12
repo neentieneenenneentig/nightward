@@ -1,7 +1,7 @@
 // In-game activity/combat log — also our dev-visibility tool. A ring buffer
 // so it can't grow unbounded across a long play session.
 export type LogKind =
-  | 'gather' | 'craft' | 'build' | 'combat' | 'boss' | 'level' | 'death' | 'region' | 'economy' | 'system' | 'spawn';
+  | 'gather' | 'craft' | 'build' | 'combat' | 'boss' | 'level' | 'death' | 'region' | 'economy' | 'system' | 'spawn' | 'world';
 
 export interface LogEntry {
   t: number;

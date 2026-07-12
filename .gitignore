@@ -3,6 +3,10 @@ dist/
 *.local
 *.log
 
+# wasm build artifacts — rebuilt locally via `npm run wasm` and in CI
+src/wasm/pkg/
+rust/**/target/
+
 # worktrees (feature isolation lives here, never committed)
 .claude/worktrees/
 

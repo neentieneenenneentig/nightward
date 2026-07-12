@@ -19,6 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Rust/wasm toolchain first — `npm run build` runs `npm run wasm` (wasm-pack)
+      # before vite, so the compiler + wasm32 target must be present.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust/nightward-core
       - uses: actions/setup-node@v4
         with:
           node-version: 22
