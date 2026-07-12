@@ -201,8 +201,22 @@ reshape R2's details).
   a sparse override store; `set_material` + changed-tile events → chunk rebakes; walkability +
   movement speed from material props; god-mode paint brush. Rule: an override REMOVES the procgen
   feature on that tile (the world remembers your touch). Brief: `docs/plans/R1-writable-world.md`.
-  **Playtest gate** (new material art/feel). *Learn: sparse overlays — "the world is a database
-  whose default value is a function"; zero-copy views.*
+  **Merged + tagged `v0.13-r1-writable-world` (2026-07-12).** All 9 Rust unit tests pass; typecheck/
+  build green (one `.wasm` in dist, 30.48 kB); all 9 live acceptance items verified on main at
+  `?seed=1234` (ice-bridge undo, feature kill+return, mud speed ratio 0.55±0.1, persistence across
+  chunk deactivate/reactivate, determinism, live `pushMaterials` re-tune, events→rebake counters
+  incl. no-dupe-on-same-value, chunk-pool perf/exhaustion sanity via 196-chunk stress test, buildable-
+  false on ICE). One caveat found during verification: `window.__nw.step(n)` (the deterministic
+  test-advance hook) only calls `sim()` — it does **not** run `ensureAround`/`drainEvents`/
+  `rebakeTiles`, which live in the rAF-tied `render()` loop. Scripted movement tests must paint a
+  vertically-thick pad (canStand samples a row 8px above the feet — a 1-tile-thick strip causes
+  false collisions against the row above) and use real wall-clock waits (not `step()`) to observe
+  event/rebake counters. Also: this preview harness does not reliably hold synthetic keydown state
+  across a real-time wait (backgrounded-tab throttling/blur), so "sprint across the world" perf
+  checks are better done via direct `_activate()` stress than simulated held-key movement.
+  **Playtest gate** (new material art/feel) — automated playtest pass run 2026-07-12; awaiting the
+  user's feel verdict before R2 starts. *Learn: sparse overlays — "the world is a database whose
+  default value is a function"; zero-copy views.*
 - **R2 — Fire (the living world, part 1).** Per-active-chunk fuel/burn/wet fields, 10 Hz cellular-
   automata tick in Rust: spread driven by material flammability + a slow wind drift, burnout →
   `burnsTo` override (forest → ash + charcoal drops), burn damage to entities standing in it,
