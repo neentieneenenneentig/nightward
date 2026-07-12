@@ -154,6 +154,38 @@ export const CFG = {
     // hotkeys: [.] +30s clock | [n] jump to dusk | [g] +50 gold
     //          [m] +10 basic mats | [h] full heal
   },
+
+  // R2: fire. The first six fields cross into the wasm core (packFireParams, below); everything
+  // after is TS-only gameplay tuning that never leaves this process — same split R1.5 used for
+  // pixel constants that stayed in art.ts instead of here.
+  fire: {
+    // ---- uploaded to the core via set_fire_params ----
+    tickHz: 10,                  // CA tick rate; the core paces itself, independent of render fps
+    spreadBase: 0.35,            // base per-tick ignition probability onto a dry flammable neighbor
+    windStrength: 0.5,           // 0 = no directional bias, 1 = fully wind-driven
+    wetExtinguish: 0.55,         // burn[] is doused once wet[] climbs past this
+    wetDiffuseRate: 0.15,        // per-tick blend of a tile's wet[] toward its diffusion target
+    wetSpreadDecay: 0.85,        // neighbor wet's influence falloff crossing one tile hop
+    // ---- TS-only gameplay, never crosses the boundary ----
+    reachTiles: 1.6,             // how far the player can ignite (mirrors CFG.gather.reachTiles)
+    ignitionXp: 8,               // Firemaking xp per successful ignite
+    burnDmgPerSec: 6,            // entity damage/s while standing in a burning tile
+    burnTickSec: 0.5,            // burn-damage timer granularity (throttles hit spam)
+    glowHz: 20,                  // fire glow overlay redraw cap
+    campfireFearTiles: 6,        // hordes avoid spawning / hesitate within this radius of a campfire
+    campfireFearSpeedMult: 0.5,  // speed multiplier applied to foes inside the fear radius
+    charcoalChance: 0.7,         // chance a player-ignited controlled burn leaves charcoal on burnout
+    charcoalXp: 12,              // bonus Firemaking xp when a controlled burn actually yields charcoal
+  },
 };
 
 export type Config = typeof CFG;
+
+/** floats uploaded to the core's set_fire_params — order matches Rust's fire_params array. */
+export const FIRE_PARAM_COUNT = 6;
+export function packFireParams(): Float32Array {
+  const f = CFG.fire;
+  return new Float32Array([
+    1 / f.tickHz, f.spreadBase, f.windStrength, f.wetExtinguish, f.wetDiffuseRate, f.wetSpreadDecay,
+  ]);
+}

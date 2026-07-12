@@ -123,6 +123,20 @@ export class WorldArt {
   foam(frame: 0 | 1 | 2): HTMLCanvasElement {
     return this.foamFrames[frame];
   }
+
+  /** Warm additive glow blob — same radial-gradient shape as shadow(), fire-colored. Meant to be
+   * composited with Sprite blendMode 'add' on a per-chunk fire overlay canvas (R2). */
+  glow(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, alpha: number) {
+    if (r <= 0) return;
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, `rgba(255,170,60,${alpha})`);
+    g.addColorStop(0.6, `rgba(255,90,20,${alpha * 0.5})`);
+    g.addColorStop(1, 'rgba(255,60,10,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 /** tiny string hash so per-kind seeds differ deterministically */

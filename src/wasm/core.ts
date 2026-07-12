@@ -22,6 +22,11 @@ export function memI32(ptr: number, count: number): Int32Array {
   return new Int32Array(wasm.memory.buffer, ptr, count);
 }
 
+/** A throwaway Float32Array view over `count` f32s at byte offset `ptr` (fire's burn array). */
+export function memF32(ptr: number, count: number): Float32Array {
+  return new Float32Array(wasm.memory.buffer, ptr, count);
+}
+
 export async function initCore() {
   wasm = await init(); // Vite resolves the .wasm asset via import.meta.url in the glue
   return { ping, Spike, Core, mem };
