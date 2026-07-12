@@ -1,7 +1,7 @@
 // The hero: seeded procgen frames, axis-separated collision (slide along
 // walls), interpolation between sim steps, plus hit-flash and teleport hooks
 // the combat system drives.
-import { Sprite, Texture } from 'pixi.js';
+import { Container, Graphics, Sprite, Texture } from 'pixi.js';
 import { makePlayerFrames } from '../../engine/procgen/sprites';
 import { CFG } from '../data/config';
 
@@ -17,6 +17,7 @@ export class Player {
   attackPhase: AttackPhase = 'idle';
   private animT = 0;
   private flashT = 0;
+  cont = new Container();
   sprite: Sprite;
   private tex: { down: Texture[]; up: Texture[]; side: Texture[] };
 
@@ -33,6 +34,9 @@ export class Player {
     this.tex = { down: toTex(f.down), up: toTex(f.up), side: toTex(f.side) };
     this.sprite = new Sprite(this.tex.down[0]);
     this.sprite.anchor.set(0.5, 1); // anchored at the feet
+    const shadow = new Graphics();
+    shadow.ellipse(0, -2, 9, 4).fill({ color: 0x0a080e, alpha: 0.3 });
+    this.cont.addChild(shadow, this.sprite);
   }
 
   update(dt: number, ax: number, ay: number, canStand: (x: number, y: number) => boolean, speedMul = 1): boolean {
@@ -94,7 +98,7 @@ export class Player {
 
     this.sprite.scale.set((this.facing === 'left' ? -1 : 1) * squashX, squashY);
     this.sprite.tint = tint;
-    this.sprite.position.set(fx, fy);
+    this.cont.position.set(fx, fy);
     return [fx, fy];
   }
 }

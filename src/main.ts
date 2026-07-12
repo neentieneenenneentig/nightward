@@ -69,7 +69,7 @@ async function boot() {
   views.reset(state.buildings);
 
   const player = new Player(seed, state.player.x, state.player.y);
-  stage.entities.addChild(player.sprite);
+  stage.entities.addChild(player.cont);
   stage.entities.sortableChildren = true;
 
   const cam = new Camera(stage.app, stage.world);
@@ -204,7 +204,7 @@ async function boot() {
   let frames = 0;
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
-    sys: { gather, economy, build, hordes, combat, worldbosses }, world, player, gen,
+    sys: { gather, economy, build, hordes, combat, worldbosses }, world, player, gen, chunks,
     get log() { return log.entries; },
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
@@ -275,7 +275,7 @@ async function boot() {
 
   function render(alpha: number) {
     const [fx, fy] = player.render(alpha);
-    player.sprite.zIndex = fy;
+    player.cont.zIndex = fy;
     cam.follow(fx, fy);
 
     const w = stage.app.screen.width, h = stage.app.screen.height;
@@ -283,6 +283,7 @@ async function boot() {
     // EFFECTIVE (override-aware) materials for anything freshly scrolled in
     worldCore.ensureAround(fx, fy, w / cam.zoom, h / cam.zoom);
     chunks.ensureAround(fx, fy, w / cam.zoom, h / cam.zoom);
+    chunks.tickFoam(performance.now());
 
     views.syncFoes(hordes.foes, alpha);
     views.syncBosses(state.worldBosses, alpha);
