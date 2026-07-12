@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use wasm_bindgen::prelude::*;
 
 /// Boundary smoke test: scalar across the JS<->wasm boundary. (R0)
@@ -73,6 +73,10 @@ pub struct Core {
     slot_of: HashMap<(i32, i32), usize>, // (cx,cy) -> slot
     free: Vec<usize>,                    // free slot indices
     overrides: HashMap<(i32, i32), u8>,  // (tx,ty) -> mat, for tiles in INACTIVE chunks only
+    // (cx,cy) -> tile keys with an override in that (inactive) chunk. Lets activate_chunk drain
+    // exactly this chunk's overrides (R2 prereq) instead of scanning every override in the world —
+    // fire mass-produces standing overrides while chunks stream in and out during normal play.
+    overrides_by_chunk: HashMap<(i32, i32), HashSet<(i32, i32)>>,
     events: Vec<i32>,                    // flat (tx,ty) pairs since last clear; may grow/realloc
 }
 
@@ -92,7 +96,26 @@ impl Core {
             slot_of: HashMap::new(),
             free: (0..cap).collect(),
             overrides: HashMap::new(),
+            overrides_by_chunk: HashMap::new(),
             events: Vec::new(),
+        }
+    }
+
+    /// Insert/replace an override, keeping `overrides_by_chunk` in lockstep.
+    fn override_insert(&mut self, tx: i32, ty: i32, mat: u8) {
+        self.overrides.insert((tx, ty), mat);
+        self.overrides_by_chunk.entry(chunk_of(tx, ty)).or_default().insert((tx, ty));
+    }
+
+    /// Remove an override, keeping `overrides_by_chunk` in lockstep.
+    fn override_remove(&mut self, tx: i32, ty: i32) {
+        self.overrides.remove(&(tx, ty));
+        let key = chunk_of(tx, ty);
+        if let Some(set) = self.overrides_by_chunk.get_mut(&key) {
+            set.remove(&(tx, ty));
+            if set.is_empty() {
+                self.overrides_by_chunk.remove(&key);
+            }
         }
     }
 
@@ -118,16 +141,14 @@ impl Core {
         self.base[off..off + n].copy_from_slice(&base[..n]);
         self.slot_of.insert((cx, cy), slot);
 
-        // apply + remove this chunk's overrides (they now live in the dense slot)
-        let mut hits: Vec<(i32, i32, u8)> = Vec::new();
-        for (&(tx, ty), &mat) in self.overrides.iter() {
-            if chunk_of(tx, ty) == (cx, cy) {
-                hits.push((tx, ty, mat));
+        // apply + remove this chunk's overrides (they now live in the dense slot) — looked up
+        // directly via the chunk index, O(overrides in THIS chunk), not O(world overrides)
+        if let Some(keys) = self.overrides_by_chunk.remove(&(cx, cy)) {
+            for (tx, ty) in keys {
+                if let Some(mat) = self.overrides.remove(&(tx, ty)) {
+                    self.slots[off + local_index(tx, ty)] = mat;
+                }
             }
-        }
-        for (tx, ty, mat) in hits {
-            self.slots[off + local_index(tx, ty)] = mat;
-            self.overrides.remove(&(tx, ty));
         }
         true
     }
@@ -144,7 +165,7 @@ impl Core {
             if self.slots[off + li] != self.base[off + li] {
                 let tx = cx * CHUNK + (li as i32 % CHUNK);
                 let ty = cy * CHUNK + (li as i32 / CHUNK);
-                self.overrides.insert((tx, ty), self.slots[off + li]);
+                self.override_insert(tx, ty, self.slots[off + li]);
             }
         }
         self.free.push(slot);
@@ -177,9 +198,9 @@ impl Core {
                 return;
             }
             if mat == base_mat {
-                self.overrides.remove(&key);
+                self.override_remove(tx, ty);
             } else {
-                self.overrides.insert(key, mat);
+                self.override_insert(tx, ty, mat);
             }
         }
         self.events.push(tx);
@@ -328,5 +349,50 @@ mod tests {
         // (16,0) is in the un-activated chunk (1,0) → sparse override path
         c.set_material(16, 0, 12, 3);
         assert_eq!(c.override_at(16, 0), 12);
+    }
+
+    // ---- R2 prereq: chunk-keyed override index ----------------------------
+
+    #[test]
+    fn activate_chunk_cost_independent_of_total_overrides() {
+        let mut c = Core::new(1, 20_000);
+        // scatter 50,000 overrides across 50,000 distinct, never-activated, far-apart chunks
+        for i in 0..50_000i32 {
+            let tx = i * (CHUNK * 4); // stride guarantees a distinct chunk per override
+            c.set_material(tx, 0, 11, 3);
+        }
+        assert_eq!(c.overrides.len(), 50_000);
+
+        let start = std::time::Instant::now();
+        for i in 0..100i32 {
+            assert!(c.activate_chunk(1_000_000 + i, 0, &base_grass()));
+        }
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed.as_millis() < 500,
+            "activate_chunk took {:?} for 100 activations with 50k unrelated overrides present \
+             — looks like an O(world) regression in the override drain",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn overrides_by_chunk_index_stays_consistent() {
+        let mut c = Core::new(1, 8);
+        // inactive add, inactive undo — the index must track both
+        c.set_material(5, 5, 11, 3);
+        assert!(c.overrides_by_chunk.get(&(0, 0)).unwrap().contains(&(5, 5)));
+        c.set_material(5, 5, 3, 3); // repaint base → undo
+        assert!(!c.overrides_by_chunk.contains_key(&(0, 0)));
+
+        // deactivate spilling into the sparse map also updates the index
+        c.activate_chunk(1, 1, &base_grass());
+        c.set_material(1 * CHUNK + 2, 1 * CHUNK + 2, 12, 3);
+        c.deactivate_chunk(1, 1);
+        assert!(c.overrides_by_chunk.get(&(1, 1)).unwrap().contains(&(18, 18)));
+
+        // activating again drains exactly that chunk's entry out of the index
+        c.activate_chunk(1, 1, &base_grass());
+        assert!(!c.overrides_by_chunk.contains_key(&(1, 1)));
     }
 }
