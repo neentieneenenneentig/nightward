@@ -318,9 +318,29 @@ reshape R2's details).
   `document.hidden === true` at the browser level (same R1.5 gotcha) — every check drove
   `worldCore`/`chunks` methods directly via console rather than waiting on rAF; no screenshots
   attempted (would hang) — evidence here is the quantitative traces above.
-  **Playtest gate — this is the batch's flagship, STOP after tagging:** next step is fixing the
-  playtest agent's stale tool list, then a structured pass, then the user's verdict. Do not start
-  R3 or W5. *Learn: cellular automata, active-set simulation, sim↔render decoupling.*
+  **Playtest pass (2026-07-12):** fixed the playtest agent's stale `mcp__Claude_Preview__*` tool
+  list first (own commit). The agent itself was granted no browser tools this run (a harness
+  issue, not a repo issue) and fell back to a static code trace instead of live play — flagged
+  explicitly in its own report as unverified-live. That trace still caught one real **HIGH**
+  bug: `main.ts`'s `render()` fed the fire CA a *fixed* `STEP/1000` dt on every rendered frame
+  instead of the real elapsed time, so the true wall-clock tick rate scaled with display refresh
+  (~2× too fast at 60Hz, ~4.8× at 144Hz) — exactly backwards from "paces itself independent of
+  render fps," and invisible to every acceptance-checklist script because those all drive
+  `worldCore.tick(dt)` directly with a correct dt, bypassing the buggy call site entirely. Fixed
+  (real per-frame elapsed ms, clamped for tab-sleep) + two smaller correctness/UX bugs it also
+  found (`ignitedByPlayer` tracking leaked when a tracked ignition was doused rather than burning
+  out — a periodic sweep now drops those; `findIgniteTarget` could offer a too-wet tile that
+  would then fail with a generic error — now filtered out up front). All three fixes verified
+  live at `?seed=1234`. Tagged `v0.15.1-r2-fire-fix`. The agent also raised open **balance
+  questions** for the user's verdict, not unilaterally patched: whether the wetness plume's ~3-4
+  tile reach from any water body under-eager-extinguishes shoreline fires, whether a lone GRASS
+  ignition's spread-vs-2s-fuel race is too tight to read as "spreading," whether buildings should
+  take any damage from fire under them (currently immune, though the campfire's flavor text
+  implies otherwise), and a fire-farming loophole (a campfire/controlled burn passively kills
+  wandering foes for gold+loot with zero player risk, XP suppressed but not the rest).
+  **Playtest gate — this is the batch's flagship, STOP after fixes:** awaiting the user's verdict
+  on feel + the balance questions above before starting R3 or W5. *Learn: cellular automata,
+  active-set simulation, sim↔render decoupling.*
 - **R3 — Physical skills.** Entity kinematics in TS: knockback impulses on weapon hits, ice
   slides, mud slows, foes knocked into deep water drown; ground-slam skill (radial impulse +
   scorched crater ring via `set_material`); freeze verb (water→ice with a TTL decay queue in the
