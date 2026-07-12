@@ -224,9 +224,36 @@ reshape R2's details).
   "art that makes it look a lil more 3d." Verdict spawns **R1.5** (below); the DIRT/MUD and toast
   flags fold into it. *Learn: sparse overlays — "the world is a database whose default value is a
   function"; zero-copy views.*
-- **R1.5 — The Painted World (look & depth pass) — ACTIVE NEXT (added 2026-07-12).** Direct answer
+- **R1.5 — The Painted World (look & depth pass).** Direct answer
   to the R1 gate verdict: the world reads as a flat checkerboard of colored squares; make it read
-  as a *place* — without changing what a tile IS.
+  as a *place* — without changing what a tile IS. Brief: `docs/plans/R1.5-painted-world.md`.
+  **Merged + tagged `v0.14-r15-painted-world` (2026-07-12).** No Rust changes (pure rendering +
+  data, as scoped); typecheck/build green, all 9 Rust tests unaffected. All 9 live acceptance
+  checks verified on main at `?seed=1234`: heightClass data row, determinism regression, dual-grid
+  feather (border pixel measurably nudged toward the outranking neighbor while the tile interior
+  stayed pure), cliff shading (south edge summed-RGB 177 vs north-edge 413 on the same painted HILL
+  tile), contact shadow (smooth radial falloff profile around a natural tree, distinct from the
+  trunk's hard silhouette), foam presence+animation (shoreline chunk `hasFoam===true`, inland
+  `false`, frame-to-frame fleck pixels differ), DIRT/MUD legibility (re-ramped, summed-channel diff
+  262, MUD darker as designed), build-rejection toast naming ("Can't build on Ice"), and the
+  4-directional rebake dedupe (painting a chunk-west-edge tile rebuilt exactly 2 chunks: own +
+  west neighbor). **New harness gotcha, worth its own note:** this session's preview tab ran with
+  `document.hidden === true` at the true browser level (not just the JS-visible flag — overriding
+  `document.hidden`/`visibilityState` via `defineProperty` did NOT restart it), so `requestAnimationFrame`
+  never fired, `__nw.frames` stayed `0` for the whole session, and `main.ts`'s `render()` (chunk
+  streaming, event-drain rebakes, foam ticking, UI refresh) never ran on its own — real-time waits
+  are useless here. Screenshot/zoom calls hung and timed out (30s) rather than returning a blank
+  frame, consistent with the renderer never having composited anything. Worked around it by calling
+  the render-side methods directly through the console instead of waiting on rAF:
+  `worldCore.ensureAround`/`chunks.ensureAround` to bake chunks on demand, `chunks.rebakeTile`/
+  `rebakeTiles` to force a rebake instead of relying on the automatic event-drain path, and
+  `chunks.tickFoam(ms)` to step the foam frame explicitly. TS `private` class fields are NOT runtime-
+  enforced, so `__nw.chunks.chunks` (the private chunk map) was reachable from the console for deep
+  pixel-level assertions when the public `debugPixel` hook (which only reads the base canvas, not
+  overlay layers like foam) wasn't enough. Screenshots could not be captured this session — visual
+  proof is the quantitative pixel-probe evidence above instead of images.
+  **Playtest gate — STOP after tagging, OPEN:** next step is the playtest agent or a structured
+  self-playtest, then the user's verdict on the look. Do not start R2 first.
   **Decision recorded — square tiles stay.** Triangles/hexes were considered and rejected: cell
   shape is load-bearing everywhere (16×16 chunk arrays in wasm, CA neighbor math R2 depends on,
   collision feet-box, feature placement, bake layout) — retiling all of it, in two languages,
