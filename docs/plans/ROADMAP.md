@@ -168,8 +168,9 @@ sub-tile (falling-sand scale, where Rust genuinely becomes necessary).
 - deploy.yml gains a Rust toolchain step; `npm run build` runs the wasm build first.
 
 ### Re-sequencing the W-queue
-- **W5 (zoom/LOD) moves AFTER R2** — R1/R2 rewrite chunk rendering (effective materials + dynamic
-  field overlay); build the LOD baker once over the final model instead of twice.
+- **W5 (zoom/LOD) moves AFTER R2** — R1/R1.5/R2 rewrite chunk rendering (effective materials +
+  autotile/depth bake + dynamic field overlay); build the LOD baker once over the final model
+  instead of three times. Order within the batch: R1.5 (art) → R2 (fire) → then W5.
 - W6 (lifespan/scoreboards) is independent — a fine breather between R-milestones if wanted.
 - W7 (loot economy) gets richer inputs from this batch: charcoal/ash (fire), crops (farming).
 - W8 (grid inventory) unaffected.
@@ -178,7 +179,7 @@ sub-tile (falling-sand scale, where Rust genuinely becomes necessary).
 R-briefs are **implementation-grade**: exact file contents/contracts an implementer follows
 without inventing APIs, ending in an **Acceptance checklist** that is the post-merge verification
 contract (run verbatim — single-eval blocks at a fixed `?seed=`, per the W3 harness lesson).
-R2–R4 get their briefs written to this standard when they go ACTIVE (after the preceding gate
+R1.5–R4 get their briefs written to this standard when they go ACTIVE (after the preceding gate
 passes), never earlier — pre-written briefs go stale (W1 lesson; the R1 implementation will
 reshape R2's details).
 
@@ -214,9 +215,48 @@ reshape R2's details).
   event/rebake counters. Also: this preview harness does not reliably hold synthetic keydown state
   across a real-time wait (backgrounded-tab throttling/blur), so "sprint across the world" perf
   checks are better done via direct `_activate()` stress than simulated held-key movement.
-  **Playtest gate** (new material art/feel) — automated playtest pass run 2026-07-12; awaiting the
-  user's feel verdict before R2 starts. *Learn: sparse overlays — "the world is a database whose
-  default value is a function"; zero-copy views.*
+  **Playtest gate — RESOLVED 2026-07-12.** Automated pass (static review — the playtest agent's
+  tool list was stale, since flagged for repair) found no logic bugs and matched the brief
+  line-for-line; flags: DIRT vs MUD near-identical art (real gameplay stakes, 1.0× vs 0.55×),
+  GRAVEL's −5% likely imperceptible, ICE not actually "risky" until R3, build-rejection toast
+  doesn't name the blocking terrain. User verdict: mechanics/speed unchallenged, but the world's
+  LOOK is the problem — "kinda looks disappointing currently tbh," asked about triangles and
+  "art that makes it look a lil more 3d." Verdict spawns **R1.5** (below); the DIRT/MUD and toast
+  flags fold into it. *Learn: sparse overlays — "the world is a database whose default value is a
+  function"; zero-copy views.*
+- **R1.5 — The Painted World (look & depth pass) — ACTIVE NEXT (added 2026-07-12).** Direct answer
+  to the R1 gate verdict: the world reads as a flat checkerboard of colored squares; make it read
+  as a *place* — without changing what a tile IS.
+  **Decision recorded — square tiles stay.** Triangles/hexes were considered and rejected: cell
+  shape is load-bearing everywhere (16×16 chunk arrays in wasm, CA neighbor math R2 depends on,
+  collision feet-box, feature placement, bake layout) — retiling all of it, in two languages,
+  buys nothing that *presentation* can't buy cheaper. "Looks 3D" is a rendering property, not a
+  topology property (LttP/Stardew are square grids). Revisit only if a future milestone needs
+  non-square *gameplay* semantics.
+  Scope sketch (implementation-grade brief written at activation, per batch convention):
+  1. **Dual-grid autotile transitions** — the render pass samples the 4 nearest tile corners
+     (marching-squares/dual-grid) and bakes procgen transition masks between materials: feathered
+     grass↔dirt, foam-lipped water edges, blended biome borders. This alone kills the hard-square
+     look. Must read through `world.materialAt` (override-aware) and stay compatible with
+     `rebakeTiles` (a paint dirties up to 4 render cells around it — the dedupe already handles
+     neighbor chunks via the south-border rule; extend it, don't fork it).
+  2. **Pseudo-3D height ledges** — each material gets a small `heightClass` (data field: water 0,
+     ground 1, hill 2, mountain/snow 3); where height drops toward the viewer (south edge), bake a
+     short darker cliff-face strip + a light top-lip highlight. Terraced depth, zero geometry.
+  3. **Contact shadows** — soft baked ellipse under trees/rocks; drop shadow under buildings and
+     entities (sprite-level, cheap).
+  4. **Water life** — 2–3 frame shoreline-foam animation (alternate baked chunk frames or a small
+     overlay sprite pass at ≤5 Hz, NOT per-tile sprites; the R2 fire overlay will reuse whichever
+     mechanism this builds).
+  5. **Material legibility pass** — re-ramp DIRT vs MUD so they're tellable at a glance (playtest
+     flag; art is data, `MaterialDef.art`), make TILLED read as furrows, keep the 9 original biome
+     hues recognizable.
+  6. **Toast fix (rider):** `canPlaceAt` rejection names the blocking material ("can't build on
+     Ice") — closes the other playtest flag.
+  Constraints: 100% procgen art (non-negotiable stands), everything still per-chunk baked canvases
+  (perf), bake cost per chunk stays same order of magnitude (LOD/zoom is W5's problem, don't solve
+  it here). **Playtest gate — look milestone, STOP after tagging for the user's verdict.**
+  *Learn: dual-grid autotiling, painter's-algorithm depth cues on a flat grid.*
 - **R2 — Fire (the living world, part 1).** Per-active-chunk fuel/burn/wet fields, 10 Hz cellular-
   automata tick in Rust: spread driven by material flammability + a slow wind drift, burnout →
   `burnsTo` override (forest → ash + charcoal drops), burn damage to entities standing in it,
@@ -224,8 +264,11 @@ reshape R2's details).
   additive — NOT base-chunk rebakes; a spreading fire must not thrash the baker). **Firemaking
   skill** (data rows): torch tool, campfire building (small light + night-fear radius), controlled
   burns for charcoal. `CFG.fire` uploaded + live re-upload. Brief written at activation.
-  **Playtest gate — this is the batch's flagship.** *Learn: cellular automata, active-set
-  simulation, sim↔render decoupling.*
+  **Prereq noted at R1 review (2026-07-12):** `Core::activate_chunk`'s override-drain scans ALL
+  overrides (O(world), not O(chunk)) — fine at god-brush scale, but fire will mass-produce standing
+  overrides while chunk streaming churns; add a chunk-keyed override index in the core as R2's
+  first task. **Playtest gate — this is the batch's flagship.** *Learn: cellular automata,
+  active-set simulation, sim↔render decoupling.*
 - **R3 — Physical skills.** Entity kinematics in TS: knockback impulses on weapon hits, ice
   slides, mud slows, foes knocked into deep water drown; ground-slam skill (radial impulse +
   scorched crater ring via `set_material`); freeze verb (water→ice with a TTL decay queue in the
