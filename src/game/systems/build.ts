@@ -169,6 +169,7 @@ export class BuildSystem {
     state.buildings.push(b);
     world.reindexBuildings();
     this.ctx.views.addBuilding(b);
+    this.ctx.fire?.onBuildingAdded(b);
     if (m.def.id === 'wall') this.ctx.views.refreshWallsAround(m.tx, m.ty);
     m.lastTx = m.tx; m.lastTy = m.ty;
     Sound.play('build');

@@ -101,9 +101,9 @@ export class HordeSystem {
       const dist = CFG.horde.spawnRadiusTiles * TILE * (0.9 + Math.random() * 0.35);
       x = cx + Math.cos(ang) * dist;
       y = cy + Math.sin(ang) * dist;
-      placed = world.canStand(x, y, 5);
+      placed = world.canStand(x, y, 5) && this.nearestCampfireDist(x, y) > CFG.fire.campfireFearTiles * TILE;
     }
-    if (!placed) return; // hostile geography; try again next tick
+    if (!placed) return; // hostile geography (or firelight); try again next tick
 
     const hpMul = Math.pow(CFG.horde.hpGrowth, n - 1);
     const dmgMul = Math.pow(CFG.horde.dmgGrowth, n - 1);
@@ -213,10 +213,12 @@ export class HordeSystem {
     }
 
     // march (day prey ambles while wandering, runs when it has you). Terrain
-    // under the foe's feet scales its speed too (mud bogs the horde down).
+    // under the foe's feet scales its speed too (mud bogs the horde down), and
+    // firelight nearby makes it hesitate (no pathfinding — just a speed penalty).
     const ux = (tx - f.x) / dist, uy = (ty - f.y) / dist;
     const terrain = world.speedAt(Math.floor(f.x / TILE), Math.floor(f.y / TILE));
-    const step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain;
+    const fear = this.nearestCampfireDist(f.x, f.y) < CFG.fire.campfireFearTiles * TILE ? CFG.fire.campfireFearSpeedMult : 1;
+    const step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain * fear;
     let blocked: Building | null = null;
     const nx = f.x + ux * step, ny = f.y + uy * step;
     if (world.canStand(nx, f.y, 5)) f.x = nx;
@@ -252,10 +254,23 @@ export class HordeSystem {
     state.buildings = state.buildings.filter((x: Building) => x.uid !== b.uid);
     world.reindexBuildings();
     views.removeBuilding(b.uid);
+    this.ctx.fire?.onBuildingRemoved(b);
     if (b.type === 'wall') views.refreshWallsAround(b.tx, b.ty);
     toast(`${def.name} destroyed!`, 'bad');
     this.ctx.log?.push('build', `${def.name} destroyed at (${b.tx},${b.ty})`, state.clock);
     if (b.type === 'hall') this.ctx.onHallDestroyed();
+  }
+
+  /** Distance (px) to the nearest campfire, or Infinity if none stand. Used for the spawn-avoid
+   * radius and the march-speed hesitation penalty — no pathfinding, just proximity. */
+  nearestCampfireDist(x: number, y: number): number {
+    const { state } = this.ctx;
+    let best = Infinity;
+    for (const b of state.buildings) {
+      if (b.type !== 'campfire') continue;
+      best = Math.min(best, Math.hypot((b.tx + 0.5) * TILE - x, (b.ty + 0.5) * TILE - y));
+    }
+    return best;
   }
 
   /** Damage from the player (or towers). Handles death, loot, xp. */
