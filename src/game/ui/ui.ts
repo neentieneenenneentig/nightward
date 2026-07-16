@@ -78,6 +78,11 @@ export class UI {
 
   toast(msg: string, kind: 'info' | 'good' | 'bad' = 'info') { this.toasts.push(msg, kind); }
 
+  /** Schedule a panel body rebuild on the next refresh(). Call after state changes
+   *  (craft, equip, use, gather) while a panel is open. */
+  rebuildPanel() { this._dirty = true; }
+  private _dirty = false;
+
   // ---------------------------------------------------------------- build ----
 
   private buildTop() {
@@ -92,7 +97,7 @@ export class UI {
       <div class="nw-badge nw-gold">&#9679; <span id="nw-gold">0</span></div>
       <div class="nw-badge nw-clock" id="nw-clock"></div>
       <div class="nw-badge" id="nw-nights" title="damage · defense · population · territory"></div>
-      <div class="nw-badge nw-domain" id="nw-domain" title="the dream you stand in"></div>
+      <div class="nw-badge nw-domain" id="nw-domain" title="the network realm you stand in"></div>
       <div class="nw-spacer"></div>
       <div class="nw-badge nw-btn" id="nw-mute" style="pointer-events:auto" title="sound on/off">&#128266;</div>
       <div class="nw-badge nw-btn" id="nw-newworld" style="pointer-events:auto" title="new world">&#10227;</div>`;
@@ -161,21 +166,21 @@ export class UI {
 
   private buildActions() {
     const bar = el('div', 'nw-actions');
-    const btn = (id: string, label: string, key: string, cls = '') => {
+    const btn = (id: string, icon: string, label: string, key: string, cls = '') => {
       const b = el('div', 'nw-btn ' + cls);
       b.id = id;
-      b.innerHTML = `<span>${label}</span><span class="k">${key}</span>`;
+      b.innerHTML = `<span class="nw-btn-icon">${icon}</span><span class="nw-btn-label">${label}</span><span class="k">${key}</span>`;
       bar.appendChild(b);
       return b;
     };
-    this.interactBtn = btn('nw-interact', 'Interact', 'E', 'primary');
-    const attack = btn('nw-attack', '&#9876; Attack', 'Space');
-    const ignite = btn('nw-ignite', '&#128293; Ignite', 'F');
-    const build = btn('nw-build', '&#9874; Build', 'B');
-    const bag = btn('nw-bag', '&#127890; Bag', 'I');
-    const craft = btn('nw-craft', '&#9881; Craft', 'C');
-    const skills = btn('nw-skills', '&#9733; Skills', 'K');
-    const log = btn('nw-log', '&#128220; Log', 'L');
+    this.interactBtn = btn('nw-interact', '&#128074;', 'Interact', 'E', 'primary');
+    const attack = btn('nw-attack', '&#9876;', 'Attack', 'Space');
+    const ignite = btn('nw-ignite', '&#128293;', 'Ignite', 'F');
+    const build = btn('nw-build', '&#9874;', 'Build', 'B');
+    const bag = btn('nw-bag', '&#127890;', 'Bag', 'I');
+    const craft = btn('nw-craft', '&#9881;', 'Craft', 'C');
+    const skills = btn('nw-skills', '&#9733;', 'Skills', 'K');
+    const log = btn('nw-log', '&#128220;', 'Log', 'L');
     this.root.appendChild(bar);
 
     this.interactBtn.addEventListener('click', () => this.hooks.interact());
@@ -199,22 +204,89 @@ export class UI {
 
   private onKey(e: KeyboardEvent) {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
-    const k = e.key.toLowerCase();
-    if (k === 'escape') { this.close(); return; }
-    if (k === 'tab' && this.hooks.isPlacing()) {
-      e.preventDefault(); // keep focus in the game — tab flips blueprints
+    const k = e.key;
+
+    // ---- panel keyboard navigation (Tab / Enter / Escape) ----
+    if (this.panel) {
+      if (k === 'Escape') { e.preventDefault(); this.close(); return; }
+      // Ctrl+Tab switches craft tabs (must check BEFORE plain Tab)
+      if (k === 'Tab' && e.ctrlKey && this.panel === 'craft') {
+        e.preventDefault();
+        const tabs = ['crafting', 'smithing', 'alchemy'];
+        const idx = tabs.indexOf(this.craftTab);
+        this.craftTab = tabs[(idx + (e.shiftKey ? -1 : 1) + tabs.length) % tabs.length];
+        this.renderPanel();
+        return;
+      }
+      if (k === 'Tab') {
+        e.preventDefault();
+        this.focusNext(e.shiftKey ? -1 : 1);
+        return;
+      }
+      if (k === 'Enter' || k === ' ') {
+        const focused = document.activeElement as HTMLElement;
+        if (focused && focused.closest('.nw-panel')) {
+          e.preventDefault();
+          focused.click(); // trigger the existing click handler
+          return;
+        }
+      }
+      // arrow keys navigate within panels
+      if (k === 'ArrowDown') { e.preventDefault(); this.focusNext(1); return; }
+      if (k === 'ArrowUp') { e.preventDefault(); this.focusNext(-1); return; }
+      return; // while panel is open, game keys don't fire
+    }
+
+    // ---- game keys (only when no panel is open) ----
+    if (k === 'Escape') { this.close(); return; }
+    if (k === 'Tab' && this.hooks.isPlacing()) {
+      e.preventDefault();
       this.hooks.cycleBuild(e.shiftKey ? -1 : 1);
       return;
     }
     if (e.repeat) return;
-    if (k === 'e') this.hooks.interact();
-    else if (k === ' ') this.hooks.attack();
-    else if (k === 'f') this.hooks.ignite();
-    else if (k === 'b') this.toggleBuild();
-    else if (k === 'i') this.toggle('bag');
-    else if (k === 'c') this.toggle('craft');
-    else if (k === 'k') this.toggle('skills');
-    else if (k === 'l') this.toggle('log');
+    const kl = k.toLowerCase();
+    if (kl === 'e') this.hooks.interact();
+    else if (kl === ' ') this.hooks.attack();
+    else if (kl === 'f') this.hooks.ignite();
+    else if (kl === 'b') this.toggleBuild();
+    else if (kl === 'i') this.toggle('bag');
+    else if (kl === 'c') this.toggle('craft');
+    else if (kl === 'k') this.toggle('skills');
+    else if (kl === 'l') this.toggle('log');
+  }
+
+  /** Cycle focus through all focusable elements within the open panel.
+   *  Action items (buttons, cells, slots) come first; header chrome (tabs, close) last.
+   *  Only elements with tabIndex >= 0 are included — empty slots and disabled
+   *  buttons are skipped so Tab never gets stuck on an unfocusable target. */
+  private focusNext(dir: number) {
+    const panel = document.querySelector('.nw-panel');
+    if (!panel) return;
+
+    // action items: what the user actually wants to interact with
+    const actions = Array.from(panel.querySelectorAll<HTMLElement>(
+      '.nw-make:not([disabled]), .nw-cell, .nw-slot',
+    )).filter(el => el.tabIndex >= 0);
+    // header chrome: navigation aids
+    const headers = Array.from(panel.querySelectorAll<HTMLElement>(
+      '.nw-tab, .nw-x',
+    )).filter(el => el.tabIndex >= 0);
+    const focusable = [...actions, ...headers];
+    if (!focusable.length) return;
+
+    const current = document.activeElement as HTMLElement;
+    let idx = focusable.indexOf(current);
+    if (idx < 0) idx = dir > 0 ? -1 : focusable.length;
+    idx = (idx + dir + focusable.length) % focusable.length;
+    // guard: if focus doesn't land (e.g. element is hidden), skip forward
+    const target = focusable[idx];
+    target.focus();
+    if (document.activeElement !== target) {
+      // try the next element instead
+      const next = focusable[(idx + dir + focusable.length) % focusable.length];
+      if (next !== target) next.focus();
+    }
   }
 
   // --------------------------------------------------------------- panels ----
@@ -242,7 +314,9 @@ export class UI {
     head.innerHTML = `<h2>${titles[this.panel]}</h2>`;
     if (this.panel === 'craft') head.appendChild(this.craftTabs());
     const x = el('div', 'nw-x'); x.innerHTML = '&times;';
+    x.tabIndex = 0; x.setAttribute('role', 'button'); x.setAttribute('aria-label', 'Close panel');
     x.addEventListener('click', () => this.close());
+    x.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.close(); } });
     head.appendChild(el('div', 'nw-spacer'));
     head.appendChild(x);
     panel.appendChild(head);
@@ -251,6 +325,14 @@ export class UI {
     body.id = 'nw-pbody';
     panel.appendChild(body);
     this.fillBody(body);
+
+    // auto-focus first action item (craft button, bag cell, etc.)
+    requestAnimationFrame(() => {
+      const first = panel.querySelector<HTMLElement>(
+        '.nw-make:not([disabled]), .nw-cell, .nw-slot',
+      );
+      if (first) first.focus();
+    });
   }
 
   private craftTabs() {
@@ -258,7 +340,12 @@ export class UI {
     for (const t of ['crafting', 'smithing', 'alchemy']) {
       const tab = el('div', 'nw-tab' + (t === this.craftTab ? ' on' : ''));
       tab.textContent = t[0].toUpperCase() + t.slice(1);
+      tab.tabIndex = 0; tab.setAttribute('role', 'tab');
+      tab.setAttribute('aria-selected', String(t === this.craftTab));
       tab.addEventListener('click', () => { this.craftTab = t; this.renderPanel(); });
+      tab.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.craftTab = t; this.renderPanel(); }
+      });
       tabs.appendChild(tab);
     }
     return tabs;
@@ -281,9 +368,19 @@ export class UI {
     for (const e of entries) {
       const row = el('div', 'nw-logrow nw-log-' + e.kind);
       const t = Math.floor(e.t);
-      row.innerHTML = `<span class="nw-logt">${String((t / 60) | 0).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}</span><span class="nw-logk">${e.kind}</span><span class="nw-logm">${e.msg}</span>`;
+      const kindLabel = NET_LOG_LABELS[e.kind] ?? e.kind;
+      row.innerHTML = `<span class="nw-logt">${String((t / 60) | 0).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}</span><span class="nw-logk">${kindLabel}</span><span class="nw-logm">${styleNetworkMsg(e.msg)}</span>`;
       body.appendChild(row);
     }
+    // N2: export button at the bottom of the log panel
+    const exportWrap = el('div', 'nw-log-export');
+    const exportBtn = el('div', 'nw-btn');
+    exportBtn.innerHTML = '💾 Export Log (.txt)';
+    exportBtn.addEventListener('click', () => {
+      (window as any).__nw?.log?.download?.();
+    });
+    exportWrap.appendChild(exportBtn);
+    body.appendChild(exportWrap);
   }
 
   private fillBag(body: HTMLElement) {
@@ -328,8 +425,16 @@ export class UI {
         + (def.weaponDmg ? ` (+${def.weaponDmg} dmg)` : '')
         + (def.armor ? ` (+${def.armor} armor)` : '')
         + (def.heal ? ` (heals ${def.heal})` : '');
-      if (slot) { cell.style.cursor = 'pointer'; cell.addEventListener('click', () => this.hooks.equip(id)); }
-      else if (usable) { cell.style.cursor = 'pointer'; cell.addEventListener('click', () => this.hooks.useItem(id)); }
+      cell.tabIndex = 0; cell.setAttribute('role', 'button');
+      if (slot) {
+        cell.setAttribute('aria-label', `${worn ? 'Unequip' : 'Equip'} ${def.name}`);
+        cell.addEventListener('click', () => this.hooks.equip(id));
+        cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.hooks.equip(id); } });
+      } else if (usable) {
+        cell.setAttribute('aria-label', `Use ${def.name}`);
+        cell.addEventListener('click', () => this.hooks.useItem(id));
+        cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.hooks.useItem(id); } });
+      }
       grid.appendChild(cell);
     }
     body.appendChild(grid);
@@ -346,9 +451,11 @@ export class UI {
       const stat = `+${soulStat(this.state, slot).toFixed(1)} ${unit}`;
       cell.innerHTML =
         `<img src="${icon(id)}" alt=""><div class="meta"><b>${label}</b><span>${def.name}</span>${this.soulBarHtml(slot)}<span class="stat">${stat}</span></div>`;
-      cell.style.cursor = 'pointer';
-      cell.title = 'Click to unequip';
+      cell.tabIndex = 0; cell.setAttribute('role', 'button');
+      cell.setAttribute('aria-label', `Unequip ${def.name}`);
+      cell.title = 'Enter/Space to unequip';
       cell.addEventListener('click', () => this.hooks.equip(id));
+      cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.hooks.equip(id); } });
     } else {
       cell.innerHTML = `<div class="ph">${glyph}</div><div class="meta"><b>${label}</b><span class="off">empty</span></div>`;
     }
@@ -385,6 +492,7 @@ export class UI {
       const btn = el('button', 'nw-make') as HTMLButtonElement;
       btn.textContent = 'Craft';
       btn.disabled = locked || !has;
+      btn.tabIndex = locked ? -1 : 0;
       btn.addEventListener('click', () => this.hooks.craft(r.id));
       row.appendChild(btn);
       body.appendChild(row);
@@ -418,7 +526,8 @@ export class UI {
 
   // --------------------------------------------------------------- refresh ----
 
-  /** Called every frame. Cheap top-bar text + (if open) a panel rebuild. */
+  /** Called every frame. Cheap top-bar text updates + gather progress.
+   *  Panel body is NOT rebuilt — it's only rebuilt on open() or tab change. */
   refresh() {
     const p = this.state.player;
     this.hpFill.style.width = (100 * Math.max(0, p.hp) / CFG.player.maxHp).toFixed(1) + '%';
@@ -450,7 +559,9 @@ export class UI {
     const interactable = gv || this.interactTarget();
     this.interactBtn.classList.toggle('disabled', !interactable && !gv);
 
-    if (this.panel) {
+    // Panel body is rebuilt only when dirty (state changed) or on open/tab change.
+    if (this.panel && this._dirty) {
+      this._dirty = false;
       const body = document.getElementById('nw-pbody');
       if (body) { body.innerHTML = ''; this.fillBody(body); }
     }
@@ -460,8 +571,8 @@ export class UI {
 
   showGameOver(onRestart: () => void) {
     const over = el('div', 'nw-gameover');
-    over.innerHTML = `<h1>THE RACKET FALLS</h1>
-      <div style="color:var(--ink-dim);max-width:340px">Your hall is rubble and the dark has the run of the land.
+    over.innerHTML = `<h1>CONNECTION LOST</h1>
+      <div style="color:var(--ink-dim);max-width:340px">Your Node Core is destroyed and the network goes dark.
       You survived ${this.state.nightsSurvived} night${this.state.nightsSurvived === 1 ? '' : 's'}.</div>`;
     const btn = el('div', 'nw-btn primary'); btn.textContent = 'Try again';
     btn.style.pointerEvents = 'auto';
@@ -478,6 +589,56 @@ function el(tag: string, cls: string): HTMLElement {
   return e;
 }
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+
+// ---- N2: network log abbreviations & styling ----
+/** Short pixel-style labels for each log kind. */
+const NET_LOG_LABELS: Record<string, string> = {
+  'gather': 'GATHER',
+  'craft': 'CRAFT',
+  'build': 'BUILD',
+  'combat': 'COMBAT',
+  'boss': 'BOSS',
+  'level': 'LVL UP',
+  'death': 'DEATH',
+  'region': 'REGION',
+  'economy': 'ECON',
+  'system': 'SYS',
+  'spawn': 'SPAWN',
+  'world': 'WORLD',
+  'network': 'NET',
+  'net-rtt': 'RTT',
+  'net-bw': 'BW',
+  'net-jitter': 'JITTER',
+  'net-ep': 'ENDPT',
+  'net-conn': 'CONN',
+  'net-rift': 'RIFT',
+};
+
+/** Wrap known network abbreviations in styled <span> tags for pixel-art feel. */
+function styleNetworkMsg(msg: string): string {
+  // Replace known abbreviations with styled spans
+  const abbrs: [string, string][] = [
+    ['RTT', 'rtt'], ['DNS', 'dns'], ['TLS', 'tls'], ['TTFB', 'ttfb'],
+    ['Mbps', 'mbps'], ['HTTP', 'http'], ['TCP', 'tcp'], ['IP', 'ip'],
+    ['API', 'api'], ['URL', 'url'], ['CPU', 'cpu'], ['RAM', 'ram'],
+    ['GB', 'gb'], ['ms', 'ms'], ['LAN', 'lan'], ['WAN', 'wan'],
+    ['WiFi', 'wifi'], ['4G', '4g'], ['3G', '3g'], ['2G', '2g'],
+    ['ICMP', 'icmp'], ['CDN', 'cdn'], ['SSL', 'ssl'], ['UDP', 'udp'],
+    ['NAT', 'nat'], ['DHCP', 'dhcp'], ['ISP', 'isp'], ['VPN', 'vpn'],
+    ['P2P', 'p2p'], ['QoS', 'qos'], ['MTU', 'mtu'], ['ACK', 'ack'],
+    ['SYN', 'syn'], ['PoP', 'pop'],
+  ];
+  let result = msg;
+  for (const [full, _cls] of abbrs) {
+    // Only replace standalone occurrences (not part of longer words)
+    const regex = new RegExp(`\\b${full}\\b`, 'g');
+    result = result.replace(regex, `<span class="net-abbr">${full}</span>`);
+  }
+  // Style numeric values: digits followed by units
+  result = result.replace(/(\d+(?:\.\d+)?)\s*(ms|Mbps|GB|s|×|%|cores)/g,
+    '<span class="net-val">$1</span><span class="net-unit">$2</span>');
+  return result;
+}
 
 // build icons: reuse the tiny procgen building sprite as a data URL, cached
 const bCache = new Map<string, string>();

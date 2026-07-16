@@ -13,7 +13,7 @@ import { WorldArt } from './game/world/art';
 import { World } from './game/world/world';
 import { WorldCore } from './game/world/core';
 import { M, MATERIALS, packMaterials, STRIDE } from './game/data/materials';
-import { ChunkMap } from './game/world/chunkmap';
+import { ChunkMap, CHUNK } from './game/world/chunkmap';
 import { Views } from './game/world/views';
 import { Player } from './game/world/player';
 import { Camera } from './game/world/camera';
@@ -25,12 +25,19 @@ import { HordeSystem } from './game/systems/hordes';
 import { CombatSystem } from './game/systems/combat';
 import { WorldBossSystem } from './game/systems/worldbosses';
 import { FireSystem } from './game/systems/fire';
+import { NetworkSystem } from './game/systems/network';
 import { craft } from './game/systems/crafting';
-import { toggleEquip } from './game/rules';
+import { toggleEquip, invAdd } from './game/rules';
+import { BUILDINGS } from './game/data/buildings';
 import { phase, tintAt } from './game/systems/daynight';
 import { Fog } from './game/world/fog';
 import { domainAt, regionOf, regionKey } from './game/world/domains';
 import { Sound } from './engine/audio';
+import { FloaterSystem } from './game/ui/floaters';
+import { ParticleSystem } from './engine/particles';
+import { PostProcess, type PostProcessConfig } from './engine/postprocess';
+import { initScale } from './game/ui/scale';
+import * as regression from './game/systems/regression';
 
 const STEP = 1000 / 30;
 
@@ -44,6 +51,9 @@ function seedFromUrl(): number | null {
 }
 
 async function boot() {
+  // M1: dynamic UI scaling — must run before any DOM measurements
+  initScale();
+
   let seed = seedFromUrl();
   if (seed === null) {
     seed = (Math.random() * 2 ** 31) | 0;
@@ -85,11 +95,15 @@ async function boot() {
   // fog of sight sits above the tint — the unknown stays dark
   const fog = new Fog(stage.app, stage.app.stage);
 
+  // combat floaters — WoW-style numbers for combat effects
+  const floaters = new FloaterSystem(stage.entities);
+
   const log = new GameLog();
 
   // shared context every system reads/writes
   const ctx: any = {
     state, world, worldCore, chunks, views, cam, player, spawnPoint: spawn, log,
+    floaters,
     isNight: () => phase(state.clock).isNight,
     nightIndex: () => phase(state.clock).dayIndex,
     toast: (m: string, k?: any) => ui.toast(m, k),
@@ -97,6 +111,17 @@ async function boot() {
     damagePlayer: (d: number, src?: string) => combat.damagePlayer(d, src),
     onHallDestroyed: () => triggerGameOver(),
   };
+
+  // G1: particle system — pre-allocated pool for gather poofs, fire embers, slash trails, etc.
+  const particles = new ParticleSystem(stage.app.stage, 400);
+  ctx.particles = particles;
+
+  // G1: post-processing — bloom, color grading, vignette (between world and UI)
+  const post = new PostProcess(stage.app.stage, stage.app.screen.width, stage.app.screen.height);
+  ctx.post = post;
+  stage.app.renderer.on('resize', () => {
+    post.resize(stage.app.screen.width, stage.app.screen.height);
+  });
 
   const gather = new GatherSystem(ctx);
   const economy = new EconomySystem(ctx);
@@ -109,6 +134,101 @@ async function boot() {
   const fire = new FireSystem(ctx);
   ctx.fire = fire;
 
+  // resonance system — polls browser APIs, feeds game systems
+  const net = new NetworkSystem();
+  ctx.net = net;
+  net.onTransitionLog((msg: string) => {
+    log.push('network', msg, state.clock);
+  });
+  net.onNetLog((kind: string, msg: string) => {
+    log.push(kind as any, msg, state.clock);
+  });
+  // rift events — screen flash + toast on realm changes
+  net.onRift((from, to) => {
+    ctx.toast(`Realm Rift: ${from.name} → ${to.name}`, 'bad');
+    const flash = document.createElement('div');
+    flash.style.cssText = `position:fixed;inset:0;z-index:25;pointer-events:none;`
+      + `background:${to.hex};opacity:0.4;transition:opacity 0.5s;`;
+    document.body.appendChild(flash);
+    requestAnimationFrame(() => { flash.style.opacity = '0'; });
+    setTimeout(() => flash.remove(), 600);
+    const px = state.player.x, py = state.player.y;
+    particles.spawn('rift', px, py, 80);
+  });
+
+  // Resonance panel (toggled with O key) — simplified readout
+  const obsPanel = document.createElement('div');
+  obsPanel.id = 'nw-observatory';
+  obsPanel.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:35;'
+    + 'font-family:ui-monospace,Consolas,monospace;font-size:11px;line-height:1.4;'
+    + 'color:#ccc;background:#0a0a12e8;padding:14px 18px;border-radius:8px;'
+    + 'border:1px solid #334;display:none;min-width:280px;max-width:360px;max-height:92vh;overflow-y:auto;'
+    + 'pointer-events:auto;user-select:none;';
+  obsPanel.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;border-bottom:1px solid #334;padding-bottom:6px;">
+      <span style="color:#c9b6e6;font-weight:bold;font-size:13px;">✨ Soul Resonance</span>
+      <span style="color:#666;font-size:10px;">O to close</span>
+    </div>
+
+    <!-- Big number readouts -->
+    <div style="margin-bottom:8px;display:flex;gap:10px;">
+      <div style="flex:1;text-align:center;background:#0d0d18;border-radius:4px;padding:6px 4px;">
+        <div style="font-size:9px;color:#f96;">PULSE</div>
+        <div id="nw-obs-rtt-big" style="font-size:18px;font-weight:bold;color:#f96;line-height:1.2;">--</div>
+        <div style="font-size:9px;color:#885;">ms</div>
+      </div>
+      <div style="flex:1;text-align:center;background:#0d0d18;border-radius:4px;padding:6px 4px;">
+        <div style="font-size:9px;color:#6cf;">FLOW</div>
+        <div id="nw-obs-bw-big" style="font-size:18px;font-weight:bold;color:#6cf;line-height:1.2;">--</div>
+        <div style="font-size:9px;color:#885;">Mbps</div>
+      </div>
+      <div style="flex:1;text-align:center;background:#0d0d18;border-radius:4px;padding:6px 4px;">
+        <div style="font-size:9px;color:#fc6;">FLUX</div>
+        <div id="nw-obs-jit-big" style="font-size:18px;font-weight:bold;color:#fc6;line-height:1.2;">--</div>
+        <div style="font-size:9px;color:#885;">ms</div>
+      </div>
+    </div>
+
+    <!-- Realm card -->
+    <div id="nw-obs-realm" style="background:#111122;border-radius:4px;padding:6px 10px;margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span id="nw-obs-biome" style="font-weight:bold;font-size:12px;">--</span>
+        <span id="nw-obs-stability" style="font-size:11px;">--</span>
+      </div>
+      <div style="margin-top:3px;height:3px;background:#222;border-radius:2px;overflow:hidden;">
+        <div id="nw-obs-stabbar" style="height:100%;width:0%;background:#0c0;transition:width 0.5s;"></div>
+      </div>
+    </div>
+
+    <!-- Active modifiers -->
+    <div id="nw-obs-modifiers" style="font-size:10px;line-height:1.6;margin-bottom:6px;">
+      <div style="color:#888;margin-bottom:2px;">ACTIVE MODIFIERS</div>
+    </div>
+
+    <!-- Danger level -->
+    <div id="nw-obs-danger" style="margin-top:6px;padding-top:6px;border-top:1px solid #333;font-size:10px;">
+      <div style="display:flex;justify-content:space-between;">
+        <span style="color:#f66;">⚔ DANGER</span>
+        <span id="nw-obs-danger-val" style="color:#f66;">--</span>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(obsPanel);
+
+  // O key toggles the observatory (works regardless of debug mode)
+  window.addEventListener('keydown', (e) => {
+    if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+    if (e.key === 'o' || e.key === 'O') {
+      e.preventDefault();
+      obsPanel.style.display = obsPanel.style.display === 'none' ? '' : 'none';
+    }
+    // M3: G = Scatter Cache — spend gold to reduce horde size
+    if (e.key === 'G') {
+      e.preventDefault();
+      hordes.scatterCache();
+    }
+  });
+
   const ui = new UI(state, {
     interact: () => gather.tryStart(),
     attack: () => combat.attack(),
@@ -116,9 +236,9 @@ async function boot() {
     enterBuild: (id: string) => (id ? build.enter(id) : build.cancel()),
     startBuild: () => build.start(),
     cycleBuild: (dir: number) => build.cycle(dir),
-    craft: (id: string) => craft(state, id, ctx.toast, log),
-    useItem: (id: string) => useItem(id),
-    equip: (id: string) => equipItem(id),
+    craft: (id: string) => { craft(state, id, ctx.toast, log, net); ui.rebuildPanel(); },
+    useItem: (id: string) => { useItem(id); ui.rebuildPanel(); },
+    equip: (id: string) => { equipItem(id); ui.rebuildPanel(); },
     toggleMute: () => Sound.toggle(),
     newWorld: () => { location.hash = 's=' + ((Math.random() * 2 ** 31) | 0); location.reload(); },
     isPlacing: () => !!build.mode,
@@ -210,10 +330,10 @@ async function boot() {
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
     sys: { gather, economy, build, hordes, combat, worldbosses, fire }, world, player, gen, chunks,
-    get log() { return log.entries; },
+    get log() { return log; },  // expose full GameLog (entries + export + download)
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
-    craft: (id: string) => craft(state, id, ctx.toast, log),
+    craft: (id: string) => craft(state, id, ctx.toast, log, net),
     // R1: the writable-world seam. __nw.core is the WorldCore wrapper (materialAt,
     // setMaterial, overrideAt, pushMaterials, stats, _activate, _deactivate).
     core: worldCore,
@@ -224,7 +344,18 @@ async function boot() {
           worldCore.setMaterial(tx + dx, ty + dy, matId);
       log.push('world', `Painted ${MATERIALS[matId]?.name ?? matId}${r ? ` r${r}` : ''} at (${tx},${ty})`, state.clock);
     },
+    // regression test suite — run via __nw.regression.run() or ?test URL param
+    regression: {
+      run: () => regression.runAll((window as any).__nw),
+      runOne: (name: string) => regression.runOne((window as any).__nw, name),
+      list: () => regression.list(),
+    },
   };
+
+  // ?test URL param → auto-run the regression suite after a short warm-up
+  if (new URLSearchParams(location.search).has('test')) {
+    setTimeout(() => regression.runAll((window as any).__nw), 500);
+  }
 
   stage.app.ticker.add((tk) => {
     frames++;
@@ -240,9 +371,43 @@ async function boot() {
   function sim(dt: number) {
     if (!state.gameOver) state.clock += dt;
 
+    // real clock day/night sync — smoothly nudge the game clock toward real time
+    const realFrac = net.get('timeOfDay');
+    if (realFrac > 0) {
+      const cy = CFG.time.daySec + CFG.time.nightSec;
+      const gameFrac = ((state.clock % cy) + cy) % cy / cy; // always positive fraction
+      const rawDiff = realFrac - gameFrac;
+      // snap on large differences (first tick, DST, timezone change)
+      if (Math.abs(rawDiff) > 0.45) {
+        // jump to real time within the current cycle
+        const cycleStart = Math.floor(Math.max(0, state.clock) / cy) * cy;
+        state.clock = cycleStart + realFrac * cy;
+        if (state.clock < 0) state.clock += cy;
+      } else {
+        // smooth: nudge by a small fraction of the gap per sim tick
+        let nudgediff = rawDiff;
+        if (nudgediff > 0.5) nudgediff -= 1.0;
+        else if (nudgediff < -0.5) nudgediff += 1.0;
+        state.clock += nudgediff * cy * 0.005;
+      }
+    }
+    // safety: clock must never go negative
+    if (state.clock < 0) state.clock = 0;
+
+    // sim speed = pulse time → lag compensation (high pulse = slow sim)
+    const simMul = net.getGameValue('simSpeed');
+    const effectiveDt = dt * simMul;
+
     const ph = phase(state.clock);
-    if (ph.isNight && !wasNight) { hordes.onDusk(ph.dayIndex); Sound.play('nightfall'); }
-    if (!ph.isNight && wasNight) { hordes.onDawn(); Sound.play('dawn'); }
+    if (ph.isNight && !wasNight) { hordes.onDusk(ph.dayIndex); Sound.play('nightfall'); net.snapshotDuskRtt(); }
+    if (!ph.isNight && wasNight) {
+      hordes.onDawn();
+      Sound.play('dawn');
+      // Action-gated beacon echo — surviving the night pings the southern beacons
+      net.probeAction('survive_night');
+      // Passive pulse drift — dawn pulse minus dusk pulse, zero HTTP
+      net.samplePassive('survive_night');
+    }
     wasNight = ph.isNight;
 
     const a = ui.isOpen() ? { x: 0, y: 0 } : input.axis();
@@ -251,18 +416,18 @@ async function boot() {
     state.player.x = player.x;
     state.player.y = player.y;
 
-    // crossing into a new dream-domain: announce it, remember it
+    // crossing into a new network domain: announce it, remember it
     const ptx = Math.floor(player.x / TILE), pty = Math.floor(player.y / TILE);
     const [gx, gy] = regionOf(ptx, pty);
     const rk = regionKey(gx, gy);
     if (rk !== state.region) enterRegion(ptx, pty, rk);
 
-    gather.update(dt, moved);
-    economy.update(dt);
-    combat.update(dt);
-    hordes.update(dt);
-    worldbosses.update(dt);
-    fire.update(dt);
+    gather.update(effectiveDt, moved);
+    economy.update(effectiveDt);
+    combat.update(effectiveDt);
+    hordes.update(effectiveDt);
+    worldbosses.update(effectiveDt);
+    fire.update(effectiveDt);
   }
 
   function enterRegion(ptx: number, pty: number, rk: string) {
@@ -270,7 +435,11 @@ async function boot() {
     state.explored[rk] = 1;
     const dom = domainAt(ptx, pty, seed!);
     ui.setDomain(dom.name, dom.danger);
-    log.push('region', `Entered ${dom.name}${dom.danger > 0 ? ` (${dom.lord.title})` : ''}`, state.clock);
+    log.push('region', `Entered
+    // Passive trace chain refresh — re-reads Performance API, zero HTTP
+    net.samplePassive('explore'); ${dom.name}${dom.danger > 0 ? ` (${dom.lord.title})` : ''}`, state.clock);
+    // Action-gated beacon echo — new regions ping Far East discovery
+    net.probeAction('explore');
     if (CFG.domain.announce) {
       Sound.play('discover');
       ui.toast(
@@ -289,6 +458,7 @@ async function boot() {
     // world core first — activate/deactivate chunks so the baker below reads the
     // EFFECTIVE (override-aware) materials for anything freshly scrolled in
     worldCore.ensureAround(fx, fy, w / cam.zoom, h / cam.zoom);
+    chunks.setPlayerPos(fx, fy);
     chunks.ensureAround(fx, fy, w / cam.zoom, h / cam.zoom);
     chunks.tickFoam(performance.now());
     chunks.tickGlow(performance.now());
@@ -320,6 +490,113 @@ async function boot() {
 
     Sound.setMood(state.gameOver ? 'dead' : bossNear ? 'boss' : ph.isNight ? 'night' : 'day');
     ui.refresh();
+    floaters.update(performance.now() / 1000, cam);
+
+    // G1: directional drop shadows — light from top-left during day, omnidirectional at night
+    {
+      if (ph.isNight) {
+        views.setLight(0, 0.3, 0.3); // soft shadow directly below
+      } else {
+        views.setLight(0.7, 0.7, 0.5); // shadow toward bottom-right (light from top-left)
+      }
+    }
+
+    // G1: particles update + render
+    particles.update(frameMs / 1000);
+
+    // G1: fire embers — spawn near burning tiles (periodic, capped)
+    {
+      const nowSec = performance.now() / 1000;
+      if (!(window as any).__lastEmberSpawn) (window as any).__lastEmberSpawn = 0;
+      if (nowSec - (window as any).__lastEmberSpawn > 0.15) { // every ~150ms
+        (window as any).__lastEmberSpawn = nowSec;
+        const burnView = world.core.burnView(
+          Math.floor(fx / TILE / CHUNK), Math.floor(fy / TILE / CHUNK)
+        );
+        if (burnView) {
+          let burnCount = 0;
+          for (let i = 0; i < burnView.length; i++) {
+            if (burnView[i] > 0) burnCount++;
+          }
+          if (burnCount > 0 && particles.activeCount < 300) {
+            // Spawn embers at a few random burning positions in view
+            for (let e = 0; e < Math.min(3, burnCount); e++) {
+              const ri = (Math.random() * burnView.length) | 0;
+              if (burnView[ri] > 0) {
+                const etx = (Math.floor(ri / CHUNK) + Math.floor(fx / TILE / CHUNK) * CHUNK) * TILE + TILE / 2;
+                const ety = (ri % CHUNK + Math.floor(fy / TILE / CHUNK) * CHUNK) * TILE + TILE / 2;
+                particles.spawn('ember', etx, ety - 8, 2);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // G1: night wisps — ambient floating particles during night near the player
+    {
+      if (ph.isNight && particles.activeCount < 350) {
+        const nowSec = performance.now() / 1000;
+        if (!(window as any).__lastWispSpawn) (window as any).__lastWispSpawn = 0;
+        if (nowSec - (window as any).__lastWispSpawn > 0.8) { // every ~800ms
+          (window as any).__lastWispSpawn = nowSec;
+          const wx = fx + (Math.random() - 0.5) * 200;
+          const wy = fy + (Math.random() - 0.5) * 150;
+          particles.spawn('wisp', wx, wy, 1);
+        }
+      }
+    }
+
+    // G1: heal particles on HP regen (daylight healing)
+    {
+      const prevHp = (window as any).__prevPlayerHp;
+      if (prevHp !== undefined && state.player.hp > prevHp && !ph.isNight) {
+        particles.spawn('heal', fx, fy - 16, 3);
+      }
+      (window as any).__prevPlayerHp = state.player.hp;
+    }
+
+    particles.render();
+
+    // G1: post-processing — collect bloom spots, apply color grade & vignette
+    {
+      const bloomSpots: Array<{ x: number; y: number; radius: number; intensity: number; color: [number, number, number] }> = [];
+
+      // Beacon buildings emit a warm glow
+      for (const b of state.buildings) {
+        if (b.type === 'campfire') {
+          const bx = (b.tx + 0.5) * TILE, by = (b.ty + 0.5) * TILE;
+          bloomSpots.push({ x: bx, y: by, radius: 48, intensity: 0.7, color: [255, 160, 40] });
+        }
+      }
+
+      // Color grade from biome
+      const biome = net.getBiome();
+      const gradeColors: Record<string, [number, number, number]> = {
+        'ethernet': [255, 224, 192],  // warm amber
+        'wifi': [192, 208, 255],      // cool blue
+        'cellular': [255, 192, 192],  // harsh red
+        'unknown': [200, 200, 200],   // neutral
+      };
+      const gradeTint = gradeColors[biome.id] ?? gradeColors['unknown'];
+      const gradeStrength = 0.06; // subtle — per G1 spec (5-10%)
+
+      // Vignette: darker at night, darker when offline
+      let vignetteI = ph.isNight ? 0.25 : 0.10;
+      if (!net.snap.online) vignetteI += 0.15;
+
+      const ppCfg: PostProcessConfig = {
+        bloomSpots,
+        grade: { tint: gradeTint, strength: gradeStrength },
+        vignetteIntensity: vignetteI,
+      };
+      post.apply(stage.app.screen.width, stage.app.screen.height, ppCfg);
+    }
+
+    // update Resonance panel
+    if (obsPanel.style.display !== 'none') {
+      updateObservatory();
+    }
 
     // sim tick — R2: this is where the fire CA actually advances. Feed REAL elapsed wall-clock
     // time (frameMs), not the fixed sim step: render() runs once per rendered frame regardless
@@ -329,10 +606,117 @@ async function boot() {
     // world changes: drain the core's changed-tile events (paint AND fire burnout both ride
     // this one channel) and rebake exactly those chunks once.
     core.tick(frameMs / 1000);
+
+    // poll browser metrics & push to Rust core (non-blocking)
+    net.update(performance.now());
+    net.recordHistory(performance.now());
+    worldCore.pushNetworkParams(net.packForCore());
     const changed = worldCore.drainEvents();
     fire.onWorldEvents(changed);
     if (changed.length) worldCore.bumpRebakes(chunks.rebakeTiles(changed));
   }
+
+  // Resonance panel update
+  function updateObservatory() {
+    const s = net.snap;
+    const biome = net.getBiome();
+    const stability = net.getStability();
+
+    // big number readouts
+    const rttBig = document.getElementById('nw-obs-rtt-big');
+    const bwBig  = document.getElementById('nw-obs-bw-big');
+    const jitBig = document.getElementById('nw-obs-jit-big');
+    if (rttBig) rttBig.textContent = s.rtt.toFixed(0);
+    if (bwBig)  bwBig.textContent  = s.downlink.toFixed(1);
+    if (jitBig) jitBig.textContent = s.jitter.toFixed(1);
+
+    // realm card
+    const biomeEl = document.getElementById('nw-obs-biome');
+    const stabEl  = document.getElementById('nw-obs-stability');
+    const stabBar = document.getElementById('nw-obs-stabbar');
+    if (biomeEl) biomeEl.textContent = biome.name;
+    if (stabEl)  stabEl.textContent  = `Stability ${Math.round(stability * 100)}%`;
+    if (stabBar) stabBar.style.width = `${Math.round(stability * 100)}%`;
+
+    // active modifiers
+    const modEl = document.getElementById('nw-obs-modifiers');
+    if (modEl) {
+      const dm = net.getDamageMul();
+      const gm = net.getGameValue('goldRate');
+      const sm = net.getGameValue('simSpeed');
+      let html = '<div style="color:#888;margin-bottom:2px;">ACTIVE MODIFIERS</div>';
+      if (dm !== 1.0) html += `<div>⚔ Damage: ${dm.toFixed(2)}×</div>`;
+      if (gm !== 1.0) html += `<div>💰 Gold: ${gm.toFixed(2)}×</div>`;
+      if (sm !== 1.0) html += `<div>⏱ Sim: ${sm.toFixed(2)}×</div>`;
+      if (dm === 1.0 && gm === 1.0 && sm === 1.0) html += '<div style="color:#666;">None — resonance is calm</div>';
+      modEl.innerHTML = html;
+    }
+
+    // danger level
+    const dangerEl = document.getElementById('nw-obs-danger-val');
+    if (dangerEl) {
+      const hordeSize = hordes.foes.length;
+      const bossNear = worldbosses.nearestThreatTiles();
+      const nightMult = ctx.isNight() ? 1 : 0;
+      let danger = 'Low';
+      if (bossNear != null && bossNear < 10) danger = 'Extreme';
+      else if (hordeSize > 15) danger = 'High';
+      else if (hordeSize > 5 || nightMult) danger = 'Medium';
+      dangerEl.textContent = danger;
+      dangerEl.style.color = danger === 'Extreme' ? '#f33' : danger === 'High' ? '#f66' : danger === 'Medium' ? '#fc6' : '#6c6';
+    }
+  }
+
+  /** Draw a sparkline on a canvas element by id. */
+  function drawSparkline(canvasId: string, data: number[], color: string, yMin: number, yMax: number) {
+    const canvas = document.getElementById(canvasId) as HTMLCanvasElement | null;
+    if (!canvas || data.length < 2) return;
+    const ctx2d = canvas.getContext('2d');
+    if (!ctx2d) return;
+    const w = canvas.width, h = canvas.height;
+    ctx2d.clearRect(0, 0, w, h);
+
+    // find actual data range
+    let dMin = Infinity, dMax = -Infinity;
+    for (const v of data) { if (v < dMin) dMin = v; if (v > dMax) dMax = v; }
+    if (dMax === dMin) { dMin -= 1; dMax += 1; }
+    // clamp to sensible display range
+    const dispMin = yMin > 0 ? Math.min(dMin, yMin) : dMin;
+    const dispMax = yMax > 0 ? Math.max(dMax, yMax) : dMax;
+    const range = dispMax - dispMin || 1;
+
+    const scaleX = w / Math.max(data.length - 1, 1);
+    const scaleY = (h - 4) / range;
+
+    // draw line
+    ctx2d.strokeStyle = color;
+    ctx2d.lineWidth = 1.5;
+    ctx2d.beginPath();
+    for (let i = 0; i < data.length; i++) {
+      const x = i * scaleX;
+      const y = h - 2 - (data[i] - dispMin) * scaleY;
+      if (i === 0) ctx2d.moveTo(x, y);
+      else ctx2d.lineTo(x, y);
+    }
+    ctx2d.stroke();
+
+    // draw min/max labels
+    ctx2d.fillStyle = '#666';
+    ctx2d.font = '8px monospace';
+    ctx2d.fillText(dispMax.toFixed(0), 2, 8);
+    ctx2d.fillText(dispMin.toFixed(0), 2, h - 2);
+  }
+}
+
+// ---- helpers ----
+function formatUptime(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+  if (m > 0) return `${m}m ${String(sec).padStart(2, '0')}s`;
+  return `${sec}s`;
 }
 
 // ---- debug hotkeys (config.debug.enabled) ----
@@ -355,6 +739,22 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
         if (!state.god) break;
         brush = (brush + 1) % MATERIALS.length;
         ctx.toast(`Brush: ${MATERIALS[brush].name}`, 'info');
+        break;
+      }
+      case 'x': { // deconstruct building at player's feet (refunds half cost)
+        const tx = Math.floor(state.player.x / TILE), ty = Math.floor(state.player.y / TILE);
+        const b = ctx.world.buildingAt(tx, ty);
+        if (!b) { ctx.toast('No building here', 'info'); break; }
+        if (b.type === 'hall') { ctx.toast("Can't deconstruct the Hall — it anchors the racket", 'bad'); break; }
+        const def = BUILDINGS.find((d: any) => d.id === b.type);
+        if (def) {
+          for (const s of def.cost) invAdd(state, s.id, Math.ceil(s.n / 2));
+        }
+        state.buildings = state.buildings.filter((x: any) => x.uid !== b.uid);
+        ctx.world.reindexBuildings();
+        ctx.chunks.rebakeTile(tx, ty);
+        ctx.toast(`Deconstructed ${def?.name ?? b.type}`, 'good');
+        ctx.log?.push('world', `Deconstructed ${def?.name ?? b.type} at (${tx},${ty})`, state.clock);
         break;
       }
       case '.': state.clock += 30; ctx.toast('debug: +30s'); break;
@@ -390,11 +790,8 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
       }
     }
   });
-  // expose the live config + materials table for runtime tuning from the console (edit
-  // NW.MATS[i].* then __nw.core.pushMaterials() to re-upload — see materials.ts; NW.ENEMIES is
-  // a small testability addition so acceptance scripts can construct a synthetic Foe without a
-  // synchronous "spawn one now" hook otherwise)
-  (window as any).NW = { CFG, state, MATS: MATERIALS, ENEMIES };
+  // expose the live config + materials table + network for runtime tuning from the console
+  (window as any).NW = { CFG, state, MATS: MATERIALS, ENEMIES, NET: ctx.net };
 }
 
 import { ITEMS } from './game/data/items';

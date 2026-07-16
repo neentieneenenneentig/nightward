@@ -38,10 +38,10 @@ const I = (
 
 export const ITEMS: Record<string, ItemDef> = Object.fromEntries([
   // materials
-  I('log', 'Log', 'log', '#6b4a38'),
-  I('fine_log', 'Fine Log', 'log', '#8a5a38', '#c2a15f'),
+  I('log', 'Timber', 'log', '#6b4a38'),
+  I('fine_log', 'Fine Timber', 'log', '#8a5a38', '#c2a15f'),
   I('plank', 'Plank', 'plank', '#a3794f'),
-  I('stone', 'Stone', 'stone', '#737887'),
+  I('stone', 'Runestone', 'stone', '#737887'),
   I('copper_ore', 'Copper Ore', 'ore', '#5a5f6b', '#c47b3b'),
   I('iron_ore', 'Iron Ore', 'ore', '#5a5f6b', '#9aa7b8'),
   I('copper_bar', 'Copper Bar', 'bar', '#c47b3b'),
@@ -49,8 +49,8 @@ export const ITEMS: Record<string, ItemDef> = Object.fromEntries([
   // herbs & food
   I('sunleaf', 'Sunleaf', 'herb', '#569a53', '#e6c86e'),
   I('moonbell', 'Moonbell', 'herb', '#3f8148', '#c9a0dc'),
-  I('berry', 'Berries', 'berry', '#b3402e', '#569a53'),
-  // tools (power gates nothing, it multiplies gather speed)
+  I('berry', 'Wild Berries', 'berry', '#b3402e', '#569a53'),
+  // tools
   I('axe_flint', 'Flint Axe', 'axe', '#737887', '#6b4a38', { toolClass: 'axe', toolPower: 1 }),
   I('axe_copper', 'Copper Axe', 'axe', '#c47b3b', '#6b4a38', { toolClass: 'axe', toolPower: 2 }),
   I('axe_iron', 'Iron Axe', 'axe', '#9aa7b8', '#6b4a38', { toolClass: 'axe', toolPower: 3 }),
@@ -58,24 +58,23 @@ export const ITEMS: Record<string, ItemDef> = Object.fromEntries([
   I('pick_copper', 'Copper Pick', 'pick', '#c47b3b', '#6b4a38', { toolClass: 'pick', toolPower: 2 }),
   I('pick_iron', 'Iron Pick', 'pick', '#9aa7b8', '#6b4a38', { toolClass: 'pick', toolPower: 3 }),
   // weapons
-  I('sword_copper', 'Copper Sword', 'sword', '#c47b3b', '#52402f', { weaponDmg: 4 }),
-  I('sword_iron', 'Iron Sword', 'sword', '#c9d2e0', '#52402f', { weaponDmg: 9 }),
-  // armor (worn in the armor slot; reduces damage taken)
-  I('vest_bark', 'Bark Vest', 'armor', '#6b4a38', '#569a53', { armor: 2 }),
-  I('armor_copper', 'Copper Plate', 'armor', '#c47b3b', '#52402f', { armor: 4 }),
-  I('armor_iron', 'Iron Plate', 'armor', '#aab4c4', '#52402f', { armor: 8 }),
+  I('sword_copper', 'Copper Blade', 'sword', '#c47b3b', '#52402f', { weaponDmg: 6 }),
+  I('sword_iron', 'Iron Blade', 'sword', '#c9d2e0', '#52402f', { weaponDmg: 9 }),
+  // armor
+  I('vest_bark', 'Bark Shield', 'armor', '#6b4a38', '#569a53', { armor: 2 }),
+  I('armor_copper', 'Copper Armor', 'armor', '#c47b3b', '#52402f', { armor: 4 }),
+  I('armor_iron', 'Iron Armor', 'armor', '#aab4c4', '#52402f', { armor: 8 }),
   // potions
   I('tonic_minor', 'Minor Tonic', 'potion', '#d97b7b', '#f2f2f2', { heal: 30 }),
   I('tonic_major', 'Major Tonic', 'potion', '#c9a0dc', '#f2f2f2', { heal: 75 }),
-  // trinkets — each gets its own soul-bound equip slot (rings sharpen, amulets
-  // ward, charms mend); craftable + rare drops from brutes/wisps/bosses
+  // trinkets
   I('ring_copper', 'Copper Ring', 'ring', '#c47b3b', '#e6c86e', { trinket: 'ring', weaponDmg: 1 }),
   I('ring_iron', 'Iron Ring', 'ring', '#9aa7b8', '#7fb8e6', { trinket: 'ring', weaponDmg: 2 }),
   I('amulet_stone', 'Stone Amulet', 'amulet', '#737887', '#569a53', { trinket: 'amulet', armor: 1 }),
   I('amulet_iron', 'Iron Amulet', 'amulet', '#9aa7b8', '#c9a0dc', { trinket: 'amulet', armor: 2 }),
   I('charm_ember', 'Ember Charm', 'charm', '#c85a2e', '#ffd27a', { trinket: 'charm', regen: 0.5 }),
   I('charm_moon', 'Moon Charm', 'charm', '#4a6ea8', '#c9a0dc', { trinket: 'charm', regen: 1 }),
-  // firemaking — a reusable tool (no charges, like the axe/pick) and its resource sink
+  // firemaking
   I('torch', 'Torch', 'torch', '#c47b3b', '#ffd27a'),
   I('charcoal', 'Charcoal', 'charcoal', '#232023', '#3a3a3e'),
 ].map((d) => [d.id, d]));

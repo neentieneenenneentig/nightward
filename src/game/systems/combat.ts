@@ -4,7 +4,7 @@
 import { CFG } from '../data/config';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
-import { armorDef, awardSoulXp, charmRegen, equippedWeaponDmg, hall } from '../rules';
+import { armorDef, awardSoulXp, charmRegen, equippedWeaponDmg, hall, skillLevel } from '../rules';
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
 import type { Foe } from './hordes';
@@ -90,6 +90,9 @@ export class CombatSystem {
     this.phaseT = env.windup;
     this.swingAngle = this.ctx.player.aimAngle ?? FACING_ANGLE[this.ctx.player.facing];
     Sound.play('windup');
+    // Snapshot sync pulse for damage calc + fire attack echo volley
+    this.ctx.net?.getDamageMul?.();  // snapshots lastSwingRtt + lastSwingDmgMul
+    this.ctx.net?.probeAction?.('attack');
   }
 
   /** Damage resolves once, on the windup → active transition. */
@@ -100,7 +103,14 @@ export class CombatSystem {
     this.swingT = 0.13;
     this.swingAngle = fa;
 
-    const dmg = CFG.player.baseDmg + equippedWeaponDmg(state);
+    // Damage = base × sync pulse multiplier × resonance crit (if any)
+    const dmgMul = this.ctx.net?.lastSwingDmgMul ?? 1.0;
+    const resonance = this.ctx.net?.consumeResonance?.() ?? null;
+    const critMul = resonance ? resonance.multiplier : 1.0;
+    const totalMul = dmgMul * critMul;
+
+    const baseDmg = CFG.player.baseDmg + equippedWeaponDmg(state) + Math.floor(skillLevel(state, 'combat') / CFG.combat.dmgBonusPerLevel);
+    const dmg = Math.round(baseDmg * totalMul);
     const arc = (CFG.combat.arcDeg * Math.PI) / 180;
     // hit math anchors at the feet — same anchor as foe positions, so point-blank
     // angles don't flip; the slash draws at body height for looks only
@@ -109,6 +119,8 @@ export class CombatSystem {
     // always draw the swing so a whiff still reads as an attack
     views.addSlash(cx, cy - 10, fa, CFG.player.meleeRange, arc);
     Sound.play('swing');
+    // G1: slash trail particles along the swing arc
+    this.ctx.particles?.spawn?.('slash', cx, cy - 8, 8, fa);
 
     const inArc = (x: number, y: number, reach: number) => {
       const d = Math.hypot(x - cx, y - cy);
@@ -147,7 +159,18 @@ export class CombatSystem {
     }
     if (landed) {
       Sound.play('hit');
-      this.ctx.log?.push('combat', `Hit ${hitLines.join('; ')}`, state.clock);
+      const s = this.ctx.net?.snap;
+      const mulInfo = totalMul !== 1.0
+        ? ` [${totalMul.toFixed(2)}× · RTT ${s?.rtt?.toFixed(0) ?? '?'}ms${resonance ? ' ⚡RESONANCE ' + resonance.label : ''}]`
+        : ` [RTT ${s?.rtt?.toFixed(0) ?? '?'}ms · BW ${s?.downlink?.toFixed(1) ?? '?'}Mbps]`;
+      this.ctx.log?.push('combat', `Hit ${hitLines.join('; ')}${mulInfo}`, state.clock);
+      // M3.6v2: Resonance crit floaters + particles
+      if (resonance) {
+        this.ctx.floaters?.spawnInfo?.(cx, cy - 30, `⚡RESONANCE ${resonance.label}`, '#ffcc00', this.ctx.camera);
+        this.ctx.particles?.spawn?.('crit', cx, cy - 8, 15);
+        this.ctx.toast?.(`Resonance crit! ${resonance.label} @ ${resonance.rtt}ms`, 'good');
+        Sound.play('hit'); // extra impact
+      }
       const lvl = awardSoulXp(state, 'weapon', CFG.soulgear.weaponXpPerSwing);
       if (lvl) { this.ctx.toast(`Your weapon feels hungrier — soul level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Weapon reached soul level ${lvl}`, state.clock); }
       if (state.player.equip?.ring) {
@@ -207,6 +230,10 @@ export class CombatSystem {
     Sound.play('hurt');
     this.ctx.cam.shake?.(Math.min(11, 3 + taken * 0.25));
     this.ctx.log?.push('combat', `${source ?? 'Something'} hits you for ${taken} (${Math.max(0, Math.ceil(state.player.hp))}/${CFG.player.maxHp} hp left)`, state.clock);
+    // M3.5: Action-gated network probe — taking damage routes through the shield network
+    this.ctx.net?.probeAction?.('damage');
+    // M3.6: Passive effectiveType snapshot — connection tier at hit time, zero HTTP
+    this.ctx.net?.samplePassive?.('damage');
     if (state.player.equip?.armor) {
       const lvl = awardSoulXp(state, 'armor', CFG.soulgear.armorXpPerHit);
       if (lvl) { toast(`Your armor toughens — soul level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Armor reached soul level ${lvl}`, state.clock); }
@@ -217,7 +244,7 @@ export class CombatSystem {
     }
     if (state.player.hp > 0) return;
 
-    // down — drop gold and the dream flings you far out into the world
+    // down — drop gold and the connection scatters you far into the wilds
     const lost = Math.floor(state.player.gold * CFG.player.deathGoldLossPct);
     state.player.gold -= lost;
     state.player.hp = CFG.player.maxHp;
@@ -226,12 +253,12 @@ export class CombatSystem {
     state.player.y = spot.y;
     player.teleport(spot.x, spot.y);
     toast(lost > 0
-      ? `You fall — the dream casts you out, ${lost} gold lost. Find your way home.`
-      : 'You fall — the dream casts you out into distant lands…', 'bad');
-    this.ctx.log?.push('death', `You fell${lost > 0 ? ` (−${lost} gold)` : ''} — cast out to distant lands`, state.clock);
+      ? `Connection lost — you're scattered, ${lost} gold gone. Find your way home.`
+      : 'Connection lost — you are scattered into distant sectors…', 'bad');
+    this.ctx.log?.push('death', `You fell${lost > 0 ? ` (−${lost} gold)` : ''} — scattered to distant sectors`, state.clock);
   }
 
-  /** A random passable spot far from home — the roguelike wake-up. */
+  /** A random passable spot far from home — the reconnection point. */
   private randomRespawn(): { x: number; y: number } {
     const { state, world } = this.ctx;
     const h = hall(state);

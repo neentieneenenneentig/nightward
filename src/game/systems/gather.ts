@@ -74,6 +74,15 @@ export class GatherSystem {
       const power = tool ? soulStat(state, toolSlotFor(t.def.toolClass)) || tool.power : 0;
       speed = 1 + CFG.gather.toolSpeedBonus * power;
     }
+    // N1: resonance modulates gather speed
+    const netMul = this.ctx.net?.getGameValue?.('simSpeed') ?? 1.0;
+    speed *= netMul;
+
+    // M3.5: Action-gated beacon echo — gathers ping resource-region beacons
+    this.ctx.net?.probeAction?.('gather');
+    // M3.6: Passive bandwidth snapshot — no HTTP request, just reads navigator.connection
+    this.ctx.net?.samplePassive?.('gather');
+
     this.active = { ...t, progress: 0, need: t.def.gatherSec / speed };
   }
 
@@ -110,10 +119,27 @@ export class GatherSystem {
     world.deplete(a.tx, a.ty, a.def.respawnSec);
     chunks.rebakeTile(a.tx, a.ty);
 
+    // G1: particle poof at gather location
+    const px = (a.tx + 0.5) * TILE, py = (a.ty + 0.5) * TILE;
+    this.ctx.particles?.spawn?.('poof', px, py, 8);
+
     Sound.play(pickSfx(GATHER_SFX[a.def.skill] ?? ['forage']));
     const got = drops.map((d) => `+${d.n} ${ITEMS[d.id].name}`).join('  ');
     toast(`${got}   (+${a.def.xp} ${SKILL_NAME[a.def.skill]} xp)`);
-    this.ctx.log?.push('gather', `${got || 'Gathered nothing'} from ${a.def.name}`, state.clock);
+    const s = this.ctx.net?.snap;
+    this.ctx.log?.push('gather', `${got || 'Gathered nothing'} from ${a.def.name} [RTT ${s?.rtt?.toFixed(0) ?? '?'}ms · sim ${this.ctx.net?.getGameValue?.('simSpeed')?.toFixed(2) ?? '?'}×]`, state.clock);
+
+    // N1: spawn network floaters showing what metrics influenced this gather
+    if (this.ctx.floaters && this.ctx.net) {
+      const wx = (a.tx + 0.5) * TILE, wy = (a.ty + 0.5) * TILE;
+      const rtt = this.ctx.net.snap?.rtt ?? 50;
+      const simMul = this.ctx.net.getGameValue?.('simSpeed') ?? 1.0;
+      this.ctx.floaters.spawn(wx, wy, 'rtt', rtt, 'ms', this.ctx.cam);
+      if (simMul !== 1.0) {
+        this.ctx.floaters.spawn(wx + 8, wy - 12, 'simSpeed', simMul, '', this.ctx.cam);
+      }
+    }
+
     if (newLevel) {
       Sound.play('levelup'); toast(`${SKILL_NAME[a.def.skill]} reached level ${newLevel}!`, 'good');
       this.ctx.log?.push('level', `${SKILL_NAME[a.def.skill]} reached level ${newLevel}`, state.clock);

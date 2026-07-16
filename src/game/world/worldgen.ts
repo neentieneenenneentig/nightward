@@ -37,8 +37,8 @@ export class WorldGen {
     // domain warp: sample elevation at a noise-shifted position → organic coasts
     const wx = tx + 14 * (fbm(tx * 0.03, ty * 0.03, this.seed ^ 0x5eed1, 3) - 0.5);
     const wy = ty + 14 * (fbm(tx * 0.03 + 97, ty * 0.03 - 131, this.seed ^ 0x5eed2, 3) - 0.5);
-    // the ruling dream bends the land: its lord biases elevation & moisture, so
-    // each region reads as a distinct place shaped by whoever imagines it.
+    // the ruling network lord bends the land: its biases shift elevation & moisture,
+    // so each region reads as a distinct place shaped by its governing entity.
     const lord = lordAt(tx, ty, this.seed);
     const e = spread(fbm(wx * 0.018, wy * 0.018, this.seed, 5) + lord.elevBias, 1.35); // elevation
     const m = fbm(tx * 0.03 + 511, ty * 0.03 + 287, this.seed ^ 0x0157, 4) + lord.moistureBias; // moisture

@@ -83,10 +83,14 @@ export class World {
     this.state.depleted[tileKey(tx, ty)] = this.state.clock + respawnSec;
   }
 
-  /** Building placement rule (see config.build). */
+  /** Building placement rule (see config.build). Also prevents placing on the player. */
   canPlaceAt(tx: number, ty: number, isHall: boolean): boolean {
     if (!this.passable(tx, ty)) return false;
     if (!MATERIALS[this.materialAt(tx, ty)].buildable) return false;
+    // don't let the player box themselves in
+    const px = Math.floor(this.state.player.x / TILE);
+    const py = Math.floor(this.state.player.y / TILE);
+    if (tx === px && ty === py) return false;
     const h = this.state.buildings.find((b) => b.type === 'hall');
     if (isHall) return true;         // the first hall roots wherever you like
     if (!h) return false;            // everything else needs a hall first

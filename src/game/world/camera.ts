@@ -30,4 +30,8 @@ export class Camera {
   toWorld(sx: number, sy: number): [number, number] {
     return [(sx - this.world.position.x) / this.zoom, (sy - this.world.position.y) / this.zoom];
   }
+
+  worldToScreen(wx: number, wy: number): [number, number] {
+    return [this.world.position.x + wx * this.zoom, this.world.position.y + wy * this.zoom];
+  }
 }

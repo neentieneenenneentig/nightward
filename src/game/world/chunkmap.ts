@@ -10,7 +10,7 @@ import { CFG } from '../data/config';
 import type { World } from './world';
 import type { WorldArt } from './art';
 
-const CHUNK = 16;               // tiles per chunk side
+export const CHUNK = 16;               // tiles per chunk side
 export const CHUNK_PX = CHUNK * TILE;
 
 const EDGES: [number, number, 'N' | 'E' | 'S' | 'W'][] = [[0, -1, 'N'], [1, 0, 'E'], [0, 1, 'S'], [-1, 0, 'W']];
@@ -41,11 +41,29 @@ export class ChunkMap {
   private foamFrame = -1;
   private lastGlowMs = -1;
 
+  // G1: SUBPIX LOD — player position for distance-based resolution
+  private playerX = 0;
+  private playerY = 0;
+
   constructor(
     private world: World,
     private art: WorldArt,
     private layer: Container,
   ) {}
+
+  /** G1: Update player position for SUBPIX LOD distance calculation. */
+  setPlayerPos(x: number, y: number) {
+    this.playerX = x;
+    this.playerY = y;
+  }
+
+  /** G1: Get SUBPIX factor for a chunk based on distance from player.
+   *  SUBPIX disabled for now — needs proper micro-sprite generation from
+   *  the procgen art pipeline, not just flat color blending.
+   *  Near (≤3 chunks): ×4  |  Mid (3–6): ×2  |  Far (>6): ×1 */
+  private subpixFactor(_cx: number, _cy: number): number {
+    return 1; // SUBPIX disabled — revert to ×1 procgen tile art
+  }
 
   /** Keep chunks loaded around world-pixel (px, py) for a view of viewW×viewH. */
   ensureAround(px: number, py: number, viewW: number, viewH: number) {
@@ -56,7 +74,10 @@ export class ChunkMap {
     for (let cy = ccy - r; cy <= ccy + r; cy++) {
       for (let cx = ccx - r; cx <= ccx + r; cx++) {
         const key = cx + ',' + cy;
-        if (!this.chunks.has(key)) this.chunks.set(key, this.bake(cx, cy));
+        if (!this.chunks.has(key)) {
+          const sf = this.subpixFactor(cx, cy);
+          this.chunks.set(key, sf > 1 ? this.bakeSubpix(cx, cy, sf) : this.bake(cx, cy));
+        }
       }
     }
     for (const [key, c] of this.chunks) {
@@ -237,7 +258,8 @@ export class ChunkMap {
     const c = this.chunks.get(key);
     if (!c) return; // not loaded — will bake fresh when scrolled into view
     this.destroyChunk(c);
-    this.chunks.set(key, this.bake(cx, cy));
+    const sf = this.subpixFactor(cx, cy);
+    this.chunks.set(key, sf > 1 ? this.bakeSubpix(cx, cy, sf) : this.bake(cx, cy));
   }
 
   private isShoreTile(tx: number, ty: number): boolean {
@@ -294,6 +316,24 @@ export class ChunkMap {
         ctx.fillRect(px0, py0, TILE, band);
         ctx.fillStyle = css(lighten(ramp[2], 30));
         ctx.fillRect(px0, py0, TILE, 2);
+      }
+    }
+
+    // G1: ambient occlusion — darken tiles adjacent to higher-height-class
+    // neighbors. Baked once per chunk (zero per-frame cost). Max 15% darker.
+    for (let ty = 0; ty < CHUNK; ty++) {
+      for (let tx = 0; tx < CHUNK; tx++) {
+        const gtx = cx * CHUNK + tx, gty = cy * CHUNK + ty;
+        const hHere = MATERIALS[this.world.materialAt(gtx, gty)].heightClass;
+        let ao = 0;
+        for (const [dx, dy] of EDGES) {
+          const hN = MATERIALS[this.world.materialAt(gtx + dx, gty + dy)].heightClass;
+          if (hN > hHere) ao += 0.03;
+        }
+        if (ao <= 0) continue;
+        const capped = Math.min(ao, 0.15);
+        ctx.fillStyle = `rgba(0,0,0,${capped})`;
+        ctx.fillRect(tx * TILE, ty * TILE, TILE, TILE);
       }
     }
 
@@ -364,5 +404,153 @@ export class ChunkMap {
     // fire glow overlay is created lazily by tickGlow — fire state changes independently of
     // terrain bakes (a chunk can catch/lose fire between bakes without a rebake happening)
     return { sprite, tex, foam, glow: null };
+  }
+
+  // ---- G1: SUBPIX rendering (×2 / ×4 micro-tile resolution) ----------------
+
+  /** Bake a chunk at SUBPIX resolution with smooth edge blending.
+   *  factor: 2 or 4 — how many micro-tiles per sim-tile per axis. */
+  private bakeSubpix(cx: number, cy: number, factor: number): Chunk {
+    const MT = TILE / factor; // micro-tile pixel size
+    const CPX = CHUNK_PX * factor; // chunk canvas pixels
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = CPX;
+    const ctx = canvas.getContext('2d')!;
+
+    // Pre-fetch material colors for blending
+    const matColor = (matId: number): [number, number, number] => {
+      const ramp = MATERIALS[matId]?.art?.ramp;
+      if (ramp && ramp[1]) return ramp[1]; // mid-tone from palette ramp
+      return [100, 100, 100]; // fallback gray
+    };
+
+    // Render each micro-tile
+    for (let mty = 0; mty < CHUNK * factor; mty++) {
+      for (let mtx = 0; mtx < CHUNK * factor; mtx++) {
+        const gtx = cx * CHUNK + Math.floor(mtx / factor);
+        const gty = cy * CHUNK + Math.floor(mty / factor);
+        const subX = mtx % factor; // 0..factor-1 within sim tile
+        const subY = mty % factor;
+
+        const here = this.world.materialAt(gtx, gty);
+        const col = matColor(here);
+
+        // Blend toward neighboring materials at edges for smooth transitions
+        let r = col[0], g = col[1], b = col[2];
+        let blendWeight = 0;
+
+        // Check N/S/E/W neighbors — blend if different material and at tile edge
+        const neighbors: [number, number, number][] = [
+          [0, -1, subY],       // N: blend strength = how close to top edge
+          [0, 1, factor - 1 - subY], // S
+          [-1, 0, subX],       // W
+          [1, 0, factor - 1 - subX], // E
+        ];
+
+        for (const [dx, dy, edgeDist] of neighbors) {
+          if (edgeDist <= 0) continue; // not at this edge
+          const nm = this.world.materialAt(gtx + dx, gty + dy);
+          if (nm === here) continue;
+          const ncol = matColor(nm);
+          const w = (factor - edgeDist) / factor; // 1 at edge, 0 at center
+          if (w <= 0) continue;
+          r = r * (1 - w) + ncol[0] * w;
+          g = g * (1 - w) + ncol[1] * w;
+          b = b * (1 - w) + ncol[2] * w;
+          blendWeight += w;
+        }
+
+        // Clamp blend
+        if (blendWeight > 1) {
+          const s = 1 / blendWeight;
+          r = col[0] + (r - col[0]) * s;
+          g = col[1] + (g - col[1]) * s;
+          b = col[2] + (b - col[2]) * s;
+        }
+
+        // Add subtle micro-variation (noise) for texture
+        const noise = ((hash2(gtx * 1000 + mtx, gty * 1000 + mty, 0x7f3d) - 0.5) * 12) | 0;
+        ctx.fillStyle = `rgb(${(r + noise).toFixed(0)},${(g + noise).toFixed(0)},${(b + noise).toFixed(0)})`;
+        ctx.fillRect(mtx * MT, mty * MT, MT, MT);
+      }
+    }
+
+    // Cliff shadows — at micro-tile level
+    for (let mty = 0; mty < CHUNK * factor; mty++) {
+      for (let mtx = 0; mtx < CHUNK * factor; mtx++) {
+        const gtx = cx * CHUNK + Math.floor(mtx / factor);
+        const gty = cy * CHUNK + Math.floor(mty / factor);
+        const m = this.world.materialAt(gtx, gty);
+        const hT = MATERIALS[m].heightClass;
+        const hS = MATERIALS[this.world.materialAt(gtx, gty + 1)].heightClass;
+        if (hT <= hS) continue;
+        const subY = mty % factor;
+        if (subY < factor - 1) continue; // only bottom row of micro-tiles
+        const steep = hT - hS >= 2;
+        const band = steep ? 10 : 7;
+        const ramp = MATERIALS[m].art.ramp;
+        ctx.fillStyle = css(darken(ramp[0], steep ? 45 : 35));
+        ctx.fillRect(mtx * MT, mty * MT + MT - band, MT, band);
+        ctx.fillStyle = css(lighten(ramp[2], 30));
+        ctx.fillRect(mtx * MT, mty * MT + MT - band, MT, 2);
+      }
+    }
+
+    // AO — darken micro-tiles adjacent to higher neighbors
+    for (let mty = 0; mty < CHUNK * factor; mty++) {
+      for (let mtx = 0; mtx < CHUNK * factor; mtx++) {
+        const gtx = cx * CHUNK + Math.floor(mtx / factor);
+        const gty = cy * CHUNK + Math.floor(mty / factor);
+        const hHere = MATERIALS[this.world.materialAt(gtx, gty)].heightClass;
+        let ao = 0;
+        const subX = mtx % factor, subY = mty % factor;
+        // Only check sim-tile-level neighbors
+        if (subX === 0 || subX === factor - 1 || subY === 0 || subY === factor - 1) {
+          for (const [dx, dy] of EDGES) {
+            const hN = MATERIALS[this.world.materialAt(gtx + dx, gty + dy)].heightClass;
+            if (hN > hHere) ao += 0.03;
+          }
+        }
+        if (ao <= 0) continue;
+        ctx.fillStyle = `rgba(0,0,0,${Math.min(ao, 0.15)})`;
+        ctx.fillRect(mtx * MT, mty * MT, MT, MT);
+      }
+    }
+
+    // Features — render at the original TILE scale, centered in their sim tile
+    for (let ty = 0; ty <= CHUNK; ty++) {
+      for (let tx = 0; tx < CHUNK; tx++) {
+        const gtx = cx * CHUNK + tx, gty = cy * CHUNK + ty;
+        const f = this.world.featureAt(gtx, gty);
+        if (!f) continue;
+        let img: HTMLCanvasElement;
+        if (this.world.isDepleted(gtx, gty)) {
+          if (f.depleted !== 'stump') continue;
+          img = this.art.stump;
+        } else {
+          img = this.art.feature(f.id, gtx, gty);
+        }
+        const jx = ((hash2(gtx, gty, 0x1a17) * 7) | 0) - 3;
+        const jy = (hash2(gtx, gty, 0x9b3) * 4) | 0;
+        // Scale features to fit the subpix tile grid
+        const dx = tx * TILE * factor + ((TILE * factor - img.width) >> 1) + jx * factor;
+        const dy = ty * TILE * factor + TILE * factor - img.height + jy * factor;
+        // Simple drop shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.fillRect(dx + 2, dy + 2, img.width, img.height);
+        ctx.drawImage(img, dx, dy);
+      }
+    }
+
+    const tex = Texture.from(canvas);
+    tex.source.scaleMode = 'nearest';
+    const sprite = new Sprite(tex);
+    // Scale sprite down so it covers the same world area as a ×1 chunk
+    sprite.position.set(cx * CHUNK_PX, cy * CHUNK_PX);
+    sprite.setSize(CHUNK_PX, CHUNK_PX); // scale to fit CHUNK_PX×CHUNK_PX world space
+    this.layer.addChild(sprite);
+
+    // SUBPIX chunks skip foam/glow overlays for now — the higher res compensates
+    return { sprite, tex, foam: null, glow: null };
   }
 }

@@ -56,10 +56,10 @@ export class WorldArt {
       const a = f.art;
       this.features.set(
         f.id,
-        a.kind === 'tree' ? makeTreeVariants({ canopy: a.ramp, trunk: TRUNK }, seed, 6)
-        : a.kind === 'rock' ? makeRockVariants(a.ramp, a.accent, seed ^ hashId(f.id), 4)
-        : a.kind === 'herb' ? makeHerbVariants(a.ramp, a.accent, seed ^ hashId(f.id), 4)
-        : makeBushVariants(a.ramp, a.accent, seed ^ hashId(f.id), 4),
+        a.kind === 'tree' ? makeTreeVariants({ canopy: a.ramp, trunk: TRUNK }, seed, 10)
+        : a.kind === 'rock' ? makeRockVariants(a.ramp, a.accent, seed ^ hashId(f.id), 8)
+        : a.kind === 'herb' ? makeHerbVariants(a.ramp, a.accent, seed ^ hashId(f.id), 6)
+        : makeBushVariants(a.ramp, a.accent, seed ^ hashId(f.id), 6),
       );
     }
     this.stump = makeStump(TRUNK, seed);

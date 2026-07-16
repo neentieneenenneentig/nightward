@@ -28,17 +28,28 @@ class FoeView {
   cont = new Container();
   private sprite: Sprite;
   private bar = new Graphics();
+  private shadow: Graphics;
   private frames: Texture[];
   private w: number;
+  private sz: number;
+  private heightClass: number;
   constructor(foe: Foe, art: WorldArt) {
     this.frames = art.enemies.get(foe.def.id)!.map(tex);
     this.sprite = new Sprite(this.frames[0]);
     this.sprite.anchor.set(0.5, 0.5);
     this.w = foe.def.art.size + 6;
-    const sz = foe.def.art.size;
-    const shadow = new Graphics();
-    shadow.ellipse(0, sz * 0.38, sz * 0.4, sz * 0.16).fill({ color: 0x0a080e, alpha: 0.3 });
-    this.cont.addChild(shadow, this.sprite, this.bar);
+    this.sz = foe.def.art.size;
+    this.heightClass = foe.def.art.size > 24 ? 3 : foe.def.art.size > 16 ? 2 : 1;
+    this.shadow = new Graphics();
+    this.cont.addChild(this.shadow, this.sprite, this.bar);
+  }
+  /** G1: offset shadow based on light direction (light from top-left during day = shadow to bottom-right). */
+  updateShadow(lightDX: number, lightDY: number, alpha: number) {
+    const { shadow, sz, heightClass } = this;
+    shadow.clear();
+    const ox = lightDX * heightClass * 1.5;
+    const oy = sz * 0.38 + lightDY * heightClass * 1.5;
+    shadow.ellipse(ox, oy, sz * 0.4, sz * 0.16).fill({ color: 0x0a080e, alpha });
   }
   sync(foe: Foe, alpha: number) {
     const fx = foe.px + (foe.x - foe.px) * alpha;
@@ -62,21 +73,31 @@ class BuildingView {
   cont = new Container();
   private sprite: Sprite;
   private bar = new Graphics();
+  private shadow: Graphics;
   private maxHp: number;
   private isWall: boolean;
+  private heightClass: number;
   constructor(b: Building, private art: WorldArt, mask = 0) {
     const def = BUILDINGS.find((d) => d.id === b.type)!;
     this.maxHp = def.hp;
     this.isWall = def.art === 'wall';
     this.sprite = new Sprite(tex(this.isWall ? art.wall(mask) : art.buildings.get(b.type)!));
     this.sprite.anchor.set(0.5, 1);
-    const shadow = new Graphics();
-    shadow.ellipse(0, -2, this.sprite.width * 0.35, this.sprite.width * 0.14).fill({ color: 0x0a080e, alpha: 0.3 });
-    this.cont.addChild(shadow, this.sprite, this.bar);
+    this.heightClass = def.art === 'hall' ? 3 : def.art === 'tower' ? 3 : def.art === 'hut' ? 2 : 1;
+    this.shadow = new Graphics();
+    this.cont.addChild(this.shadow, this.sprite, this.bar);
     // anchored at the tile's bottom-center
     this.cont.position.set((b.tx + 0.5) * TILE, (b.ty + 1) * TILE);
     this.cont.zIndex = (b.ty + 1) * TILE;
     this.sync(b);
+  }
+  /** G1: offset shadow based on light direction. Buildings are anchored bottom-center. */
+  updateShadow(lightDX: number, lightDY: number, alpha: number) {
+    const { shadow, sprite, heightClass } = this;
+    shadow.clear();
+    const ox = lightDX * heightClass * 1.5;
+    const oy = -2 + lightDY * heightClass * 1.5;
+    shadow.ellipse(ox, oy, sprite.width * 0.35, sprite.width * 0.14).fill({ color: 0x0a080e, alpha });
   }
   sync(b: Building) {
     const frac = b.hp / this.maxHp;
@@ -99,23 +120,33 @@ class BossView {
   cont = new Container();
   private sprite: Sprite;
   private bar = new Graphics();
+  private shadow: Graphics;
   private label: Text;
   private frames: Texture[];
   private size: number;
+  private heightClass: number;
   constructor(b: WorldBoss, art: WorldArt) {
     const def = ENEMIES.find((e) => e.id === b.defId)!;
     this.frames = art.enemies.get(def.id)!.map(tex);
     this.sprite = new Sprite(this.frames[0]);
     this.sprite.anchor.set(0.5, 0.5);
     this.size = def.art.size;
-    const shadow = new Graphics();
-    shadow.ellipse(0, this.size * 0.38, this.size * 0.42, this.size * 0.17).fill({ color: 0x0a080e, alpha: 0.32 });
+    this.heightClass = this.size > 32 ? 4 : this.size > 24 ? 3 : 2;
+    this.shadow = new Graphics();
     this.label = new Text({
       text: b.name,
       style: { fill: 0xffd2d2, fontSize: 10, fontFamily: 'monospace', stroke: { color: 0x000000, width: 3 } },
     });
     this.label.anchor.set(0.5, 1);
-    this.cont.addChild(shadow, this.sprite, this.bar, this.label);
+    this.cont.addChild(this.shadow, this.sprite, this.bar, this.label);
+  }
+  /** G1: offset shadow based on light direction. */
+  updateShadow(lightDX: number, lightDY: number, alpha: number) {
+    const { shadow, size, heightClass } = this;
+    shadow.clear();
+    const ox = lightDX * heightClass * 2;
+    const oy = size * 0.38 + lightDY * heightClass * 2;
+    shadow.ellipse(ox, oy, size * 0.42, size * 0.17).fill({ color: 0x0a080e, alpha });
   }
   sync(b: WorldBoss, alpha: number) {
     const fx = b.px + (b.x - b.px) * alpha;
@@ -141,15 +172,37 @@ export class Views {
   private ghost: { cont: Container; foot: Graphics; sprite: Sprite } | null = null;
   private fx = new Container();
 
+  // G1: directional light — shadows cast opposite the light source
+  private lightDX = 0;
+  private lightDY = 0;
+  private shadowAlpha = 0.3;
+
   constructor(private layer: Container, private art: WorldArt, private world: World) {
     layer.sortableChildren = true;
     layer.addChild(this.fx);
     this.fx.zIndex = 1e9; // effects always on top
   }
 
+  /** G1: set light direction for directional drop shadows.
+   *  dirX, dirY: shadow offset direction (light from opposite).
+   *  Day: light from top-left → shadow toward bottom-right (+0.7, +0.7).
+   *  Night: omnidirectional → shadow directly below (0, +0.3).
+   *  alpha: shadow opacity (0.5 day, 0.3 night). */
+  setLight(dirX: number, dirY: number, alpha: number) {
+    if (this.lightDX === dirX && this.lightDY === dirY && this.shadowAlpha === alpha) return;
+    this.lightDX = dirX;
+    this.lightDY = dirY;
+    this.shadowAlpha = alpha;
+    // Update all existing views
+    for (const v of this.foes.values()) v.updateShadow(dirX, dirY, alpha);
+    for (const v of this.buildings.values()) v.updateShadow(dirX, dirY, alpha);
+    for (const v of this.bosses.values()) v.updateShadow(dirX, dirY, alpha);
+  }
+
   // --- buildings ---
   addBuilding(b: Building) {
     const v = new BuildingView(b, this.art, this.wallMask(b.tx, b.ty));
+    v.updateShadow(this.lightDX, this.lightDY, this.shadowAlpha);
     this.buildings.set(b.uid, v);
     this.layer.addChild(v.cont);
   }
@@ -180,6 +233,7 @@ export class Views {
   // --- foes ---
   addFoe(f: Foe) {
     const v = new FoeView(f, this.art);
+    v.updateShadow(this.lightDX, this.lightDY, this.shadowAlpha);
     this.foes.set(f.uid, v);
     this.layer.addChild(v.cont);
   }
@@ -195,6 +249,7 @@ export class Views {
   addBoss(b: WorldBoss) {
     if (this.bosses.has(b.uid)) this.removeBoss(b.uid);
     const v = new BossView(b, this.art);
+    v.updateShadow(this.lightDX, this.lightDY, this.shadowAlpha);
     this.bosses.set(b.uid, v);
     this.layer.addChild(v.cont);
   }

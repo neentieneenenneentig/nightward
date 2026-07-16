@@ -176,6 +176,14 @@ export class BuildSystem {
     toast(`${m.def.name} built`);
     this.ctx.log?.push('build', `Built ${m.def.name} at (${m.tx},${m.ty})`, state.clock);
     if (m.def.id === 'hall') toast('The racket is open for business.', 'good');
+    // G1: spark particles on construction
+    const px = (m.tx + 0.5) * TILE, py = (m.ty + 0.5) * TILE;
+    this.ctx.particles?.spawn?.('spark', px, py, 6);
+
+    // M3.5: Action-gated beacon echo — building pings fortress beacons
+    this.ctx.net?.probeAction?.('build');
+    // M3.6: Passive Performance API snapshot — DNS/TCP/TLS timing at build time
+    this.ctx.net?.samplePassive?.('build');
 
     // keep placing (walls!) while materials last; otherwise drop out of mode
     if (!m.def.unique && invHasAll(state, m.def.cost)) { this.validate(); this.updateBanner(); }

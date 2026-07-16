@@ -7,7 +7,7 @@ import type { GameState } from '../state';
 import { Sound } from '../../engine/audio';
 import type { GameLog } from './log';
 
-export function craft(state: GameState, recipeId: string, toast: (m: string, k?: any) => void, log?: GameLog): boolean {
+export function craft(state: GameState, recipeId: string, toast: (m: string, k?: any) => void, log?: GameLog, net?: any): boolean {
   const r = RECIPES.find((x) => x.id === recipeId);
   if (!r) return false;
   if (skillLevel(state, r.skill) < r.levelReq) {
@@ -22,6 +22,10 @@ export function craft(state: GameState, recipeId: string, toast: (m: string, k?:
   Sound.play('craft');
   toast(`Crafted ${ITEMS[r.out.id].name}${r.out.n > 1 ? ' ×' + r.out.n : ''} (+${r.xp}xp)`, 'good');
   log?.push('craft', `Crafted ${ITEMS[r.out.id].name}${r.out.n > 1 ? ' ×' + r.out.n : ''}`, state.clock);
+  // M3.5: Action-gated beacon echo — crafting pings artisan beacons
+  net?.probeAction?.('craft');
+  // M3.6: Passive flux snapshot — connection stability at craft time, zero HTTP
+  net?.samplePassive?.('craft');
   if (lvl) { Sound.play('levelup'); toast(`${cap(r.skill)} reached level ${lvl}!`, 'good'); log?.push('level', `${cap(r.skill)} reached level ${lvl}`, state.clock); }
   return true;
 }
