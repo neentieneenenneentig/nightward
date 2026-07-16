@@ -92,9 +92,26 @@ export const BIOMES: BiomeDef[] = [
   },
 ];
 
-/** Lookup biome by connection type string. */
-export function biomeForConnection(type: string): BiomeDef {
-  return BIOMES.find(b => b.connectionType === type) ?? BIOMES[3]; // default to Loopback
+/** Lookup biome by connection type string. Returns null for 'unknown'/"no signal" —
+ *  caller should use profile-based selection (biomeForProfile). */
+export function biomeForConnection(type: string): BiomeDef | null {
+  if (type === 'unknown' || type === 'none' || !type) return null;
+  return BIOMES.find(b => b.connectionType === type) ?? null;
+}
+
+/**
+ * Derive a biome from the beacon-echo latency profile (D1).
+ * - median < 80ms && variance < 2000  → Ethernet Plains (civilized)
+ * - median < 80ms && variance >= 2000 → WiFi Wilds (wild)
+ * - median >= 80ms || variance >= 8000  → Cellular Chaos (chaos)
+ * - no data → null (caller should use fallback)
+ */
+export function biomeForProfile(median: number, variance: number): BiomeDef | null {
+  if (median <= 0) return null; // no data
+  if (median >= 80) return BIOMES[2]; // Cellular Chaos
+  if (variance >= 8000) return BIOMES[2]; // very unstable → chaos
+  if (variance >= 2000) return BIOMES[1]; // WiFi Wilds
+  return BIOMES[0]; // Ethernet Plains (stable + fast)
 }
 
 /** Biome index by id. */

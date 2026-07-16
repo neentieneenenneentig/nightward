@@ -13,7 +13,7 @@ import {
   type TraceHop, type BeaconEcho, type BeaconTarget,
   ACTION_ECHO_POOLS, ACTION_COOLDOWNS, allBeacons,
 } from '../data/network';
-import { biomeForConnection, type BiomeDef } from '../data/biomes';
+import { biomeForConnection, biomeForProfile, BIOMES, type BiomeDef } from '../data/biomes';
 
 export class NetworkSystem {
   snap: NetworkSnapshot;
@@ -112,7 +112,7 @@ export class NetworkSystem {
     this.lastConnectionType = this.snap.connectionType;
     this.lastKnownType = this.snap.connectionType;
     this.lastOnline = this.snap.online;
-    this.currentBiome = biomeForConnection(this.snap.connectionType);
+    this.currentBiome = this.selectBiome();
     this.buildMappingIndex();
     // M3.5: kick off IP/geo discovery after a short delay (avoid browser aborting
     // cross-origin fetches during page init). ipify + ipapi.co are CORS-enabled.
@@ -208,6 +208,53 @@ export class NetworkSystem {
     return this.currentBiome;
   }
 
+  // ---- D1: profile-based realm selection ----
+
+  /** Compute median and variance from recent beacon echoes. Returns {median, variance} or null. */
+  computeRealmProfile(): { median: number; variance: number } | null {
+    const echoes: number[] = [];
+    for (const probe of this.snap.endpointProbes) {
+      if (probe.rtt > 0) echoes.push(probe.rtt);
+    }
+    if (echoes.length < 2) return null;
+    echoes.sort((a, b) => a - b);
+    const mid = echoes.length >> 1;
+    const median = echoes.length % 2 === 1
+      ? echoes[mid]
+      : (echoes[mid - 1] + echoes[mid]) / 2;
+    // Variance: average squared deviation from median
+    let sumSq = 0;
+    for (const v of echoes) sumSq += (v - median) ** 2;
+    const variance = sumSq / echoes.length;
+    return { median, variance };
+  }
+
+  /**
+   * Select biome using D1 priority:
+   * 1. Offline → Loopback
+   * 2. Beacon-echo profile (median + variance) → realm
+   * 3. Android connection.type bonus (only if type is known and not 'unknown')
+   * 4. Fallback → Ethernet Plains (civilized default)
+   */
+  selectBiome(): BiomeDef {
+    // 1. Offline is always Loopback
+    if (!this.snap.online) return BIOMES[3];
+
+    // 2. Try beacon-echo profile
+    const profile = this.computeRealmProfile();
+    if (profile) {
+      const b = biomeForProfile(profile.median, profile.variance);
+      if (b) return b;
+    }
+
+    // 3. Android bonus: connection.type (only if known and not 'unknown')
+    const ct = biomeForConnection(this.snap.connectionType);
+    if (ct) return ct;
+
+    // 4. Fallback
+    return BIOMES[0]; // Ethernet Plains
+  }
+
   /** Get rift stability as 0-1 fraction. */
   getStability(): number {
     return this.riftStability / 100;
@@ -219,7 +266,7 @@ export class NetworkSystem {
     this.lastKnownType = type;
     this.lastConnectionType = type;
     this.snap.connectionType = type;
-    this.currentBiome = biomeForConnection(type);
+    this.currentBiome = this.selectBiome();
     this.riftStability = 100;
     this.lastRiftTime = performance.now();
     if (this.riftCallback) this.riftCallback(from, this.currentBiome);
@@ -439,9 +486,9 @@ export class NetworkSystem {
   }
 
   private fireTransition(from: string, to: string) {
-    // N2: update biome
+    // N2: update biome via profile-based selection (D1)
     const oldBiome = this.currentBiome;
-    this.currentBiome = biomeForConnection(this.lastKnownType);
+    this.currentBiome = this.selectBiome();
     this.snap.connectionType = this.lastKnownType;
 
     // Log the transition
@@ -471,13 +518,13 @@ export class NetworkSystem {
       this.lastRiftTime = now;
       this.riftStability = 100;
       this.snap.online = false;
-      if (this.riftCallback) this.riftCallback(oldBiome, biomeForConnection('unknown'));
+      if (this.riftCallback) this.riftCallback(oldBiome, BIOMES[3] /* Loopback */);
     } else if (from === 'offline') {
       // Coming back online — immediate rift
       this.lastRiftTime = now;
       this.riftStability = 100;
       this.snap.online = true;
-      if (this.riftCallback) this.riftCallback(biomeForConnection('unknown'), this.currentBiome);
+      if (this.riftCallback) this.riftCallback(BIOMES[3] /* Loopback */, this.currentBiome);
     }
 
     // Legacy callback
@@ -498,10 +545,10 @@ export class NetworkSystem {
       const toType = this.queuedRift;
       this.queuedRift = null;
       const oldBiome = this.currentBiome;
-      this.currentBiome = biomeForConnection(toType);
       this.lastKnownType = toType;
       this.lastConnectionType = toType;
       this.snap.connectionType = toType;
+      this.currentBiome = this.selectBiome();
       this.lastRiftTime = performance.now();
       this.riftStability = 100;
       if (this.riftCallback) this.riftCallback(oldBiome, this.currentBiome);
