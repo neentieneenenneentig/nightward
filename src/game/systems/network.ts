@@ -719,7 +719,7 @@ export class NetworkSystem {
         const jitterAtBirth = sameUrlSamples.length >= 2
           ? Math.abs(sameUrlSamples[sameUrlSamples.length - 1] - sameUrlSamples[sameUrlSamples.length - 2])
           : 0;
-        const cold = rtt > 100 && wasWarm; // proxy for paid DNS+TLS handshake
+        const cold = !wasWarm; // cold = first contact that paid DNS+TCP+TLS handshake
         const prevRegions = new Set<string>();
         for (const p of this.snap.endpointProbes) {
           if (p.rtt > 0) prevRegions.add(p.region);
