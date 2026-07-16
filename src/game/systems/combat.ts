@@ -161,8 +161,8 @@ export class CombatSystem {
       Sound.play('hit');
       const s = this.ctx.net?.snap;
       const mulInfo = totalMul !== 1.0
-        ? ` [${totalMul.toFixed(2)}× · RTT ${s?.rtt?.toFixed(0) ?? '?'}ms${resonance ? ' ⚡RESONANCE ' + resonance.label : ''}]`
-        : ` [RTT ${s?.rtt?.toFixed(0) ?? '?'}ms · BW ${s?.downlink?.toFixed(1) ?? '?'}Mbps]`;
+        ? ` [${totalMul.toFixed(2)}×${resonance ? ' ⚡RESONANCE ' + resonance.label : ''}]`
+        : '';
       this.ctx.log?.push('combat', `Hit ${hitLines.join('; ')}${mulInfo}`, state.clock);
       // M3.6v2: Resonance crit floaters + particles
       if (resonance) {
@@ -253,9 +253,9 @@ export class CombatSystem {
     state.player.y = spot.y;
     player.teleport(spot.x, spot.y);
     toast(lost > 0
-      ? `Connection lost — you're scattered, ${lost} gold gone. Find your way home.`
-      : 'Connection lost — you are scattered into distant sectors…', 'bad');
-    this.ctx.log?.push('death', `You fell${lost > 0 ? ` (−${lost} gold)` : ''} — scattered to distant sectors`, state.clock);
+      ? `The thread snaps — you're scattered, ${lost} gold gone. Find your way home.`
+      : 'The thread snaps — you are cast into distant lands…', 'bad');
+    this.ctx.log?.push('death', `You fell${lost > 0 ? ` (−${lost} gold)` : ''} — cast into distant lands`, state.clock);
   }
 
   /** A random passable spot far from home — the reconnection point. */

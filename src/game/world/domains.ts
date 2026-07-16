@@ -1,6 +1,6 @@
 // Which network lord rules a given tile. A "region" is a big square of tiles; each is
 // deterministically assigned a lord, a name, and a danger rating that climbs
-// the further you wander from the Loopback — so the map feels vast and the
+// the further you wander from the Hearthlands — so the map feels vast and the
 // stakes rise as you push into the unknown. Pure function of (tile, seed).
 import { hash2 } from '../../engine/rng';
 import { DOMAIN_LORDS, ORIGIN_LORD, type DomainLord } from '../data/domains';
@@ -18,8 +18,8 @@ export interface Domain {
 }
 
 const PREFIX = ['The Whispering', 'The Sunken', 'The Hollow', 'The Gilded', 'The Weeping',
-  'The Silent', 'The Fevered', 'The Wandering', 'The Shrouded', 'The Riven', 'The Latent', 'The Amber'];
-const NOUN = ['Reach', 'Expanse', 'Sector', 'Gateway', 'Grid', 'Threshold',
+  'The Silent', 'The Fevered', 'The Wandering', 'The Shrouded', 'The Riven', 'The Thorned', 'The Amber'];
+const NOUN = ['Reach', 'Expanse', 'Downs', 'Crossing', 'Weald', 'Threshold',
   'Vale', 'Mire', 'Steppe', 'Fen', 'Barrows', 'Span'];
 
 const pick = <T>(arr: T[], h: number) => arr[Math.floor(h * arr.length) % arr.length];
@@ -45,7 +45,7 @@ export function domainAtRegion(gx: number, gy: number, seed: number): Domain {
   const ring = Math.max(Math.abs(gx), Math.abs(gy));
   const isOrigin = gx === 0 && gy === 0;
   const lord = lordAtRegion(gx, gy, seed);
-  const name = isOrigin ? 'The Loopback'
+  const name = isOrigin ? 'The Hearthlands'
     : `${pick(PREFIX, hash2(gx, gy, seed ^ 0x0011))} ${pick(NOUN, hash2(gx, gy, seed ^ 0x0022))}`;
   return { gx, gy, ring, danger: ring, lord, name, key: regionKey(gx, gy) };
 }
