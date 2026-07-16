@@ -158,21 +158,21 @@ export class HordeSystem {
       epithetName = [prefix, def.name, suffix].filter(Boolean).join(' ');
     }
 
-    const foe: Foe = {
+    const foe: any = {
       uid: state.nextUid++, def,
       x, y, px: x, py: y,
       hp: Math.round(def.hp * hpMul * netScale * echoHpMul),
       maxHp: Math.round(def.hp * hpMul * netScale * echoHpMul),
       dmg: Math.round(def.dmg * dmgMul * netScale * echoDmgMul),
       atkT: 0, telegraphT: 0, animT: Math.random(),
-      // N2a: store echo-derived fields on foe
-      (foe as any).echoSoak = echoSoak,
-      (foe as any).echoMoveMul = echoMoveMul,
-      (foe as any).specialSkill = specialSkill,
-      (foe as any).epithetName = epithetName,
-      (foe as any).hitCount = 0,
-      (foe as any).blinked = false,
-    } as any;
+    };
+    // N2a: attach echo-derived fields
+    foe.echoSoak = echoSoak;
+    foe.echoMoveMul = echoMoveMul;
+    foe.specialSkill = specialSkill;
+    foe.epithetName = epithetName;
+    foe.hitCount = 0;
+    foe.blinked = false;
     this.foes.push(foe);
     views.addFoe(foe);
     this.toSpawn--;
