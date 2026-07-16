@@ -17,7 +17,7 @@ import { ChunkMap, CHUNK } from './game/world/chunkmap';
 import { Views } from './game/world/views';
 import { Player } from './game/world/player';
 import { Camera } from './game/world/camera';
-import { UI } from './game/ui/ui';
+import { UI, NET_LOG_LABELS, styleNetworkMsg } from './game/ui/ui';
 import { GatherSystem, VERB } from './game/systems/gather';
 import { EconomySystem } from './game/systems/economy';
 import { BuildSystem } from './game/systems/build';
@@ -717,7 +717,9 @@ async function boot() {
       for (const e of feedEntries) {
         const t = Math.floor(e.t);
         const ts = `${String((t/60)|0).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
-        html += `<div ${attr('feed-entry')} style="font-size:8px;color:#888;cursor:help;">[${ts}] ${e.kind} ${e.msg}</div>`;
+        const kindLabel = NET_LOG_LABELS[e.kind] ?? e.kind;
+        const styledMsg = styleNetworkMsg(e.msg);
+        html += `<div ${attr('feed-entry')} style="font-size:8px;color:#888;cursor:help;">[${ts}] <span style="color:#f96;">${kindLabel}</span> ${styledMsg}</div>`;
       }
     }
     html += '</div>';
