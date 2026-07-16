@@ -29,7 +29,10 @@ export class NetworkSystem {
   private transitionLogCallback: ((msg: string) => void) | null = null;
 
   // ---- internal state ----
+  /** Connection RTT samples — ONLY connection.rtt values, never HTTP echoes. Used for jitter. */
   private rttSamples: number[] = [];
+  /** Per-beacon echo samples keyed by URL. Used for echoJitter (same-beacon successive deltas). */
+  private echoSamples: Map<string, number[]> = new Map();
   private lastPollMs = 0;
   private lastEndpointMs = 0;
   private lastConnectionType = '';
@@ -239,6 +242,7 @@ export class NetworkSystem {
       connectionType: con?.type || 'unknown',
       effectiveType: con?.effectiveType || '4g',
       jitter: 5,
+      echoJitter: 5,
       online: navigator.onLine,
       timeOfDay: this.realTimeOfDay(),
       cpuCores: navigator.hardwareConcurrency || 4,
@@ -336,8 +340,7 @@ export class NetworkSystem {
       .then(() => {
         const lat = performance.now() - t0;
         this.snap.endpointLatency = lat;
-        this.rttSamples.push(lat);
-        if (this.rttSamples.length > 30) this.rttSamples.shift();
+        this.trackEchoSample(url, lat);
         this.netLog('resonance-echo',
           `${host} echoed in ${lat.toFixed(0)}ms`);
         this.endpointFetching = false;
@@ -362,6 +365,8 @@ export class NetworkSystem {
       this.netLog('resonance-flux',
         `Flux ${dir}: ${prevJitter.toFixed(1)}→${this.snap.jitter.toFixed(1)}ms  |  ${this.snap.jitter > 30 ? '⚠ turbulent' : '✓ calm'}`);
     }
+    // echo jitter: computed ONLY from same-beacon successive echo deltas
+    this.computeEchoJitter();
   }
 
   /** Debounced connection-type change detection (5s stability window). */
@@ -608,6 +613,7 @@ export class NetworkSystem {
         this.mergeProbeResult({ host: url, label, rtt, detail, region, countryCode });
         this.discoveredEndpoints.add(label);
         this.activeProbes.delete(url);
+        this.trackEchoSample(url, rtt); // F1: per-beacon echo tracking for echoJitter
         this.netLog('resonance-echo', `${label}: ${rtt}ms (${region})`);
         // fast echo → resonance crit for the current swing
         if (action === 'attack' && rtt > 0 && rtt < 30) {
@@ -635,6 +641,33 @@ export class NetworkSystem {
 
   /** Merge a single echo result into snap.endpointProbes, replacing any
    *  previous result for the same label. */
+  /** Track an echo latency sample per beacon URL and recompute echoJitter. */
+  private trackEchoSample(url: string, lat: number) {
+    let samples = this.echoSamples.get(url);
+    if (!samples) {
+      samples = [];
+      this.echoSamples.set(url, samples);
+    }
+    samples.push(lat);
+    if (samples.length > 10) samples.shift(); // per-beacon ring buffer
+  }
+
+  /** Compute echoJitter from successive same-beacon echo deltas. */
+  private computeEchoJitter() {
+    let totalDelta = 0;
+    let deltaCount = 0;
+    for (const samples of this.echoSamples.values()) {
+      if (samples.length < 2) continue;
+      for (let i = 1; i < samples.length; i++) {
+        totalDelta += Math.abs(samples[i] - samples[i - 1]);
+        deltaCount++;
+      }
+    }
+    if (deltaCount > 0) {
+      this.snap.echoJitter = totalDelta / deltaCount;
+    }
+  }
+
   private mergeProbeResult(result: BeaconEcho) {
     const probes = this.snap.endpointProbes;
     const idx = probes.findIndex(p => p.label === result.label);

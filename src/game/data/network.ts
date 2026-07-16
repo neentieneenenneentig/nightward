@@ -172,8 +172,10 @@ export interface NetworkSnapshot {
   connectionType: string;
   /** Effective connection type: '4g' | '3g' | '2g' | 'slow-2g' | 'unknown'. */
   effectiveType: string;
-  /** Pulse variance (ms) — computed from the last N samples. */
+  /** Pulse variance (ms) — computed from connection.rtt deltas only. */
   jitter: number;
+  /** Echo variance (ms) — computed from successive echoes to the SAME beacon URL. */
+  echoJitter: number;
   /** Is the browser currently online? */
   online: boolean;
   /** Real-world time of day as a fraction 0..1 (0 = midnight, 0.5 = noon). */

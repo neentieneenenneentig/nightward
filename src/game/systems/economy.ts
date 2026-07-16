@@ -29,10 +29,11 @@ export class EconomySystem {
     // M3.6: Passive metric snapshot for economy — informational only, zero HTTP
     this.ctx.net?.samplePassive?.('economy');
 
-    // flux surges cough up bonus gold
-    const jitter = this.ctx.net?.snap?.jitter ?? 5;
-    if (jitter > 25) {
-      const bonusGold = Math.round(jitter * 0.6);
+    // flux surges cough up bonus gold (keyed to echoJitter — same-beacon echo variance,
+    // NOT the near-constant connection.rtt jitter; threshold rebalanced per N1.5-F1)
+    const echoJitter = this.ctx.net?.snap?.echoJitter ?? 5;
+    if (echoJitter > 50) {
+      const bonusGold = Math.round(echoJitter * 0.3);
       this.ctx.state.player.gold += bonusGold;
       this.ctx.toast(`Flux surge! +${bonusGold} gold`, 'good');
       this.ctx.log?.push('economy', `Flux surge → +${bonusGold} bonus gold`, this.ctx.state.clock);
