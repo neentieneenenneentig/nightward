@@ -408,21 +408,20 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   {
     label: 'Gold Rate',
     netKey: 'downlink',
-    // Downlink observable range is (0, 10] Mbps (anti-fingerprinting cap).
-    // 1 Mbps → 0.58×, 5 Mbps → 0.88×, 10 Mbps → 1.25×.
-    transform: (dl: number) => Math.max(0.5, Math.min(1.25, 0.5 + dl * 0.075)),
+    // D5: wide lightning bands 0.30–1.50. 1 Mbps → 0.58×, 10 Mbps → 1.25×.
+    transform: (dl: number) => Math.max(0.30, Math.min(1.50, 0.5 + dl * 0.075)),
     target: 'goldRate',
-    min: 0.5,
-    max: 1.25,
+    min: 0.30,
+    max: 1.50,
   },
   {
     label: 'Enemy Scaling',
     netKey: 'effectiveType',
-    // Weaker link = harder enemies. 4g=1×, 3g=1.4×, 2g=2×.
-    transform: (tier: number) => 0.6 + tier * 0.4,
+    // D5: wider band 0.50–1.60. 4g=1×, 3g=1.3×, 2g=1.6×.
+    transform: (tier: number) => Math.max(0.50, Math.min(1.60, 0.6 + tier * 0.3)),
     target: 'enemyScale',
-    min: 1.0,
-    max: 3.0,
+    min: 0.50,
+    max: 1.60,
   },
   {
     label: 'Day/Night Sync',
@@ -441,6 +440,16 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     min: 0,
     max: 2,
   },
+  // ---- D5: Damage is a per-swing rolled modifier (lightning bands) ----
+  {
+    label: 'Damage',
+    netKey: 'endpointLatency',  // carries min/max; actual roll logic is per-swing in NetworkSystem.rollDamageMul()
+    // This row is declarative — the roll logic reads its clamps.
+    transform: (_v: number) => 1.0, // actual value comes from per-swing roll, not transform
+    target: 'damage',
+    min: 0.30,
+    max: 1.50,
+  },
   // ---- N2a: New modifiers from live vars ----
   {
     label: 'Move Speed',
@@ -457,11 +466,11 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   {
     label: 'Gather Speed',
     netKey: 'downlink',
-    // 0.85 + downlink × 0.04, clamp 0.85–1.25
-    transform: (dl: number) => Math.max(0.85, Math.min(1.25, 0.85 + dl * 0.04)),
+    // D5: wide lightning bands 0.50–1.50
+    transform: (dl: number) => Math.max(0.50, Math.min(1.50, 0.85 + dl * 0.04)),
     target: 'gatherSpeed',
-    min: 0.85,
-    max: 1.25,
+    min: 0.50,
+    max: 1.50,
   },
   {
     label: 'XP Rate',

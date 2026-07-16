@@ -809,42 +809,55 @@ export class NetworkSystem {
     return allBeacons();
   }
 
-  // ---- M3.6v2: Sync Pulse → Damage + Resonance Crits ----
+  // ---- D5: Lightning Bands — per-swing seeded-rng damage roll ----
+
+  /** Center value of the last damage roll. */
+  lastSwingCenter = 1.0;
+  /** Half-range of the last damage roll. */
+  lastSwingHalf = 0.0;
+  /** Best echo used for the last damage roll center (ms). */
+  lastSwingBestEchoMs = 0;
 
   /**
-   * Get the damage multiplier. Drives from best recent beacon-echo latency
-   * (continuous, not quantized) when available; falls back to connection.rtt
-   * with 25ms-grid-aligned tier edges (F4).
-   *   ≤20ms  → 1.4×  (resonant clarity)
-   *   20-40ms → 1.2× (sharp edge)
-   *   40-80ms → 1.05× (slightly keen)
-   *   80-200ms→ 1.0×  (steady)
-   *   200-400ms→0.85× (dulled by distance)
-   *   >400ms → 0.7×  (heavy interference)
+   * Roll a per-swing damage multiplier using the seeded game rng.
+   * "Lightning bands" — damage is rolled, not stepped. Wide and wild per D5.
+   *
+   * @param rng Seeded rng function returning [0,1). MUST be the game rng for determinism.
+   * @returns The damage multiplier and roll debug info.
    */
-  getDamageMul(): number {
-    // 1. Try best recent beacon echo (continuous latency)
-    const bestEcho = this.bestRecentEcho();
-    if (bestEcho > 0) {
-      this.lastSwingRtt = bestEcho;
-      return this.lastSwingDmgMul = this.rttToDamageMul(bestEcho);
-    }
+  rollDamageMul(rng: () => number): { mul: number; center: number; half: number; bestEchoMs: number } {
+    const bestEchoMs = this.bestRecentEcho();
+    const echoJit = this.snap.echoJitter;
 
-    // 2. Fall back to connection.rtt (quantized to 25ms buckets)
-    const con = (navigator as any).connection;
-    const rtt = con?.rtt != null ? this.safeNum(con.rtt, this.snap.rtt, 1, 5000) : this.snap.rtt;
-    this.lastSwingRtt = rtt;
-    return this.lastSwingDmgMul = this.rttToDamageMul(rtt);
+    // Read clamps from the NET_GAME_MAP damage row (data-driven, live-tweakable)
+    const dmgRow = this.gameMappings.find(m => m.target === 'damage');
+    const dmgMin = dmgRow?.min ?? 0.30;
+    const dmgMax = dmgRow?.max ?? 1.50;
+
+    // center: fast route → high center. 1.45 − echoMs/250, clamp 0.55–1.30
+    const center = Math.max(0.55, Math.min(1.30, 1.45 - (bestEchoMs > 0 ? bestEchoMs : this.snap.rtt) / 250));
+    // half: calm ≈ ±0.17, stormy ≈ ±0.60
+    const half = 0.15 + Math.max(0, Math.min(1, echoJit / 60)) * 0.45;
+    // roll: center ± half, clamped to damage band from data row
+    const roll = Math.max(dmgMin, Math.min(dmgMax, center + (rng() * 2 - 1) * half));
+
+    this.lastSwingRtt = bestEchoMs > 0 ? bestEchoMs : this.snap.rtt;
+    this.lastSwingDmgMul = roll;
+    this.lastSwingCenter = center;
+    this.lastSwingHalf = half;
+    this.lastSwingBestEchoMs = bestEchoMs;
+
+    // Lens feed: technical line for every swing
+    this.netLog('resonance',
+      `swing roll ${roll.toFixed(2)}× ← echo ${bestEchoMs > 0 ? bestEchoMs.toFixed(0) : '—'} ms, center ${center.toFixed(2)} ± ${half.toFixed(2)}`);
+
+    return { mul: roll, center, half, bestEchoMs };
   }
 
-  /** Map an RTT value to a damage multiplier. */
-  private rttToDamageMul(rtt: number): number {
-    if (rtt <= 20) return 1.4;
-    if (rtt <= 40) return 1.2;
-    if (rtt <= 80) return 1.05;
-    if (rtt <= 200) return 1.0;
-    if (rtt <= 400) return 0.85;
-    return 0.7;
+  /** @deprecated — use rollDamageMul(rng) instead. Kept for compat. */
+  getDamageMul(): number {
+    // Fallback: use Math.random() if no rng provided (non-deterministic, test-only path)
+    return this.rollDamageMul(() => Math.random()).mul;
   }
 
   /** Get the best (lowest positive) echo RTT from the last 10s of probes. */
@@ -852,9 +865,7 @@ export class NetworkSystem {
     let best = Infinity;
     const now = performance.now();
     for (const probe of this.snap.endpointProbes) {
-      // Only consider probes with valid RTT and within ~10s
       if (probe.rtt <= 0) continue;
-      // Use the probe's timestamp if available, otherwise treat all as recent
       const age = (probe as any).ts ? now - (probe as any).ts : 0;
       if (age <= 10000 && probe.rtt < best) best = probe.rtt;
     }

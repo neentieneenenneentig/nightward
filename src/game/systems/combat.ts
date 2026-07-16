@@ -24,6 +24,7 @@ export class CombatSystem {
   swingT = 0;          // >0 while the swing flash is visible
   swingAngle = 0;
   private towerT = new Map<number, number>(); // building uid → cooldown
+  private swingCount = 0;  // per-session swing counter for seeded rng
 
   constructor(private ctx: any) {}
 
@@ -90,8 +91,20 @@ export class CombatSystem {
     this.phaseT = env.windup;
     this.swingAngle = this.ctx.player.aimAngle ?? FACING_ANGLE[this.ctx.player.facing];
     Sound.play('windup');
-    // Snapshot sync pulse for damage calc + fire attack echo volley
-    this.ctx.net?.getDamageMul?.();  // snapshots lastSwingRtt + lastSwingDmgMul
+    // D5: per-swing seeded-rng damage roll (lightning bands)
+    this.swingCount++;
+    const swingSeed = (this.ctx.state.seed ?? 1234) ^ (this.swingCount * 0x9e3779b9);
+    const rng = (() => {
+      let s = swingSeed >>> 0;
+      return () => {
+        s = (s + 0x6d2b79f5) | 0;
+        let t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    })();
+    this.ctx.net?.rollDamageMul?.(rng);
+    // Fire attack echo volley
     this.ctx.net?.probeAction?.('attack');
   }
 
@@ -159,9 +172,9 @@ export class CombatSystem {
     }
     if (landed) {
       Sound.play('hit');
-      const s = this.ctx.net?.snap;
+      const net = this.ctx.net;
       const mulInfo = totalMul !== 1.0
-        ? ` [${totalMul.toFixed(2)}×${resonance ? ' ⚡RESONANCE ' + resonance.label : ''}]`
+        ? ` [${totalMul.toFixed(2)}×${resonance ? ' ⚡RESONANCE ' + resonance.label : ''} ← roll ${dmgMul.toFixed(2)}×, center ${(net?.lastSwingCenter ?? 1).toFixed(2)} ± ${(net?.lastSwingHalf ?? 0).toFixed(2)}]`
         : '';
       this.ctx.log?.push('combat', `Hit ${hitLines.join('; ')}${mulInfo}`, state.clock);
       // M3.6v2: Resonance crit floaters + particles
