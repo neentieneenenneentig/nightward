@@ -12,6 +12,18 @@ export interface NetMapping {
   fallback: number;
   unit: string;
   intervalMs: number;
+  /** Inspect metadata for the Lens hover detail box. */
+  inspect?: NetInspect;
+}
+
+/** Inspect metadata — shown in the Lens hover detail box (SOURCE / ACTION / FLOWS INTO). */
+export interface NetInspect {
+  /** The browser API and how it's implemented. */
+  api: string;
+  /** The game action that drives it (or 'always active' / 'boot page load'). */
+  action: string;
+  /** Which game values consume it. */
+  flowsInto: string;
 }
 
 /** A single step in the resonance chain. */
@@ -51,6 +63,8 @@ export interface BeaconTarget {
   countryCode: string;
   /** Hint shown while this beacon is undiscovered. */
   discoveryHint: string;
+  /** Inspect metadata for the Lens hover detail box. */
+  inspect?: NetInspect;
 }
 
 // Backwards-compat alias
@@ -165,6 +179,42 @@ export function allBeacons(): BeaconTarget[] {
 // Backwards-compat alias
 export const allEndpoints = allBeacons;
 
+/** Inspect metadata for each unique beacon (keyed by label). */
+export const BEACON_INSPECT: Record<string, NetInspect> = {
+  'Yandex':       { api: 'fetch() to yandex.ru/favicon.ico — cross-origin, duration only', action: 'fired by attacking or taking damage', flowsInto: 'damage modifier · realm profile median' },
+  'Naver':        { api: 'fetch() to naver.com/favicon.ico — cross-origin, duration only', action: 'fired by attacking, gathering, or exploring', flowsInto: 'damage modifier · realm profile median' },
+  'Baidu':        { api: 'fetch() to baidu.com/favicon.ico — cross-origin, duration only', action: 'fired by attacking or gathering', flowsInto: 'damage modifier · realm profile median' },
+  'Yahoo JP':     { api: 'fetch() to yahoo.co.jp/favicon.ico — cross-origin, duration only', action: 'fired by attacking or exploring', flowsInto: 'damage modifier · realm profile median' },
+  'Cloudflare':   { api: 'fetch() to cloudflare.com/cdn-cgi/trace — cross-origin, duration only', action: 'fired by attacking, building, or taking damage', flowsInto: 'damage modifier · realm profile median' },
+  'Microsoft':    { api: 'fetch() to microsoft.com/favicon.ico — cross-origin, duration only', action: 'fired by attacking, building, or economy ticks', flowsInto: 'damage modifier · realm profile median' },
+  'BBC':          { api: 'fetch() to bbc.co.uk/favicon.ico — cross-origin, duration only', action: 'fired by gathering or crafting', flowsInto: 'damage modifier · realm profile variance' },
+  'Times of India': { api: 'fetch() to timesofindia.com/favicon.ico — cross-origin, duration only', action: 'fired by gathering or economy ticks', flowsInto: 'realm profile variance' },
+  'ABC Australia':  { api: 'fetch() to abc.net.au/favicon.ico — cross-origin, duration only', action: 'fired by gathering, exploring, or surviving night', flowsInto: 'realm profile variance' },
+  'News24':       { api: 'fetch() to news24.com/favicon.ico — cross-origin, duration only', action: 'fired by gathering, exploring, or surviving night', flowsInto: 'realm profile variance' },
+  'Le Monde':     { api: 'fetch() to lemonde.fr/favicon.ico — cross-origin, duration only', action: 'fired by gathering, crafting, or economy ticks', flowsInto: 'realm profile variance' },
+  'Google':       { api: 'fetch() to google.com/generate_204 — cross-origin, duration only', action: 'fired by building or taking damage', flowsInto: 'damage modifier · realm profile median' },
+  'El Mundo':     { api: 'fetch() to elmundo.es/favicon.ico — cross-origin, duration only', action: 'fired by building or crafting', flowsInto: 'realm profile variance' },
+  'UOL':          { api: 'fetch() to uol.com.br/favicon.ico — cross-origin, duration only', action: 'fired by building or economy ticks', flowsInto: 'realm profile variance' },
+};
+
+/** Static inspect metadata for Lens sections that aren't metric rows or beacons. */
+export const LENS_SECTION_INSPECT: Record<string, NetInspect> = {
+  'connection-rtt':    { api: 'navigator.connection.rtt — quantized to 25 ms buckets. Chrome-only.', action: 'always active (polled)', flowsInto: 'sim speed · damage modifier' },
+  'connection-dl':     { api: 'navigator.connection.downlink — capped at 10 Mbps. Chrome-only.', action: 'always active (polled)', flowsInto: 'gold rate · gather speed' },
+  'connection-jitter': { api: 'Computed from rtt sample deltas (N=30 ring buffer). Not a browser API.', action: 'always active (recomputed on poll)', flowsInto: 'move speed' },
+  'realm-profile':     { api: 'Beacon echo median + variance → D1 biome classifier. Derived from per-route fetch() timings.', action: 'updated on every completed beacon probe', flowsInto: 'biome name · rift stability · color grading' },
+  'realm-stability':   { api: 'Timer: 100% → 0% over 5 minutes since last rift. Purely internal state.', action: 'decays each frame; resets on rift', flowsInto: 'rift visual intensity' },
+  'identity-ip':       { api: 'fetch() to api.ipify.org → public IP. Gated behind first explore action (F8 privacy).', action: 'revealed by your first explore action', flowsInto: 'Vessel identity display' },
+  'identity-isp':      { api: 'fetch() to ipapi.co/json/ → ISP/org/city/country. Gated behind first explore action.', action: 'revealed by your first explore action', flowsInto: 'Vessel identity display' },
+  'identity-colo':     { api: 'fetch() to cloudflare.com/cdn-cgi/trace → colo/warp fields. Gated behind first explore action.', action: 'revealed by your first explore action', flowsInto: 'Vessel identity display' },
+  'vessel-ua':         { api: 'navigator.userAgent — parsed for browser brand only (not the full string). Available everywhere.', action: 'boot page load (static)', flowsInto: 'display only (no mechanics in N2a)' },
+  'vessel-gpu':        { api: 'WebGLRenderingContext.getParameter(RENDERER) or WebGPU adapter.info. Available in all modern browsers.', action: 'boot page load (static)', flowsInto: 'display only (no mechanics in N2a)' },
+  'vessel-screen':     { api: 'screen.width/height + devicePixelRatio. Available everywhere.', action: 'boot page load (static)', flowsInto: 'display only (no mechanics in N2a)' },
+  'routes-origin':     { api: 'PerformanceNavigationTiming — DNS/TCP/TLS/TTFB for this origin\'s page load.', action: 'boot page load (captured once, static)', flowsInto: 'Vessel · ancestral memory' },
+  'routes-beacon':     { api: 'fetch() timing to a public endpoint (no-cors). Cross-origin — duration only, no DNS/TCP/TLS breakdown.', action: 'fired by in-game actions (attack, gather, build, etc.)', flowsInto: 'damage modifier · realm profile' },
+  'feed-entry':        { api: 'Internal log ring-buffer — truth-kind entries from network polling, probes, and transitions.', action: 'generated by NetworkSystem on poll/probe/transition', flowsInto: 'Lens Feed display · debug trace' },
+};
+
 export interface NetworkSnapshot {
   /** Estimated pulse time (ms). From navigator.connection.rtt. */
   rtt: number;
@@ -262,16 +312,19 @@ export const NET_METRICS: NetMapping[] = [
     key: 'rtt', label: 'Pulse',
     compute: (s) => s.rtt,
     fallback: 50, unit: 'ms', intervalMs: 1000,
+    inspect: { api: 'navigator.connection.rtt — quantized to 25 ms buckets by Chrome; unavailable in Firefox/Safari', action: 'always active (polled at 1 Hz)', flowsInto: 'sim speed · damage modifier' },
   },
   {
     key: 'downlink', label: 'Flow',
     compute: (s) => s.downlink,
     fallback: 10, unit: 'Mbps', intervalMs: 2000,
+    inspect: { api: 'navigator.connection.downlink — capped at 10 Mbps by Chrome (anti-fingerprinting); unavailable in Firefox/Safari', action: 'always active (polled at 0.5 Hz)', flowsInto: 'gold rate · gather speed' },
   },
   {
     key: 'jitter', label: 'Flux',
     compute: (s) => s.jitter,
     fallback: 5, unit: 'ms', intervalMs: 1000,
+    inspect: { api: 'Computed from navigator.connection.rtt deltas (last 30 samples). Not a browser API — derived statistic.', action: 'always active (recomputed on every rtt poll)', flowsInto: 'move speed · enemy wobble' },
   },
   {
     key: 'effectiveType', label: 'Link Tier',
@@ -280,6 +333,7 @@ export const NET_METRICS: NetMapping[] = [
       return map[s.effectiveType] ?? 1;
     },
     fallback: 1, unit: 'tier', intervalMs: 5000,
+    inspect: { api: 'navigator.connection.effectiveType — categorical (4g/3g/2g/slow-2g). Chrome-only; defaults to "4g" in other browsers.', action: 'always active (polled at 0.2 Hz)', flowsInto: 'enemy scaling' },
   },
   {
     key: 'connectionType', label: 'Realm',
@@ -288,46 +342,55 @@ export const NET_METRICS: NetMapping[] = [
       return map[s.connectionType] ?? 0;
     },
     fallback: 0, unit: '', intervalMs: 10000,
+    inspect: { api: 'navigator.connection.type — Android/ChromeOS only. Desktop browsers always return "unknown".', action: 'always active (polled at 0.1 Hz)', flowsInto: 'realm selection · biome' },
   },
   {
     key: 'online', label: 'Awake',
     compute: (s) => s.online ? 1 : 0,
     fallback: 1, unit: '', intervalMs: 5000,
+    inspect: { api: 'navigator.onLine + window online/offline events. Available in all browsers.', action: 'always active (event-driven + polled)', flowsInto: 'global pause · realm (The Hollow)' },
   },
   {
     key: 'timeOfDay', label: 'Real Clock',
     compute: (s) => s.timeOfDay,
     fallback: 0, unit: 'frac', intervalMs: 60000,
+    inspect: { api: 'Date.now() → hours·3600 + mins·60 + secs / 86400. Available everywhere.', action: 'always active (polled at ~0.017 Hz)', flowsInto: 'day/night phase sync' },
   },
   {
     key: 'cpuCores', label: 'CPU Cores',
     compute: (s) => s.cpuCores,
     fallback: 4, unit: 'cores', intervalMs: 0,
+    inspect: { api: 'navigator.hardwareConcurrency — logical cores. Available in all modern browsers.', action: 'boot page load (static for the session)', flowsInto: 'max simultaneous entities · chunk activation radius' },
   },
   {
     key: 'deviceMemory', label: 'RAM',
     compute: (s) => s.deviceMemory,
     fallback: 4, unit: 'GB', intervalMs: 0,
+    inspect: { api: 'navigator.deviceMemory — rounded to nearest 0.25/0.5/1/2/4/8 GB. Chrome-only; defaults to 4 GB elsewhere.', action: 'boot page load (static for the session)', flowsInto: 'inventory capacity · max buildings · soul gear slots' },
   },
   {
     key: 'endpointLatency', label: 'Beacon Echo',
     compute: (s) => s.endpointLatency,
     fallback: 30, unit: 'ms', intervalMs: 10000,
+    inspect: { api: 'fetch() timing to a well-known public endpoint (no-cors, fire-and-forget). Cross-origin — duration only (no DNS/TCP/TLS breakdown).', action: 'auto-polled every 10s + action-gated probe echoes', flowsInto: 'damage modifier (best recent echo)' },
   },
   {
     key: 'pageDnsTime', label: 'Page DNS',
     compute: (s) => s.pageDnsTime,
     fallback: 10, unit: 'ms', intervalMs: 0,
+    inspect: { api: 'PerformanceNavigationTiming.domainLookupEnd − domainLookupStart. This origin only.', action: 'boot page load (captured once, static)', flowsInto: 'Vessel identity · ancestral memory stats' },
   },
   {
     key: 'pageTlsTime', label: 'Page TLS',
     compute: (s) => s.pageTlsTime,
     fallback: 20, unit: 'ms', intervalMs: 0,
+    inspect: { api: 'PerformanceNavigationTiming.connectEnd − secureConnectionStart. This origin only.', action: 'boot page load (captured once, static)', flowsInto: 'Vessel identity · ancestral memory stats' },
   },
   {
     key: 'pageTtfb', label: 'Page TTFB',
     compute: (s) => s.pageTtfb,
     fallback: 50, unit: 'ms', intervalMs: 0,
+    inspect: { api: 'PerformanceNavigationTiming.responseStart − requestStart. This origin only.', action: 'boot page load (captured once, static)', flowsInto: 'Vessel identity · ancestral memory stats' },
   },
 ];
 

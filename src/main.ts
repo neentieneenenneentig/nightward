@@ -29,7 +29,7 @@ import { NetworkSystem } from './game/systems/network';
 import { craft } from './game/systems/crafting';
 import { toggleEquip, invAdd } from './game/rules';
 import { BUILDINGS } from './game/data/buildings';
-import { NET_GAME_MAP } from './game/data/network';
+import { NET_GAME_MAP, NET_METRICS, BEACON_INSPECT, LENS_SECTION_INSPECT, allBeacons, type NetInspect } from './game/data/network';
 import { phase, tintAt } from './game/systems/daynight';
 import { Fog } from './game/world/fog';
 import { domainAt, regionOf, regionKey } from './game/world/domains';
@@ -174,6 +174,64 @@ async function boot() {
     <div id="nw-lens-body"></div>
   `;
   document.body.appendChild(obsPanel);
+
+  // N2a: Inspect detail box — appears on hover/tap of any Lens row
+  const inspectBox = document.createElement('div');
+  inspectBox.id = 'nw-lens-inspect';
+  inspectBox.style.cssText = 'position:fixed;z-index:40;'
+    + 'font-family:ui-monospace,Consolas,monospace;font-size:9px;line-height:1.4;'
+    + 'color:#ccc;background:#0a0a16f8;padding:8px 10px;border-radius:6px;'
+    + 'border:1px solid #557;display:none;max-width:320px;'
+    + 'pointer-events:none;user-select:none;';
+  document.body.appendChild(inspectBox);
+
+  // Attach hover/tap handler to the Lens body (delegated)
+  obsPanel.addEventListener('mouseover', (e) => {
+    const target = (e.target as HTMLElement).closest('[data-inspect-key]') as HTMLElement | null;
+    if (!target) { inspectBox.style.display = 'none'; return; }
+    showInspectBox(target, inspectBox, e);
+  });
+  obsPanel.addEventListener('mouseout', (e) => {
+    const target = (e.target as HTMLElement).closest('[data-inspect-key]') as HTMLElement | null;
+    if (!target) { inspectBox.style.display = 'none'; return; }
+    // Only hide if mouse actually left the Lens
+    if (!obsPanel.contains(e.relatedTarget as Node)) {
+      inspectBox.style.display = 'none';
+    }
+  });
+  // Tap-to-pin on mobile (click toggles pin)
+  obsPanel.addEventListener('click', (e) => {
+    const target = (e.target as HTMLElement).closest('[data-inspect-key]') as HTMLElement | null;
+    if (!target) return;
+    if (inspectBox.dataset.pinned === target.dataset.inspectKey) {
+      inspectBox.dataset.pinned = '';
+      inspectBox.style.display = 'none';
+    } else {
+      inspectBox.dataset.pinned = target.dataset.inspectKey ?? '';
+      showInspectBox(target, inspectBox, e);
+    }
+  });
+
+  function showInspectBox(target: HTMLElement, box: HTMLElement, e: MouseEvent) {
+    const key = target.dataset.inspectKey ?? '';
+    const inspectData = getInspectData(key);
+    if (!inspectData) { box.style.display = 'none'; return; }
+    box.innerHTML = `
+      <div style="color:#f96;font-size:10px;font-weight:bold;margin-bottom:4px;">${key}</div>
+      <div style="margin-bottom:3px;"><span style="color:#888;">SOURCE</span><br><span style="color:#ccc;">${inspectData.api}</span></div>
+      <div style="margin-bottom:3px;"><span style="color:#888;">ACTION</span><br><span style="color:#ccc;">${inspectData.action}</span></div>
+      <div><span style="color:#888;">FLOWS INTO</span><br><span style="color:#ccc;">${inspectData.flowsInto}</span></div>
+    `;
+    // Position to the right of the target, clamped to viewport
+    const rect = target.getBoundingClientRect();
+    let left = rect.right + 8;
+    let top = rect.top;
+    if (left + 320 > window.innerWidth) left = rect.left - 328;
+    if (top + 100 > window.innerHeight) top = window.innerHeight - 110;
+    box.style.left = left + 'px';
+    box.style.top = top + 'px';
+    box.style.display = '';
+  }
 
   // O key toggles the Lens
   window.addEventListener('keydown', (e) => {
@@ -560,7 +618,7 @@ async function boot() {
     if (changed.length) worldCore.bumpRebakes(chunks.rebakeTiles(changed));
   }
 
-  // N2a: Lens update — rebuilds all 8 sections
+  // N2a: Lens update — rebuilds all 7 sections with inspect data attributes
   function updateObservatory() {
     const body = document.getElementById('nw-lens-body');
     if (!body) return;
@@ -569,15 +627,17 @@ async function boot() {
     const stability = net.getStability();
     const profile = (net as any).computeRealmProfile?.() ?? { median: s.rtt, variance: s.jitter * s.jitter };
 
+    const attr = (key: string) => `data-inspect-key="${key}"`;
+
     let html = '';
 
     // ── 1. Connection ──
     html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
     html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">CONNECTION</div>';
     html += `<div style="display:flex;gap:8px;">`;
-    html += `<span style="color:#f96;">RTT <b>${s.rtt.toFixed(0)}</b>ms</span>`;
-    html += `<span style="color:#6cf;">DL <b>${s.downlink.toFixed(1)}</b>Mbps</span>`;
-    html += `<span style="color:#fc6;">Jit <b>${s.jitter.toFixed(1)}</b>ms</span>`;
+    html += `<span ${attr('connection-rtt')} style="color:#f96;cursor:help;">RTT <b>${s.rtt.toFixed(0)}</b>ms</span>`;
+    html += `<span ${attr('connection-dl')} style="color:#6cf;cursor:help;">DL <b>${s.downlink.toFixed(1)}</b>Mbps</span>`;
+    html += `<span ${attr('connection-jitter')} style="color:#fc6;cursor:help;">Jit <b>${s.jitter.toFixed(1)}</b>ms</span>`;
     html += `</div>`;
     html += `<div style="font-size:8px;color:#556;margin-top:1px;">`;
     html += `RTT quantized to 25 ms by browser · DL capped at 10 Mbps`;
@@ -588,17 +648,15 @@ async function boot() {
     // ── 2. Realm profile ──
     html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
     html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">REALM PROFILE</div>';
-    html += `<div>echo median ${profile.median.toFixed(0)}ms · variance ${(profile.variance).toFixed(0)} → <b style="color:${biome.hex}">${biome.name}</b></div>`;
+    html += `<div ${attr('realm-profile')} style="cursor:help;">echo median ${profile.median.toFixed(0)}ms · variance ${(profile.variance).toFixed(0)} → <b style="color:${biome.hex}">${biome.name}</b></div>`;
     html += `<div style="margin-top:2px;height:3px;background:#222;border-radius:2px;overflow:hidden;">`;
     html += `<div style="height:100%;width:${Math.round(stability*100)}%;background:${biome.hex};transition:width 0.5s;"></div></div>`;
-    html += `<div style="font-size:9px;color:#666;">Stability ${Math.round(stability*100)}%</div></div>`;
+    html += `<div ${attr('realm-stability')} style="font-size:9px;color:#666;cursor:help;">Stability ${Math.round(stability*100)}%</div></div>`;
 
     // ── 3. Routes ──
     html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
     html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">ROUTES</div>';
-    // Own origin row
-    html += `<div style="font-size:9px;"><b>this origin</b> DNS ${s.pageDnsTime.toFixed(0)}ms · TCP — · TLS ${s.pageTlsTime.toFixed(0)}ms · TTFB ${s.pageTtfb.toFixed(0)}ms</div>`;
-    // Per-beacon rows
+    html += `<div ${attr('routes-origin')} style="font-size:9px;cursor:help;"><b>this origin</b> DNS ${s.pageDnsTime.toFixed(0)}ms · TCP — · TLS ${s.pageTlsTime.toFixed(0)}ms · TTFB ${s.pageTtfb.toFixed(0)}ms</div>`;
     const probes = s.endpointProbes ?? [];
     const seen = new Set<string>();
     for (const p of probes) {
@@ -608,7 +666,7 @@ async function boot() {
       const best = route?.length ? Math.min(...route).toFixed(0) : last;
       const med = route?.length ? [...route].sort((a,b)=>a-b)[Math.floor(route.length/2)].toFixed(0) : last;
       const warm = (net as any).warmedRoutes?.has(p.host ?? p.label) ? '🔥' : '';
-      html += `<div style="font-size:9px;">${warm} ${p.label} · ${p.detail ?? ''} · last ${last}ms · best ${best}ms · med ${med}ms · n=${route?.length ?? 0}</div>`;
+      html += `<div ${attr(p.label)} style="font-size:9px;cursor:help;">${warm} ${p.label} · ${p.detail ?? ''} · last ${last}ms · best ${best}ms · med ${med}ms · n=${route?.length ?? 0}</div>`;
     }
     if (!probes.length) html += '<div style="font-size:9px;color:#555;">No beacons probed yet — attack to discover routes</div>';
     html += '</div>';
@@ -617,11 +675,11 @@ async function boot() {
     html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
     html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">IDENTITY</div>';
     const idRevealed = (net as any).identityFetched;
-    html += `<div style="font-size:9px;">IP: ${idRevealed && s.publicIp ? s.publicIp : '— unrevealed (explore to reveal)'}</div>`;
-    html += `<div style="font-size:9px;">ISP: ${idRevealed && s.isp ? s.isp : '— unrevealed (explore to reveal)'}</div>`;
+    html += `<div ${attr('identity-ip')} style="font-size:9px;cursor:help;">IP: ${idRevealed && s.publicIp ? s.publicIp : '— unrevealed (explore to reveal)'}</div>`;
+    html += `<div ${attr('identity-isp')} style="font-size:9px;cursor:help;">ISP: ${idRevealed && s.isp ? s.isp : '— unrevealed (explore to reveal)'}</div>`;
     html += `<div style="font-size:9px;">City: ${idRevealed && s.city ? s.city : '— unrevealed (explore to reveal)'} · Country: ${idRevealed && s.country ? s.country : '—'}</div>`;
     html += `<div style="font-size:9px;">ASN: ${idRevealed && s.asn ? s.asn : '— unrevealed (explore to reveal)'}</div>`;
-    html += `<div style="font-size:9px;">CF colo: ${s.colo || '—'} · warp: ${s.warp ? 'yes' : 'no'}</div>`;
+    html += `<div ${attr('identity-colo')} style="font-size:9px;cursor:help;">CF colo: ${s.colo || '—'} · warp: ${s.warp ? 'yes' : 'no'}</div>`;
     html += `<div style="font-size:9px;color:#887;">local gateway — not observable from a browser</div>`;
     html += '</div>';
 
@@ -630,12 +688,11 @@ async function boot() {
     html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">VESSEL</div>';
     const ua = navigator.userAgent;
     const brand = /Edge|Chrome|Firefox|Safari/.exec(ua)?.[0] ?? '—';
-    html += `<div style="font-size:9px;">UA: ${brand} · cores: ${s.cpuCores} · RAM: ${s.deviceMemory}GB</div>`;
-    html += `<div style="font-size:9px;">Screen: ${screen.width}×${screen.height} @${devicePixelRatio}x · lang: ${navigator.language} · tz: ${Intl.DateTimeFormat().resolvedOptions().timeZone}</div>`;
-    // GPU: try WebGL renderer info
+    html += `<div ${attr('vessel-ua')} style="font-size:9px;cursor:help;">UA: ${brand} · cores: ${s.cpuCores} · RAM: ${s.deviceMemory}GB</div>`;
+    html += `<div ${attr('vessel-screen')} style="font-size:9px;cursor:help;">Screen: ${screen.width}×${screen.height} @${devicePixelRatio}x · lang: ${navigator.language} · tz: ${Intl.DateTimeFormat().resolvedOptions().timeZone}</div>`;
     const gl = document.createElement('canvas').getContext('webgl2') || document.createElement('canvas').getContext('webgl');
     const gpu = (gl as any)?.getParameter?.(gl?.RENDERER) ?? '—';
-    html += `<div style="font-size:9px;">GPU: ${gpu}</div>`;
+    html += `<div ${attr('vessel-gpu')} style="font-size:9px;cursor:help;">GPU: ${gpu}</div>`;
     html += '</div>';
 
     // ── 6. Threads (decoder ring) ──
@@ -645,9 +702,8 @@ async function boot() {
     for (const gm of NET_GAME_MAP) {
       const raw = net.get(gm.netKey);
       const val = Math.max(gm.min, Math.min(gm.max, gm.transform(raw, gmCtx)));
-      html += `<div style="font-size:9px;">${gm.label} ×${val.toFixed(2)} ← ${gm.netKey} ${raw.toFixed(1)} (clamp ${gm.min}–${gm.max})</div>`;
+      html += `<div ${attr(gm.target)} style="font-size:9px;cursor:help;">${gm.label} ×${val.toFixed(2)} ← ${gm.netKey} ${raw.toFixed(1)} (clamp ${gm.min}–${gm.max})</div>`;
     }
-    // also show realm row
     html += `<div style="font-size:9px;">Realm ← ${biome.name} (${biome.id})</div>`;
     html += '</div>';
 
@@ -661,7 +717,7 @@ async function boot() {
       for (const e of feedEntries) {
         const t = Math.floor(e.t);
         const ts = `${String((t/60)|0).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
-        html += `<div style="font-size:8px;color:#888;">[${ts}] ${e.kind} ${e.msg}</div>`;
+        html += `<div ${attr('feed-entry')} style="font-size:8px;color:#888;cursor:help;">[${ts}] ${e.kind} ${e.msg}</div>`;
       }
     }
     html += '</div>';
@@ -711,6 +767,29 @@ async function boot() {
 }
 
 // ---- helpers ----
+
+/** Resolve inspect metadata for a Lens row key: metric key, beacon label, or section id. */
+function getInspectData(key: string): NetInspect | null {
+  // 1. Check NET_METRICS rows (by key or label)
+  const metric = NET_METRICS.find(m => m.key === key || m.label === key);
+  if (metric?.inspect) return metric.inspect;
+  // 2. Check beacon targets (by label)
+  if (BEACON_INSPECT[key]) return BEACON_INSPECT[key];
+  // 3. Check static section table
+  if (LENS_SECTION_INSPECT[key]) return LENS_SECTION_INSPECT[key];
+  // 4. Check NET_GAME_MAP rows (by target)
+  const gm = NET_GAME_MAP.find(m => m.target === key);
+  if (gm) {
+    const srcMetric = NET_METRICS.find(m => m.key === gm.netKey);
+    return {
+      api: srcMetric?.inspect?.api ?? `Game mapping: ${gm.netKey} → ${gm.label}`,
+      action: `always active — applies ${gm.label.toLowerCase()} modifier`,
+      flowsInto: `${gm.target} (clamp ${gm.min}–${gm.max})`,
+    };
+  }
+  return null;
+}
+
 function formatUptime(ms: number): string {
   const s = Math.floor(ms / 1000);
   const h = Math.floor(s / 3600);
