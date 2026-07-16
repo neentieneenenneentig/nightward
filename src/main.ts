@@ -357,6 +357,11 @@ async function boot() {
     setTimeout(() => regression.runAll((window as any).__nw), 500);
   }
 
+  // D2: set initial clock phase to real time-of-day once; game then runs at
+  // its own speed — no per-tick nudge toward wall clock.
+  const cy = CFG.time.daySec + CFG.time.nightSec;
+  state.clock = net.snap.timeOfDay * cy;
+
   stage.app.ticker.add((tk) => {
     frames++;
     const frameMs = Math.min(tk.deltaMS, 250); // clamp after tab-sleep
@@ -370,29 +375,6 @@ async function boot() {
 
   function sim(dt: number) {
     if (!state.gameOver) state.clock += dt;
-
-    // real clock day/night sync — smoothly nudge the game clock toward real time
-    const realFrac = net.get('timeOfDay');
-    if (realFrac > 0) {
-      const cy = CFG.time.daySec + CFG.time.nightSec;
-      const gameFrac = ((state.clock % cy) + cy) % cy / cy; // always positive fraction
-      const rawDiff = realFrac - gameFrac;
-      // snap on large differences (first tick, DST, timezone change)
-      if (Math.abs(rawDiff) > 0.45) {
-        // jump to real time within the current cycle
-        const cycleStart = Math.floor(Math.max(0, state.clock) / cy) * cy;
-        state.clock = cycleStart + realFrac * cy;
-        if (state.clock < 0) state.clock += cy;
-      } else {
-        // smooth: nudge by a small fraction of the gap per sim tick
-        let nudgediff = rawDiff;
-        if (nudgediff > 0.5) nudgediff -= 1.0;
-        else if (nudgediff < -0.5) nudgediff += 1.0;
-        state.clock += nudgediff * cy * 0.005;
-      }
-    }
-    // safety: clock must never go negative
-    if (state.clock < 0) state.clock = 0;
 
     // sim speed = pulse time → lag compensation (high pulse = slow sim)
     const simMul = net.getGameValue('simSpeed');
