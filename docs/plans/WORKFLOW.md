@@ -56,6 +56,21 @@ Formalized workflow so each milestone is isolated, verifiable, and mergeable on 
 - Dev test hook: `window.__nw` — `.state`, `.ctx`, `.sys.*`, `.step(n, dt)` (advance sim deterministically),
   `.craft(id)`. Live balance: `window.NW.CFG`. Debug hotkeys: `.` `n` `g` `m` `h` `j` `y`.
 
+## Definition of done (mandatory — P1 rule)
+
+An implementation session may not declare a milestone complete without:
+
+1. **Static trio green:** `npm run typecheck` clean, `npm run build` green, `cargo test` all pass.
+2. **Full Gauntlet green at `?seed=1234&test`** with the console output pasted into the session
+   record — all existing tests AND all behavioral tests pass.
+3. **The brief's acceptance checklist run live with evidence** — every item exercised and output
+   captured (harness gotchas apply: verify via `window.__nw`, not screenshots).
+4. **Tag pushed** to the remote.
+
+**Known gaps are not allowed.** If something cannot be finished, stop and ask the user for explicit
+sign-off BEFORE merge — not disclosure after. "I'll fix it in the next PR" is not a valid merge
+strategy.
+
 ## Debugging & troubleshooting
 
 ### The preview harness
