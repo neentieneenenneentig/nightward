@@ -571,9 +571,19 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 >    (Kuwahara-style oil-paint pass in `postprocess.ts` + canvas grain/LUT) — lives under
 >    G1's prototype-first gate: 2–3 baked samples for the user's verdict BEFORE any pipeline.
 >
-> **Queue now: P1 (platform hardening, `docs/plans/P1-platform-hardening.md`, ACTIVE) →
-> content-batch design session with the user → G1-P painterly prototype → N2b/G1-remainder
-> as they slot in.**
+> **P1 SHIPPED + VERIFIED (2026-07-16, `v0.18-p1-platform`):** N2a gaps closed (cold-route
+> inversion, real moveSpeed/xpRate mappings, Lens inspect mode, styled feed), D5 lightning
+> bands live (per-swing seeded damage roll 0.30–1.50), the Gauntlet (34 behavioral tests) +
+> definition-of-done rule in WORKFLOW.md. One post-ship catch: the first `testMobBirthStats`
+> was a tautology — rewritten same day to exercise the real birth path (`4915909`).
+>
+> **Queue now: Batch C "The Character" — taste verdicts IN (quiz 2026-07-16, see
+> `C-batch-quiz.md`): fixed signature echoes · Loom points from nights survived ·
+> all 4 keystones v1 · waystone loss = full collapse-decay · Cinder Trail ignites the
+> REAL fire CA day one · C1 first. Order: C1 echoes (brief `C1-echoes.md`, built
+> overnight on branch `c1-echoes`, awaiting user sign-off before merge) → C2 waystones
+> → C3 loom → C4 armory → G1-P painterly prototype verdict → C5 buildings rework.
+> N2b/G1-remainder slot in where they fit.**
 
 ---
 
