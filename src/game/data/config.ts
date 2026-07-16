@@ -12,8 +12,8 @@ export const CFG = {
     meleeRange: 40,          // px
     baseDmg: 4,              // fists; weapons add weaponDmg on top
     deathGoldLossPct: 0.25,  // fraction of gold dropped on death
-    // roguelike death: you don't wake at the hall — the dream scatters you far
-    // out into the massive world and you must find your way home.
+    // roguelike death: you don't respawn at the Node Core — the network scatters
+    // you far out into the massive world and you must find your way home.
     respawnMinTiles: 40,
     respawnMaxTiles: 110,
     startingItems: [
@@ -40,6 +40,7 @@ export const CFG = {
     attackSpeedPerSoulLevel: 0.01, // envelope × 1/(1 + weaponSoulLevel × k)
     attackSpeedFloor: 0.5,   // ...but never faster than this fraction of base
     telegraphSlackPx: 8,     // grace distance when an enemy's telegraphed hit resolves
+    dmgBonusPerLevel: 5,     // +1 base dmg per N combat levels (M2.2: combat skill now matters)
   },
 
   // Soul Gear: every equip slot is a soul-bound tool that levels on its own
@@ -68,7 +69,7 @@ export const CFG = {
     transitionSec: 18,       // how long dusk/dawn blends take
   },
 
-  // the dream-world: each region is a lord's imagined landscape (see data/domains.ts)
+  // the network world: each region is shaped by a Network Lord (see data/domains.ts)
   domain: {
     moodStrength: 0.18,      // how strongly a domain's tint colors the ambient light
     announce: true,          // toast + chime when you cross into a new domain
@@ -87,7 +88,7 @@ export const CFG = {
     spawnRing: 1,            // which domain ring they start in (distance from home)
     roamSpeed: 14,           // px/s while wandering their domain
     huntSpeed: 30,           // px/s once they've caught your scent
-    wakeTerritory: 8,        // territory score that rouses them toward you
+    wakeTerritory: 8,        // territory score that triggers them toward you
     convergePerTerritory: 0.6, // + hunt speed per territory point (greed pulls them in)
     provokedSec: 25,         // landing a hit forces hunting=true for at least this long
     warnTiles: 22,           // proximity that triggers the danger warning
@@ -95,8 +96,10 @@ export const CFG = {
     hpBase: 700, hpPerLevel: 1.5, hpPerTerritory: 12,
     dmgBase: 20, dmgPerLevel: 1.35,
     goldOnKill: [120, 240] as [number, number],
-    reviveSec: 220,          // slain lords re-form deeper in the dream, stronger
+    reviveSec: 220,          // slain lords re-form deeper in the network, stronger
     levelPerRevive: 1,
+    // M3: gold triggers boss aggression — the network senses your wealth
+    wakeGold: 350,           // gold threshold that rouses bosses regardless of territory
   },
 
   audio: {
@@ -132,6 +135,11 @@ export const CFG = {
     dmgGrowth: 1.15,         // per-night multiplier on enemy damage (danger pass: 1.12→1.15)
     aggroRangePx: 170,       // enemies switch to the player inside this
     dawnFlee: true,          // survivors melt away at sunrise
+    // M3: gold = greed = danger. The network detects your cache and sends heavier waves.
+    goldThreshold: 200,      // gold at which horde size starts scaling up
+    goldMultPerThreshold: 0.35, // extra horde multiplier per goldThreshold gold above threshold
+    bossAtGold: 600,         // gold threshold where world-boss types can appear in night waves
+    bossGoldWeight: 0.06,    // chance weight for boss types in horde when gold >= bossAtGold
   },
 
   // daytime prey: sparse roamers that pop up around the PLAYER (never the hall)
@@ -142,7 +150,7 @@ export const CFG = {
     spawnIntervalSec: 9,     // trickle rate while under the cap
     minRadiusTiles: 8,       // spawn ring around the player
     maxRadiusTiles: 16,
-    despawnTiles: 28,        // left this far behind, they melt back into the dream
+    despawnTiles: 28,        // left this far behind, they despawn from the grid
   },
 
   ui: {

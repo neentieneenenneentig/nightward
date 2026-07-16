@@ -1,6 +1,6 @@
 // Pixi v8 setup. `preference: 'webgpu'` uses the WebGPU backend where the
 // browser supports it and silently falls back to WebGL elsewhere.
-import { Application, Container, TextureSource } from 'pixi.js';
+import { Application, Container, TextureSource, Texture, Sprite, Rectangle } from 'pixi.js';
 
 export interface Stage {
   app: Application;
@@ -8,6 +8,26 @@ export interface Stage {
   world: Container;
   ground: Container;
   entities: Container;
+  /** painting-style grain overlay (full screen, multiply-blend, low opacity) */
+  grain: Sprite;
+}
+
+/** Generate a noise-grain canvas texture — static, seeded, tilable 128×128. */
+function makeGrainTexture(): Texture {
+  const S = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const ctx = c.getContext('2d')!;
+  const img = ctx.createImageData(S, S);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = 128 + ((Math.random() * 64) | 0); // subtle mid-grey noise
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+    img.data[i + 3] = 18; // very low opacity per-pixel
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = Texture.from(c);
+  tex.source.scaleMode = 'nearest';
+  return tex;
 }
 
 export async function createRenderer(mount: HTMLElement): Promise<Stage> {
@@ -34,7 +54,23 @@ export async function createRenderer(mount: HTMLElement): Promise<Stage> {
   world.addChild(entities);
   app.stage.addChild(world);
 
-  return { app, world, ground, entities };
+  // painting-style grain overlay: tiled across the screen, multiply-blended, very subtle
+  const grain = new Sprite(makeGrainTexture());
+  grain.blendMode = 'multiply';
+  grain.alpha = 0.35;
+  grain.zIndex = 1000;
+  app.stage.addChild(grain);
+
+  // keep grain covering the full screen
+  const updateGrain = () => {
+    const w = app.screen.width, h = app.screen.height;
+    grain.texture.source.style.addressMode = 'repeat';
+    grain.setSize(w, h);
+  };
+  app.renderer.on('resize', updateGrain);
+  updateGrain();
+
+  return { app, world, ground, entities, grain };
 }
 
 /** Integer zoom that shows roughly 11+ tiles across the smaller screen axis. */

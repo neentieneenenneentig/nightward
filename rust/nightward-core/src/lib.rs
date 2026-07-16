@@ -128,6 +128,9 @@ pub struct Core {
     fire_params: [f32; 6],               // [tick_sec, spread_base, wind_strength, wet_extinguish, wet_diffuse_rate, wet_spread_decay]
     fire_accum: f32,                     // tick(dt) accumulator — the core paces its own 10Hz
     fire_tick_n: u32,                    // monotonic tick counter — the deterministic RNG's time axis
+
+    // ---- N1: network params (uploaded from TS, not yet used by sim — N3) ----
+    net_params: Vec<f32>,                // 13-float snapshot, see set_network_params + accessors
 }
 
 #[wasm_bindgen]
@@ -164,6 +167,10 @@ impl Core {
             fire_params: [0.1, 0.35, 0.5, 0.55, 0.15, 0.85],
             fire_accum: 0.0,
             fire_tick_n: 0,
+            net_params: vec![
+                50.0, 10.0, 5.0, 1.0, 0.0, 1.0, 0.0,  // rtt, downlink, jitter, effectiveTier, connectionRealm, online, timeOfDay
+                4.0, 4.0, 30.0, 10.0, 20.0, 50.0,       // cpuCores, deviceMemory, endpointLatency, pageDnsTime, pageTlsTime, pageTtfb
+            ],
         }
     }
 
@@ -363,6 +370,34 @@ impl Core {
             self.fire_params[i] = p[i];
         }
     }
+
+    // ---- N1: network params upload + accessors -------------------------------
+
+    /// Upload a snapshot of the browser's network state. Layout (13 f32s):
+    /// [0]=rtt, [1]=downlink, [2]=jitter, [3]=effectiveTier, [4]=connectionRealm,
+    /// [5]=online, [6]=timeOfDay, [7]=cpuCores, [8]=deviceMemory,
+    /// [9]=endpointLatency, [10]=pageDnsTime, [11]=pageTlsTime, [12]=pageTtfb.
+    /// Shorter slices are tolerated — missing fields keep their previous value.
+    pub fn set_network_params(&mut self, p: &[f32]) {
+        self.net_params = p.to_vec();
+    }
+
+    fn net_at(&self, idx: usize, fallback: f32) -> f32 {
+        self.net_params.get(idx).copied().unwrap_or(fallback)
+    }
+    pub fn net_rtt(&self) -> f32 { self.net_at(0, 50.0) }
+    pub fn net_downlink(&self) -> f32 { self.net_at(1, 10.0) }
+    pub fn net_jitter(&self) -> f32 { self.net_at(2, 5.0) }
+    pub fn net_effective_tier(&self) -> f32 { self.net_at(3, 1.0) }
+    pub fn net_connection_realm(&self) -> f32 { self.net_at(4, 0.0) }
+    pub fn net_online(&self) -> f32 { self.net_at(5, 1.0) }
+    pub fn net_time_of_day(&self) -> f32 { self.net_at(6, 0.0) }
+    pub fn net_cpu_cores(&self) -> f32 { self.net_at(7, 4.0) }
+    pub fn net_device_memory(&self) -> f32 { self.net_at(8, 4.0) }
+    pub fn net_endpoint_latency(&self) -> f32 { self.net_at(9, 30.0) }
+    pub fn net_page_dns_time(&self) -> f32 { self.net_at(10, 10.0) }
+    pub fn net_page_tls_time(&self) -> f32 { self.net_at(11, 20.0) }
+    pub fn net_page_ttfb(&self) -> f32 { self.net_at(12, 50.0) }
 
     /// Player-deliberate ignition (torch/firemaking). Only active chunks can catch (a fire that
     /// can't be simulated can't exist). Fails if already burning, out of fuel, or too wet.
@@ -869,5 +904,43 @@ mod tests {
         m[2 * 7 + 6] = 0.42; // material id 2, wetness offset 6
         c.set_materials(&m, 7);
         assert_eq!(c.mat_wetness(2), 0.42);
+    }
+
+    // ---- N1: network params ------------------------------------------------
+
+    #[test]
+    fn network_params_default_on_fresh_core() {
+        let core = Core::new(12345, 4096);
+        // Before any upload, accessors return the defaults set in Core::new
+        assert_eq!(core.net_rtt(), 50.0);
+        assert_eq!(core.net_downlink(), 10.0);
+        assert_eq!(core.net_online(), 1.0);
+        assert_eq!(core.net_time_of_day(), 0.0);
+    }
+
+    #[test]
+    fn network_params_upload_and_readback() {
+        let mut core = Core::new(12345, 4096);
+        let params: Vec<f32> = vec![
+            45.0, 12.5, 3.2, 1.0, 0.0, 1.0, 0.5,
+            8.0, 16.0, 28.0, 5.0, 15.0, 42.0,
+        ];
+        core.set_network_params(&params);
+        assert_eq!(core.net_rtt(), 45.0);
+        assert_eq!(core.net_downlink(), 12.5);
+        assert_eq!(core.net_jitter(), 3.2);
+        assert_eq!(core.net_time_of_day(), 0.5);
+        assert_eq!(core.net_page_ttfb(), 42.0);
+    }
+
+    #[test]
+    fn network_params_short_slice_uses_fallbacks() {
+        let mut core = Core::new(12345, 4096);
+        // Simulate old TS client sending only 5 params (future-proofing)
+        core.set_network_params(&[10.0, 20.0, 30.0, 1.0, 0.0]);
+        assert_eq!(core.net_rtt(), 10.0);            // index 0 — present
+        assert_eq!(core.net_downlink(), 20.0);        // index 1 — present
+        assert_eq!(core.net_time_of_day(), 0.0);      // index 6 — missing, uses default 0.0
+        assert_eq!(core.net_page_ttfb(), 50.0);       // index 12 — missing, uses default 50.0
     }
 }

@@ -63,12 +63,36 @@ export const MATERIALS: MaterialDef[] = [
     passable: true, speedMult: 0.9, buildable: false, flammable: 0.1, fuel: 1, burnsTo: 9, heightClass: 1, wetness: 0.15 },
   { name: 'Shallows', art: { ramp: ramp('#2565a0', '#3579b4', '#4a8ec9'), detail: 'waves' },
     passable: true, speedMult: 0.6, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 0, wetness: 1.0 },
+  // ---- 16–23: realm-warped materials ----
+  { name: 'Fading Zone', art: { ramp: ramp('#cc00cc', '#dd33dd', '#ee66ee'), detail: 'speckle',
+    accents: ramp('#ff00ff', '#ff66ff') },
+    passable: true, speedMult: 0.5, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0 },
+  { name: 'Flux Crystal', art: { ramp: ramp('#00cccc', '#33dddd', '#66eeee'), detail: 'sparkle',
+    accents: ramp('#00ffff', '#ffffff') },
+    passable: true, speedMult: 0.3, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0 },
+  { name: 'Verdant Bloom', art: { ramp: ramp('#cc9900', '#ddb833', '#eecc66'), detail: 'flowers',
+    accents: ramp('#ffd700', '#ffec80') },
+    passable: true, speedMult: 1.2, buildable: true, flammable: 0.1, fuel: 4, burnsTo: 9, heightClass: 1, wetness: 0.05 },
+  { name: 'Dead Zone', art: { ramp: ramp('#222222', '#333333', '#444444'), detail: 'speckle' },
+    passable: true, speedMult: 1.0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0 },
+  { name: 'Scorch Wall', art: { ramp: ramp('#cc4400', '#dd5522', '#ee7744'), detail: 'pebbles',
+    accents: ramp('#ff6600', '#ff9944') },
+    passable: false, speedMult: 0, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 2, wetness: 0 },
+  { name: 'Azure Vein', art: { ramp: ramp('#5588cc', '#77aadd', '#99ccff'), detail: 'sparkle' },
+    passable: true, speedMult: 1.0, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0.05 },
+  { name: 'Warp Rift', art: { ramp: ramp('#7722dd', '#9944ff', '#bb77ff'), detail: 'cracks',
+    accents: ramp('#aa44ff', '#dd99ff') },
+    passable: true, speedMult: 1.0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0 },
+  { name: 'Ley Bloom', art: { ramp: ramp('#00cc44', '#33dd66', '#66ee88'), detail: 'sparkle',
+    accents: ramp('#00ff55', '#88ffaa') },
+    passable: true, speedMult: 1.3, buildable: true, flammable: 0.05, fuel: 3, burnsTo: 9, heightClass: 1, wetness: 0.02 },
 ];
 
 /** Material ids by name — index into MATERIALS. */
 export const M = {
   DEEP: 0, WATER: 1, SAND: 2, GRASS: 3, MEADOW: 4, FOREST: 5, HILL: 6, MOUNTAIN: 7,
   SNOW: 8, DIRT: 9, ASH: 10, ICE: 11, MUD: 12, GRAVEL: 13, TILLED: 14, SHALLOW: 15,
+  PKT_LOSS: 16, LATENCY: 17, BANDWIDTH: 18, DEADZONE: 19, FIREWALL: 20, DNSCACHE: 21, ROUTING: 22, SIGNAL: 23,
 } as const;
 
 /** floats per material in the packed table (see layout below). */

@@ -127,6 +127,11 @@ export class WorldCore {
   /** Re-pack CFG.fire's sim-tuning subset and re-upload — live console tinkering. */
   pushFireParams() { this.core.set_fire_params(packFireParams()); }
 
+  // ---- N1: network ----
+
+  /** Upload the current network snapshot into the core (Float32Array, 13 floats). */
+  pushNetworkParams(packed: Float32Array) { this.core.set_network_params(packed); }
+
   /** Console/test convenience — drives the SAME underlying wasm Core instance main.ts's
    * render() already ticks via the raw `core` reference, so this is not a second, competing
    * tick source; it's just a reachable name for scripted test sequences. */

@@ -20,33 +20,33 @@ const s = (id: string, n: number): Stack => ({ id, n });
 
 export const BUILDINGS: BuildingDef[] = [
   {
-    id: 'hall', name: 'Racket Hall',
-    desc: 'The heart of the operation. Lose it and the racket is finished.',
+    id: 'hall', name: 'Node Core',
+    desc: 'The heart of your connection. Lose it and the network goes dark.',
     hp: 600, cost: [s('log', 10), s('stone', 5)],
     pop: 0, territory: 12, unique: true, art: 'hall',
   },
   {
-    id: 'hut', name: 'Hut',
-    desc: '+2 population. More cronies, more tribute.',
+    id: 'hut', name: 'Signal Relay',
+    desc: '+2 population. More nodes, more bandwidth.',
     hp: 140, cost: [s('plank', 6), s('stone', 4)],
     pop: 2, territory: 4, unique: false, art: 'hut',
   },
   {
-    id: 'wall', name: 'Palisade',
-    desc: 'Blocks the hungry things. They will chew through it eventually.',
+    id: 'wall', name: 'Firewall',
+    desc: 'Blocks hostile traffic. They will try to breach it.',
     hp: 260, cost: [s('log', 2), s('stone', 1)],
     pop: 0, territory: 0, unique: false, dragPaint: true, art: 'wall',
   },
   {
     id: 'tower', name: 'Watchtower',
-    desc: 'Shoots the nearest horror. Your best friend at 3am.',
+    desc: 'Auto-engages threats at range. Your best defense at 3am.',
     hp: 180, cost: [s('plank', 6), s('stone', 6), s('copper_bar', 1)],
     pop: 0, territory: 2, unique: false,
     tower: { rangeTiles: 5.5, dmg: 7, cooldown: 0.8 }, art: 'tower',
   },
   {
-    id: 'campfire', name: 'Campfire',
-    desc: 'Warmth, light, and a ward against the dark. Feeds on whatever tinder catches beneath it.',
+    id: 'campfire', name: 'Beacon',
+    desc: 'A stable signal in the dark. Keeps the local realm from degrading.',
     hp: 60, cost: [s('log', 3), s('stone', 2)],
     pop: 0, territory: 0, unique: false, art: 'campfire',
   },

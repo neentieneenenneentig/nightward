@@ -1,8 +1,8 @@
 // World bosses = the domain lords made flesh. A handful of them stalk the
 // overworld at once. Left alone they drift around their home domain; once your
-// racket grows loud enough (territory) — or night falls — they turn and
-// converge on your hall, phasing across any terrain like the dream-things they
-// are. Slain, they re-form deeper in the world, stronger (Diablo-GR style).
+// network grows loud enough (territory) — or night falls — they turn and
+// converge on your hall, phasing across any terrain like living shadows.
+// Slain, they re-form deeper in the network, stronger (Diablo-GR style).
 import { CFG } from '../data/config';
 import { ENEMIES, type EnemyDef } from '../data/enemies';
 import { ITEMS } from '../data/items';
@@ -94,7 +94,7 @@ export class WorldBossSystem {
     b.reviveAt = 0; b.hunting = false; b.provokedUntil = 0; b.atkT = 0; b.telegraphT = 0;
     this.warned.delete(b.uid);
     this.ctx.views.addBoss(b);
-    this.ctx.toast(`${b.name} re-forms in the deep dream, stronger.`, 'bad');
+    this.ctx.toast(`${b.name} re-forms in the deep network, stronger.`, 'bad');
     this.ctx.log?.push('boss', `${b.name} re-forms, stronger (level ${b.level})`, this.ctx.state.clock);
   }
 
@@ -104,7 +104,8 @@ export class WorldBossSystem {
     const p = state.player;
     const hallB = hall(state);
     const terr = territoryScore(state);
-    const territoryRoused = terr >= CFG.worldBoss.wakeTerritory || this.ctx.isNight();
+    const goldRoused = state.player.gold >= CFG.worldBoss.wakeGold;
+    const territoryRoused = terr >= CFG.worldBoss.wakeTerritory || this.ctx.isNight() || goldRoused;
 
     for (const b of state.worldBosses as WorldBoss[]) {
       if (b.reviveAt > 0) { if (state.clock >= b.reviveAt) this.revive(b); continue; }
@@ -165,7 +166,7 @@ export class WorldBossSystem {
         const ux = (tx - b.x) / dist, uy = (ty - b.y) / dist;
         const terrain = this.ctx.world.speedAt(Math.floor(b.x / TILE), Math.floor(b.y / TILE));
         const nx = b.x + ux * speed * dt * terrain, ny = b.y + uy * speed * dt * terrain;
-        // bosses are big dream-things but a palisade still blocks them — chew through
+        // bosses are big data-constructs but a firewall still blocks them — chew through
         const blk = b.hunting ? this.ctx.world.buildingAt(Math.floor(nx / TILE), Math.floor((ny - 4) / TILE)) : null;
         if (blk && blk.type !== 'hall') {
           if (b.atkT <= 0) {
@@ -200,7 +201,7 @@ export class WorldBossSystem {
     const wasHunting = b.hunting;
     b.hp -= dmg;
     if (b.hp > 0) {
-      // being struck wakes it up right now, whatever territory/night says —
+      // being struck triggers it right now, whatever territory/night says —
       // it no longer just floats there taking hits obliviously
       if (fromPlayer) {
         b.provokedUntil = state.clock + CFG.worldBoss.provokedSec;
@@ -234,7 +235,7 @@ export class WorldBossSystem {
       }
     }
     Sound.play('enemyDie');
-    this.ctx.toast(`You have slain ${b.name}! The dream recoils.`, 'good');
+    this.ctx.toast(`You have slain ${b.name}! The network trembles.`, 'good');
     this.ctx.log?.push('boss', `Slain ${b.name}!`, state.clock);
   }
 }

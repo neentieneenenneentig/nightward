@@ -6,12 +6,12 @@ export interface SkillDef {
 }
 
 export const SKILLS: SkillDef[] = [
-  { id: 'woodcutting', name: 'Woodcutting', kind: 'gather' },
-  { id: 'mining',      name: 'Mining',      kind: 'gather' },
-  { id: 'foraging',    name: 'Foraging',    kind: 'gather' },
-  { id: 'crafting',    name: 'Crafting',    kind: 'craft' },
-  { id: 'smithing',    name: 'Smithing',    kind: 'craft' },
-  { id: 'alchemy',     name: 'Alchemy',     kind: 'craft' },
-  { id: 'combat',      name: 'Combat',      kind: 'combat' },
-  { id: 'firemaking',  name: 'Firemaking',  kind: 'gather' },
+  { id: 'woodcutting', name: 'Packet Harvesting', kind: 'gather' },
+  { id: 'mining',      name: 'Spectrum Mining',  kind: 'gather' },
+  { id: 'foraging',    name: 'Signal Foraging',   kind: 'gather' },
+  { id: 'crafting',    name: 'Signal Processing', kind: 'craft' },
+  { id: 'smithing',    name: 'Protocol Forging',  kind: 'craft' },
+  { id: 'alchemy',     name: 'Packet Alchemy',    kind: 'craft' },
+  { id: 'combat',      name: 'Protocol Enforcement', kind: 'combat' },
+  { id: 'firemaking',  name: 'Signal Amplification', kind: 'gather' },
 ];

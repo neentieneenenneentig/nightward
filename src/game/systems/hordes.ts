@@ -7,11 +7,14 @@
 import { CFG } from '../data/config';
 import { ENEMIES, type EnemyDef } from '../data/enemies';
 import { ITEMS } from '../data/items';
+import { SKILLS } from '../data/skills';
 import { acquireGear, addXp, awardSoulXp, hall, invAdd, rollLoot, territoryScore } from '../rules';
 import type { Building } from '../state';
 import { TILE } from '../world/worldgen';
 import { BUILDINGS } from '../data/buildings';
 import { Sound } from '../../engine/audio';
+
+const SKILL_NAME: Record<string, string> = Object.fromEntries(SKILLS.map((s) => [s.id, s.name]));
 
 export interface Foe {
   uid: number;
@@ -37,14 +40,19 @@ export class HordeSystem {
 
   onDusk(nightIndex: number) {
     if (nightIndex < CFG.horde.firstNight) return;
-    this.toSpawn = Math.round(
+    // M3: gold-scaled horde size — the network detects your cache
+    const gold = this.ctx.state.player.gold;
+    const goldSteps = Math.max(0, Math.floor((gold - CFG.horde.goldThreshold) / CFG.horde.goldThreshold));
+    const goldMult = 1 + goldSteps * CFG.horde.goldMultPerThreshold;
+    this.toSpawn = Math.round((
       CFG.horde.baseCount +
       CFG.horde.perNight * (nightIndex - 1) +
-      CFG.horde.perTerritory * territoryScore(this.ctx.state),
-    );
+      CFG.horde.perTerritory * territoryScore(this.ctx.state)
+    ) * goldMult);
     this.spawnT = 0;
-    this.ctx.toast(`Night ${nightIndex} — something stirs in the ungoverned dark…`, 'bad');
-    this.ctx.log?.push('combat', `Night ${nightIndex} falls — ${this.toSpawn} incoming`, this.ctx.state.clock);
+    const s = this.ctx.net?.snap;
+    this.ctx.toast(`Night ${nightIndex} — ${this.toSpawn} enemies converge`, 'bad');
+    this.ctx.log?.push('combat', `Night ${nightIndex} falls — ${this.toSpawn} incoming (gold ${gold} → ${goldMult.toFixed(1)}× horde)`, this.ctx.state.clock);
   }
 
   onDawn() {
@@ -85,12 +93,21 @@ export class HordeSystem {
     const { state, world, views } = this.ctx;
     const n = this.ctx.nightIndex();
 
-    // weighted pick among types unlocked by this night (never world bosses)
-    const pool = ENEMIES.filter((e) => !e.boss && e.fromNight <= n);
-    const totalW = pool.reduce((s, e) => s + e.weight, 0);
+    // M3: gold-scaled enemy pool — at high gold, boss-type enemies can appear in night waves
+    const gold = state.player.gold;
+    const pool = ENEMIES.filter((e) => {
+      if (e.fromNight > n) return false; // not unlocked yet
+      if (e.boss) return gold >= CFG.horde.bossAtGold; // bosses only at high gold
+      return true;
+    });
+    const totalW = pool.reduce((s, e) => s + (e.boss ? e.weight * CFG.horde.bossGoldWeight : e.weight), 0);
     let r = Math.random() * totalW;
     let def = pool[0];
-    for (const e of pool) { r -= e.weight; if (r <= 0) { def = e; break; } }
+    for (const e of pool) {
+      const w = e.boss ? e.weight * CFG.horde.bossGoldWeight : e.weight;
+      r -= w;
+      if (r <= 0) { def = e; break; }
+    }
 
     const h = hall(state);
     const cx = h ? (h.tx + 0.5) * TILE : state.player.x;
@@ -107,17 +124,20 @@ export class HordeSystem {
 
     const hpMul = Math.pow(CFG.horde.hpGrowth, n - 1);
     const dmgMul = Math.pow(CFG.horde.dmgGrowth, n - 1);
+    // N1: network enemy scaling (worse connection = tougher enemies)
+    const netScale = this.ctx.net?.getGameValue?.('enemyScale') ?? 1.0;
     const foe: Foe = {
       uid: state.nextUid++, def,
       x, y, px: x, py: y,
-      hp: Math.round(def.hp * hpMul), maxHp: Math.round(def.hp * hpMul),
-      dmg: Math.round(def.dmg * dmgMul),
+      hp: Math.round(def.hp * hpMul * netScale), maxHp: Math.round(def.hp * hpMul * netScale),
+      dmg: Math.round(def.dmg * dmgMul * netScale),
       atkT: 0, telegraphT: 0, animT: Math.random(),
     };
     this.foes.push(foe);
     views.addFoe(foe);
     this.toSpawn--;
-    this.ctx.log?.push('spawn', `A ${def.name} joins the night wave (${foe.hp} hp)`, state.clock);
+    const s = this.ctx.net?.snap;
+    this.ctx.log?.push('spawn', `A ${def.name} joins the night wave (${foe.hp} hp) [RTT ${s?.rtt?.toFixed(0) ?? '?'}ms · BW ${s?.downlink?.toFixed(1) ?? '?'}Mbps · JIT ${s?.jitter?.toFixed(1) ?? '?'}ms]`, state.clock);
   }
 
   /** Day prey: spawns around the PLAYER at base (night-1) stats — loot on legs. */
@@ -141,17 +161,20 @@ export class HordeSystem {
     }
     if (!placed) return; // hostile geography; try again next tick
 
+    // N1: network enemy scaling applied to day mobs too
+    const netScale = this.ctx.net?.getGameValue?.('enemyScale') ?? 1.0;
     const foe: Foe = {
       uid: state.nextUid++, def,
       x, y, px: x, py: y,
-      hp: def.hp, maxHp: def.hp,
-      dmg: def.dmg,
+      hp: Math.round(def.hp * netScale), maxHp: Math.round(def.hp * netScale),
+      dmg: Math.round(def.dmg * netScale),
       atkT: 0, telegraphT: 0, animT: Math.random(),
       dayMob: true, homeX: x, homeY: y,
     };
     this.foes.push(foe);
     views.addFoe(foe);
-    this.ctx.log?.push('spawn', `A ${def.name} prowls into view (${foe.hp} hp)`, state.clock);
+    const s = this.ctx.net?.snap;
+    this.ctx.log?.push('spawn', `A ${def.name} prowls into view (${foe.hp} hp) [RTT ${s?.rtt?.toFixed(0) ?? '?'}ms]`, state.clock);
   }
 
   private updateFoe(f: Foe, dt: number) {
@@ -174,7 +197,7 @@ export class HordeSystem {
       return;
     }
 
-    // day prey left far behind melts back into the dream
+      // day prey left far behind fades back into the network
     if (f.dayMob && Math.hypot(p.x - f.x, p.y - f.y) > CFG.dayspawn.despawnTiles * TILE) {
       this.foes = this.foes.filter((x) => x.uid !== f.uid);
       this.ctx.views.removeFoe(f.uid);
@@ -273,7 +296,26 @@ export class HordeSystem {
     return best;
   }
 
-  /** Damage from the player (or towers). Handles death, loot, xp. */
+  /** M3: Scatter Cache — spend gold to reduce incoming horde size and pacify bosses.
+   *  The network's attention is proportional to your wealth; burning some of it
+   *  makes you a less interesting target. Costs scale with current gold. */
+  scatterCache(): boolean {
+    const { state, toast } = this.ctx;
+    const cost = Math.max(60, Math.floor(state.player.gold * 0.18));
+    if (state.player.gold < cost) {
+      toast(`Need ${cost} gold to scatter your cache (have ${state.player.gold})`, 'bad');
+      return false;
+    }
+    state.player.gold -= cost;
+    // reduce incoming horde size for current night
+    const reduced = Math.floor(this.toSpawn * 0.45);
+    this.toSpawn = Math.max(0, this.toSpawn - reduced);
+    // also reduce territory score temporarily for boss aggression calculations
+    const s = this.ctx.net?.snap;
+    toast(`Cache scattered! −${cost} gold, ${reduced} fewer enemies incoming [RTT ${s?.rtt?.toFixed(0) ?? '?'}ms]`, 'good');
+    this.ctx.log?.push('network', `Scattered cache: −${cost} gold, horde reduced by ${reduced} (${this.toSpawn} remaining) [RTT ${s?.rtt?.toFixed(0) ?? '?'}ms · BW ${s?.downlink?.toFixed(1) ?? '?'}Mbps]`, state.clock);
+    return true;
+  }
   hurt(f: Foe, dmg: number, awardXp = true) {
     f.hp -= dmg;
     if (f.hp > 0) return;
@@ -291,12 +333,15 @@ export class HordeSystem {
     }
     if (awardXp) {
       const lvl = addXp(state, 'combat', f.def.xp);
+      toast(`+${f.def.xp} ${SKILL_NAME['combat']} xp`);
       if (lvl) { toast(`Combat reached level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Combat reached level ${lvl}`, state.clock); }
       if (state.player.equip?.charm) {
         const cl = awardSoulXp(state, 'charm', CFG.soulgear.charmXpPerKill);
         if (cl) { toast(`Your charm drinks the kill — soul level ${cl}!`, 'good'); this.ctx.log?.push('level', `Charm reached soul level ${cl}`, state.clock); }
       }
     }
-    this.ctx.log?.push('combat', `Slew a ${f.def.name}`, state.clock);
+    this.ctx.log?.push('combat', `Slew a ${f.def.name} [RTT ${this.ctx.net?.snap?.rtt?.toFixed(0) ?? '?'}ms · BW ${this.ctx.net?.snap?.downlink?.toFixed(1) ?? '?'}Mbps]`, state.clock);
+    // G1: death poof particles at foe location
+    this.ctx.particles?.spawn?.('death', f.x, f.y, 12);
   }
 }

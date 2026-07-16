@@ -1,56 +1,80 @@
-# NIGHTWARD (working title)
+# NIGHTWARD
 
-A browser territory-RPG: you run a protection racket that accidentally becomes a
-civilization. RuneScape/WoW-style skilling & crafting, Age-of-Empires tech ages
-with faction-flavored branches, a xianxia cultivation track for personal power —
-and at night, hordes attack from the ungoverned dark.
+**Your internet connection is the game world.**
 
-**Zero hosted assets.** Every tile, tree and character frame is procedurally
-generated at runtime from a seed — the "asset database" is generator functions +
-tiny parameter records ([src/engine/procgen/](src/engine/procgen/),
-[src/game/data/](src/game/data/)). Same seed → same world, sprites and hero.
+Live browser network metrics — RTT, jitter, bandwidth, connection type, real clock —
+drive every mechanic: terrain generation, resource flows, day/night cycle, enemy spawns,
+difficulty scaling. Two people on the same world seed get totally different experiences
+because their connections differ. Same tab, same seed, different world depending on where
+and how you're connected.
+
+Built on a Rust→WebAssembly simulation core with a 100% procedurally generated pixel-art
+renderer. Zero hosted assets, zero backend, zero persistence — the world lives exactly as
+long as your tab does.
+
+## Core loop
+
+Gather resources → craft gear → build territory → survive the night hordes.
+But every number — spawn rates, regen speed, enemy difficulty, even the day/night
+cycle — is driven by your live network conditions. Fast internet = your territory
+thrives. Jittery WiFi = chaotic combat. Switch from Ethernet to cellular = the world
+reshuffles. Toggle airplane mode = hard reset.
 
 ## Stack
 
-- **PixiJS v8** — WebGPU renderer with automatic WebGL fallback (`?gl` in the URL forces WebGL)
-- **TypeScript + Vite**
-- Fixed-timestep sim (30 Hz) decoupled from rendering; fullscreen responsive canvas;
-  DOM overlay UI; keyboard + floating touch joystick
+- **PixiJS v8** — WebGPU renderer with WebGL fallback (`?gl` forces WebGL)
+- **TypeScript + Vite** — data-driven architecture, live-tweakable at runtime
+- **Rust → WebAssembly** (`nightward-core`) — simulation engine: writable world,
+  per-chunk cellular automata (fire, wetness), sparse override store
+- Fixed-timestep sim (30 Hz) decoupled from rendering; DOM overlay UI (RPGUI skin)
 
 ## Run
 
 ```
 npm install
-npm run dev        # http://localhost:5173
+npm run wasm        # build the Rust/wasm core (once, and after Rust edits)
+npm run dev         # http://localhost:5173
 npm run typecheck
-npm run build      # static site in dist/ — host anywhere
+npm run build       # static site in dist/ — host anywhere (GitHub Pages)
 ```
 
-The world seed lives in the URL hash (`#s=12345`) — share a URL, share a world.
+World seed: `?seed=12345` in the URL. Share a URL, share a world seed — different
+connections make different worlds from the same seed.
 
-## Status
+## What's shipped
 
-- [x] **M0 — Walkable world**: infinite seeded overworld (noise biomes, domain-warped
-      coasts), chunk-baked rendering, procgen tiles/trees/hero, camera follow,
-      keyboard + touch input, dynamic zoom for any screen
-- [x] **M1 — Skilling & crafting**: gatherable nodes (trees/rocks/veins/herbs/bushes),
-      inventory with equippable **weapon + armor slots** (auto-equip on craft/loot),
-      tools that speed gathering, RS-style per-skill leveling, 3 crafting professions
-      (crafting/smithing/alchemy), day/night cycle with ambient tint
-- [x] **M2 — The racket**: buildings (hall/hut/wall/tower), placement rules, territory
-      score, population, passive tribute income (daytime only)
-- [x] **M3 — Night hordes**: wave spawner scaling with night # AND territory value,
-      enemies that march on the hall / chew buildings / bite the player, watchtower
-      auto-fire, player arc-melee (visible slash) using your equipped weapon, armor
-      that softens hits, death & respawn, game over
-- [ ] M4 — Ages, factions, tech tree
-- [ ] M5 — Cultivation realms & scaling rifts
-- [ ] M6 — Juice (custom lighting/bloom shaders, procedural audio, title screen)
+- ✅ Walkable infinite procgen world with noise biomes + domain-warped coasts
+- ✅ Gatherable resources, inventory, equipment slots, RS-style skill leveling
+- ✅ Crafting: weapons, armor, tools, consumables, buildings
+- ✅ Territory system: hall, huts, walls, watchtowers, population, tribute
+- ✅ Night horde waves scaling with night # + territory value
+- ✅ Weighty combat: windup→active→recovery state machine, telegraph tells
+- ✅ Soul Gear: soul-bound gear with per-slot XP leveling
+- ✅ Day hunts: daytime prey mobs, wander/despawn
+- ✅ Rust/wasm world engine: 16 materials, writable overrides, chunk streaming
+- ✅ Dual-grid autotile rendering with pseudo-3D cliff ledges
+- ✅ Fire cellular automaton: wind-driven spread, burnout, glow overlay, firemaking skill
+- ✅ Pixel UI skin (RPGUI), event log, SFX system, god mode
 
-Everything is **data-driven**: tune [config.ts](src/game/data/config.ts) for balance,
-or edit the tables in [src/game/data/](src/game/data/) to add items, recipes, buildings,
-enemies, biomes, or gather nodes — no engine code required. In the browser console,
-`window.NW.CFG` is the live config (editable at runtime). Debug hotkeys (dev only):
-`.` +30s · `n` skip to night · `j` force a wave · `g` +gold · `m` +materials · `h` heal.
+## What's next (Batch 5 — "The Wire")
 
-Full design doc: `C:\Users\User\.claude\plans\generic-petting-gadget.md`
+- 🚧 **N1 — Network Seed**: live browser network metrics → game parameters
+- 🚧 **N2 — Wire Realm**: network-themed biomes, connection events as game events
+- 🚧 **G1 — Visual upgrade**: SUBPIX rendering, post-processing, particles
+- 🚧 **W6 — Scoreboards**: connection-uptime leaderboards
+- 🚧 **G2 — Juice pass**: screen shake, hit-stop, knockback, attack trails
+- 🚧 **N3 — Living Network**: network metrics drive the fire/wetness sim
+- 🚧 **A1 — Local agent** (stretch): optional native binary for deeper metrics
+
+Full roadmap: [`docs/plans/ROADMAP.md`](docs/plans/ROADMAP.md)
+
+## Live tuning
+
+In the browser console:
+- `window.NW.CFG` — live game config (editable at runtime)
+- `window.NW.MATS` — material table
+- `window.NW.NET` — live network metrics (coming in N1)
+- `window.__nw` — sim state, systems, step(), craft(), paint()
+
+Debug hotkeys: `.` +30s · `n` skip to night · `j` force wave · `g` +gold ·
+`m` +materials · `h` heal · `u` god mode · `p` paint brush · `f` ignite

@@ -366,22 +366,36 @@ export function makeStump(trunk: RGB[], seed: number): HTMLCanvasElement {
 
 // ------------------------------------------------------------ buildings ----
 
-const WOOD: RGB[] = [[56, 42, 32], [82, 64, 47], [122, 92, 62]];
-const STONE: RGB[] = [[74, 79, 90], [90, 95, 107], [115, 120, 135]];
-const THATCH: RGB[] = [[122, 107, 59], [160, 138, 74], [194, 161, 95]];
+const WOOD: RGB[] = [[56, 42, 32], [82, 64, 47], [122, 92, 62], [145, 110, 75]];
+const STONE: RGB[] = [[60, 65, 78], [80, 85, 98], [105, 110, 125], [130, 135, 148]];
+const THATCH: RGB[] = [[102, 87, 49], [140, 118, 64], [175, 148, 85], [198, 170, 110]];
 const BANNER: RGB = [179, 64, 46];
 const GLOW: RGB = [255, 217, 176];
+const MORTAR: RGB = [48, 52, 62];
 
 function blocks(p: Pix, x0: number, y0: number, x1: number, y1: number, rampArr: RGB[], seed: number) {
-  // stone-block pattern: 4px courses, staggered 8px blocks, per-block shade
+  // stone-block pattern: 4px courses, staggered 8px blocks, per-block shade, mortar lines
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
       const row = ((y - y0) / 4) | 0;
       const col = (((x - x0) + (row % 2) * 4) / 8) | 0;
       const h = hash2(col, row, seed);
-      const edge = (y - y0) % 4 === 3 || ((x - x0) + (row % 2) * 4) % 8 === 7;
-      p.set(x, y, edge ? rampArr[0] : rampArr[h < 0.2 ? 0 : h < 0.75 ? 1 : 2]);
+      const isMortar = (y - y0) % 4 === 3 || ((x - x0) + (row % 2) * 4) % 8 === 7;
+      if (isMortar) {
+        p.set(x, y, MORTAR);
+      } else {
+        const corner = ((x - x0) % 8 < 2 && (y - y0) % 4 < 2);
+        p.set(x, y, corner ? rampArr[3] : rampArr[h < 0.2 ? 0 : h < 0.7 ? 1 : h < 0.9 ? 2 : 3]);
+      }
     }
+  }
+  // random moss/weathering dots
+  const rand = mulberry32(seed ^ 0xa1);
+  for (let i = 0; i < ((x1 - x0) * (y1 - y0)) / 20; i++) {
+    const mx = x0 + ((rand() * (x1 - x0 + 1)) | 0);
+    const my = y0 + ((rand() * (y1 - y0 + 1)) | 0);
+    p.set(mx, my, rampArr[0]);
+    if (rand() < 0.3) p.set(mx + 1, my, rampArr[1]);
   }
 }
 
@@ -397,68 +411,113 @@ function roof(p: Pix, apexX: number, apexY: number, baseY: number, x0: number, x
 }
 
 export function makeBuilding(kind: 'hall' | 'hut' | 'wall' | 'tower' | 'campfire', seed: number): HTMLCanvasElement {
+  const rand = mulberry32(seed ^ 0xb1d);
   let p: Pix;
   switch (kind) {
     case 'wall': {
       p = new Pix(32, 26);
-      blocks(p, 0, 6, 31, 25, STONE, seed ^ 0xa11);
-      p.rect(0, 4, 31, 5, STONE[2]); // cap
+      blocks(p, 2, 6, 29, 24, STONE, seed ^ 0xa11);
+      // crenellated cap
+      for (let x = 2; x <= 29; x += 4) p.rect(x, 3, x + 2, 5, STONE[2]);
+      p.rect(2, 4, 29, 4, STONE[3]); // cap highlight
       break;
     }
     case 'tower': {
-      p = new Pix(26, 46);
-      blocks(p, 4, 12, 21, 45, STONE, seed ^ 0x707);
-      p.rect(2, 8, 23, 12, STONE[2]);          // platform
-      for (let x = 2; x <= 23; x += 4) p.rect(x, 5, x + 1, 8, STONE[1]); // crenellations
-      p.rect(11, 22, 14, 27, [20, 18, 28]);    // arrow slit
-      p.rect(2, 44, 23, 45, STONE[0]);         // base
+      p = new Pix(28, 50);
+      blocks(p, 3, 12, 24, 48, STONE, seed ^ 0x707);
+      // platform + crenellations
+      p.rect(1, 8, 26, 12, STONE[2]);
+      for (let x = 1; x <= 23; x += 3) {
+        p.rect(x, 4, x + 2, 8, STONE[2]);
+        p.set(x + 1, 4, STONE[3]);
+      }
+      // arrow slit
+      p.rect(12, 20, 15, 30, [15, 13, 22]);
+      p.set(13, 20, STONE[3]);
+      // base flare
+      p.rect(1, 47, 26, 49, STONE[0]);
+      p.set(13, 49, STONE[3]);
       break;
     }
     case 'hut': {
-      p = new Pix(30, 32);
-      for (let x = 4; x <= 25; x++) {
-        const shade = WOOD[x % 4 === 0 ? 0 : x % 4 < 3 ? 1 : 2];
-        for (let y = 16; y <= 31; y++) p.set(x, y, shade);
+      p = new Pix(30, 34);
+      // wood planks with grain
+      for (let y = 15; y <= 33; y++) {
+        for (let x = 5; x <= 24; x++) {
+          const plank = ((x - 5) / 5) | 0;
+          const grain = (y + plank * 3) % 5 < 2 ? WOOD[1] : WOOD[2];
+          p.set(x, y, x < 6 || x > 23 ? WOOD[0] : grain);
+        }
       }
-      roof(p, 15, 3, 17, 1, 28, seed ^ 0x447);
-      p.rect(12, 22, 17, 31, [43, 32, 24]);    // door
-      p.set(16, 26, GLOW);                     // handle
+      // vertical plank seams
+      for (let x = 10; x <= 19; x += 5) {
+        for (let y = 15; y <= 33; y++) p.set(x, y, WOOD[0]);
+      }
+      // thatched roof with texture
+      roof(p, 15, 2, 16, 2, 27, seed ^ 0x447);
+      // roof edge highlight
+      for (let x = 3; x <= 26; x++) p.set(x, 16, THATCH[3]);
+      // door with frame
+      p.rect(12, 21, 17, 33, [38, 28, 20]);
+      p.rect(11, 20, 18, 21, WOOD[0]);  // lintel
+      p.set(16, 28, GLOW);               // handle glow
+      // small window
+      p.rect(20, 23, 23, 26, GLOW);
+      p.set(20, 24, [255, 230, 200]);    // warm highlight
       break;
     }
     case 'hall': {
-      p = new Pix(44, 48);
-      for (let y = 22; y <= 47; y++) {
-        for (let x = 4; x <= 39; x++) {
-          p.set(x, y, WOOD[y % 5 === 0 ? 0 : x < 6 || x > 37 ? 0 : 1]);
+      p = new Pix(48, 52);
+      // grand timber frame
+      for (let y = 22; y <= 51; y++) {
+        for (let x = 5; x <= 42; x++) {
+          const plank = ((x - 5) / 6) | 0;
+          const grain = (y + plank * 2) % 6 < 2 ? WOOD[2] : WOOD[1];
+          const beam = (x >= 8 && x <= 10) || (x >= 37 && x <= 39) || (y >= 22 && y <= 24);
+          p.set(x, y, beam ? WOOD[0] : grain);
         }
       }
-      roof(p, 21, 2, 23, 0, 43, seed ^ 0xa77);
-      p.rect(18, 34, 25, 47, [43, 32, 24]);    // big door
-      p.rect(17, 33, 26, 34, WOOD[2]);         // door frame
-      p.rect(8, 27, 11, 30, GLOW);             // windows
-      p.rect(32, 27, 35, 30, GLOW);
-      for (let y = 8, i = 0; y <= 22; y++, i++) p.set(38, y, WOOD[0]); // banner pole
-      p.rect(33, 9, 37, 15, BANNER);           // the racket's colors
-      p.set(35, 11, lighten(BANNER, 40));
+      // corner posts
+      for (let y = 22; y <= 51; y++) { p.set(5, y, WOOD[0]); p.set(42, y, WOOD[0]); }
+      // steep thatched roof
+      roof(p, 24, 1, 23, 2, 45, seed ^ 0xa77);
+      for (let x = 4; x <= 43; x++) p.set(x, 23, THATCH[3]); // eave highlight
+      // grand double door
+      p.rect(18, 34, 29, 51, [42, 30, 22]);
+      p.rect(17, 33, 30, 34, WOOD[2]);   // stone lintel
+      // door handles
+      p.set(20, 42, GLOW); p.set(27, 42, GLOW);
+      // stained-glass windows
+      for (let wy = 26; wy <= 30; wy++) {
+        p.set(9, wy, GLOW); p.set(10, wy, [130, 180, 255]);
+        p.set(37, wy, GLOW); p.set(38, wy, [130, 180, 255]);
+      }
+      // banner pole + banner
+      for (let y = 7; y <= 24; y++) p.set(41, y, WOOD[0]);
+      p.rect(36, 8, 40, 16, BANNER);
+      p.set(38, 10, lighten(BANNER, 45)); // banner highlight
+      p.set(38, 12, [220, 90, 70]);       // emblem dot
       break;
     }
     case 'campfire': {
-      // the STATIC baseline sprite — the actual light/motion comes from the fire glow overlay
-      // treating this tile as a permanently-burning tile (see Core::add_campfire), so this stays
-      // simple: a stone ring around crossed logs with a couple of ember pixels at the center.
-      p = new Pix(20, 14);
-      const stones: [number, number][] = [[2, 11], [4, 12], [8, 12], [12, 12], [16, 12], [17, 10], [15, 9], [3, 9]];
+      p = new Pix(22, 16);
+      const stones: [number, number][] = [[2,13],[4,14],[7,14],[11,14],[15,14],[18,13],[19,11],[17,10],[14,10],[10,10],[6,10],[3,11]];
       for (let i = 0; i < stones.length; i++) {
         const [x, y] = stones[i];
-        p.rect(x, y, x + 1, y + 1, STONE[i % 2 === 0 ? 1 : 2]);
+        const sc = STONE[1 + (i % 3)];
+        p.rect(x, y, x + 1, y + 1, sc);
+        p.set(x, y - 1, STONE[2]); // top highlight
       }
-      for (let i = 0; i < 9; i++) p.set(5 + i, 10 - ((i / 3) | 0), WOOD[1]);
-      for (let i = 0; i < 9; i++) p.set(14 - i, 10 - ((i / 3) | 0), WOOD[0]);
-      p.set(9, 8, [255, 140, 60]); p.set(10, 7, [255, 200, 120]); p.set(10, 9, [255, 90, 30]);
+      // crossed logs
+      for (let i = 0; i < 10; i++) { p.set(6 + i, 12 - ((i / 3) | 0), WOOD[2]); p.set(7 + i, 12 - ((i / 3) | 0), WOOD[1]); }
+      for (let i = 0; i < 10; i++) { p.set(15 - i, 12 - ((i / 3) | 0), WOOD[1]); p.set(14 - i, 12 - ((i / 3) | 0), WOOD[0]); }
+      // ember core
+      p.set(10, 9, [255, 160, 60]); p.set(11, 8, [255, 210, 130]); p.set(11, 10, [255, 100, 30]);
+      p.set(9, 9, [200, 80, 20]);
       break;
     }
   }
-  p.outline([20, 18, 28]);
+  p.outline([18, 16, 26]);
   return p.done();
 }
 
