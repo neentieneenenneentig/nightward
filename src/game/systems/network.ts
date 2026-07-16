@@ -181,7 +181,8 @@ export class NetworkSystem {
     if (!gm) return 1.0;
     const raw = this.get(gm.netKey);
     try {
-      const val = gm.transform(raw);
+      const ctx = { snap: this.snap, distinctRegionsProbed: this.distinctRegionsProbed };
+      const val = gm.transform(raw, ctx);
       return Math.max(gm.min, Math.min(gm.max, val));
     } catch {
       return 1.0;

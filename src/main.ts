@@ -354,9 +354,8 @@ async function boot() {
 
     const a = ui.isOpen() ? { x: 0, y: 0 } : input.axis();
     const feetSpeed = world.speedAt(Math.floor(player.x / TILE), Math.floor(player.y / TILE));
-    // N2a: move speed modifier from echo jitter (1.06 − echoJitter×0.002, clamp 0.92–1.06)
-    const echoJit = net.snap.echoJitter;
-    const moveSpeedMul = Math.max(0.92, Math.min(1.06, 1.06 - echoJit * 0.002));
+    // N2a: move speed modifier from echo jitter — read from mapping (live-tweakable)
+    const moveSpeedMul = net.getGameValue('moveSpeed');
     const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y), feetSpeed * moveSpeedMul);
     state.player.x = player.x;
     state.player.y = player.y;
@@ -642,9 +641,10 @@ async function boot() {
     // ── 6. Threads (decoder ring) ──
     html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
     html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">THREADS</div>';
+    const gmCtx = { snap: net.snap, distinctRegionsProbed: (net as any).distinctRegionsProbed ?? 0 };
     for (const gm of NET_GAME_MAP) {
       const raw = net.get(gm.netKey);
-      const val = Math.max(gm.min, Math.min(gm.max, gm.transform(raw)));
+      const val = Math.max(gm.min, Math.min(gm.max, gm.transform(raw, gmCtx)));
       html += `<div style="font-size:9px;">${gm.label} ×${val.toFixed(2)} ← ${gm.netKey} ${raw.toFixed(1)} (clamp ${gm.min}–${gm.max})</div>`;
     }
     // also show realm row

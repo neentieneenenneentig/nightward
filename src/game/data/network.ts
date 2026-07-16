@@ -238,14 +238,22 @@ export interface NetGameMapping {
   label: string;
   /** Which net mapping key drives this. */
   netKey: string;
-  /** Transform function: netValue (from get(netKey)) → game value. */
-  transform: (netValue: number) => number;
+  /** Transform function: netValue (from get(netKey)) → game value.
+   *  Receives ctx with full snapshot + extra fields for transforms that need
+   *  more than a single scalar (e.g. moveSpeed needs echoJitter). */
+  transform: (netValue: number, ctx?: NetMappingContext) => number;
   /** Target game param path (e.g. 'simSpeed', 'goldRate'). */
   target: string;
   /** Minimum allowed output (guardrail). */
   min: number;
   /** Maximum allowed output (guardrail). */
   max: number;
+}
+
+/** Context passed to NetGameMapping transforms — the full snapshot + extras. */
+export interface NetMappingContext {
+  snap: NetworkSnapshot;
+  distinctRegionsProbed: number;
 }
 
 /** Initial metric mappings — raw snapshot → game-readable values. */
@@ -373,11 +381,11 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   // ---- N2a: New modifiers from live vars ----
   {
     label: 'Move Speed',
-    netKey: 'rtt',  // reuse rtt via jitter for move speed
-    // 1.06 − echoJitter × 0.002, clamp 0.92–1.06
-    transform: (_rtt: number) => {
-      // reads echoJitter from the live snap — not ideal but matches brief formula
-      return 1.06; // placeholder; actual driven by echoJitter at call site
+    netKey: 'rtt',  // ctx carries the real driver (echoJitter)
+    // 1.06 − echoJitter × 0.002, clamp 0.92–1.06 (D4 rationale)
+    transform: (_rtt: number, ctx?: NetMappingContext) => {
+      const jit = ctx?.snap?.echoJitter ?? 5;
+      return Math.max(0.92, Math.min(1.06, 1.06 - jit * 0.002));
     },
     target: 'moveSpeed',
     min: 0.92,
@@ -394,11 +402,14 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   },
   {
     label: 'XP Rate',
-    netKey: 'rtt',  // placeholder — actually driven by distinctRegionsProbed
-    // 1 + distinctRegionsProbed × 0.06, clamp 1.0–1.30
-    transform: (_rtt: number) => 1.0, // actual driven by distinctRegionsProbed
+    netKey: 'rtt',  // ctx carries the real driver (distinctRegionsProbed)
+    // 1 + distinctRegionsProbed × 0.06, clamp 1.0–1.30 (now 0.75–1.50 per D5)
+    transform: (_rtt: number, ctx?: NetMappingContext) => {
+      const regions = ctx?.distinctRegionsProbed ?? 0;
+      return Math.max(0.75, Math.min(1.50, 1 + regions * 0.06));
+    },
     target: 'xpRate',
-    min: 1.0,
-    max: 1.30,
+    min: 0.75,
+    max: 1.50,
   },
 ];
