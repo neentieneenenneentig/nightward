@@ -328,11 +328,11 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   {
     label: 'Sim Speed',
     netKey: 'rtt',
-    // High pulse = slow sim. 50ms = 1×, 500ms = 0.5×.
-    transform: (rtt: number) => Math.max(0.3, Math.min(2.0, 50 / Math.max(rtt, 10))),
+    // High pulse = slower sim. 50ms = 1×, band clamped to 0.85–1.15× (D4).
+    transform: (rtt: number) => Math.max(0.85, Math.min(1.15, 1.0 + (50 - rtt) * 0.003)),
     target: 'simSpeed',
-    min: 0.3,
-    max: 2.0,
+    min: 0.85,
+    max: 1.15,
   },
   {
     label: 'Gold Rate',
