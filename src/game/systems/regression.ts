@@ -626,22 +626,100 @@ async function testGameOver(nw: any) {
 
 async function testMobBirthStats(nw: any) {
   const { state, sys } = nw;
-  const { ENEMIES } = await import('../data/enemies');
   const net = nw.ctx.net;
-  if (net) {
-    net.lastEcho = { ms: 180, cold: true, jitterAtBirth: 45, route: { label: 'Test', region: 'Europe', countryCode: 'GB' }, tsMs: performance.now() };
-    net.snap.echoJitter = 45;
+  if (!net) { ok(true, 'no network system — skipping mob birth stats test'); return; }
+
+  // Ensure a hall exists so spawn() can position foes around it
+  const { world } = nw;
+  if (!state.buildings.some((b: any) => b.type === 'hall')) {
+    const htx = Math.floor(state.player.x / 32);
+    const hty = Math.floor(state.player.y / 32) - 3;
+    state.player.inv.log = 50; state.player.inv.stone = 50; state.player.inv.plank = 30; state.player.inv.wood_scrap = 30;
+    state.buildings.push({ uid: state.nextUid++, type: 'hall', tx: htx, ty: hty, hp: 200 });
+    world.reindexBuildings();
+    nw.step(2);
   }
-  const def = ENEMIES.find(e => !e.boss && !e.daytime) ?? ENEMIES[0];
-  const foe = { uid: state.nextUid++, def, x: state.player.x + 50, y: state.player.y,
-    px: state.player.x + 50, py: state.player.y, hp: def.hp, maxHp: def.hp, dmg: def.dmg,
-    atkT: 0, telegraphT: 0, animT: 0 };
-  sys.hordes.foes.push(foe);
-  nw.step(2);
-  ok(foe.hp >= def.hp * 0.9, `foe hp ${foe.hp} within birth clamp (base ${def.hp})`);
-  ok(foe.dmg >= def.dmg * 0.9, `foe dmg ${foe.dmg} within birth clamp (base ${def.dmg})`);
-  sys.hordes.foes = sys.hordes.foes.filter((f: any) => f.uid !== foe.uid);
-  if (net) net.lastEcho = null;
+
+  // ---- Cold fixture: paid DNS+TLS route → Shelled, Pale prefix ----
+  const beforeCold = sys.hordes.foes.length;
+  net.lastEcho = {
+    ms: 180,
+    cold: true,
+    jitterAtBirth: 45,
+    route: { label: 'DE-CIX', region: 'Europe', countryCode: 'DE' },
+    tsMs: performance.now(),
+  };
+
+  // Exercise the real birth path in hordes.ts (private at compile-time, callable via any)
+  sys.hordes.spawn();
+  // Retry if position placement failed (worldgen edge case — water / wall ring)
+  for (let i = 0; i < 10 && sys.hordes.foes.length === beforeCold; i++) {
+    sys.hordes.spawn();
+  }
+
+  const coldFoe = sys.hordes.foes[sys.hordes.foes.length - 1];
+  ok(coldFoe !== undefined && coldFoe.uid !== undefined, 'cold fixture: foe spawned via hordes.spawn()');
+
+  if (coldFoe) {
+    // Echo-derived identity: cold route → Shelled skill, Pale prefix, Europe suffix
+    ok(coldFoe.specialSkill === 'Shelled',
+      `cold fixture: specialSkill === 'Shelled' (got ${JSON.stringify(coldFoe.specialSkill)})`);
+    ok(coldFoe.echoSoak === 4,
+      `cold fixture: echoSoak === 4 (2 base cold + 2 Shelled, got ${coldFoe.echoSoak})`);
+    ok(typeof coldFoe.epithetName === 'string' && coldFoe.epithetName.startsWith('Pale'),
+      `cold fixture: epithetName starts with 'Pale' (got '${coldFoe.epithetName}')`);
+    ok(typeof coldFoe.epithetName === 'string' && coldFoe.epithetName.endsWith('of the Old Roads'),
+      `cold fixture: epithetName ends with Europe suffix 'of the Old Roads' (got '${coldFoe.epithetName}')`);
+
+    // C2 birth clamps: hp & dmg within echo-multiplied bounds relative to def
+    const echoHpMul = Math.max(0.9, Math.min(1.6, 0.9 + 180 / 400)); // 1.35
+    const echoDmgMul = Math.max(0.9, Math.min(1.5, 0.9 + 45 / 80));   // ~1.4625
+    const defHp = coldFoe.def.hp;
+    const defDmg = coldFoe.def.dmg;
+    ok(coldFoe.hp >= defHp * 0.9 && coldFoe.hp <= defHp * 1.6,
+      `cold fixture: hp ${coldFoe.hp} in [${Math.floor(defHp * 0.9)}, ${Math.ceil(defHp * 1.6)}] (def ${defHp}, echoHpMul ${echoHpMul.toFixed(2)})`);
+    ok(coldFoe.dmg >= defDmg * 0.9 && coldFoe.dmg <= defDmg * 1.5,
+      `cold fixture: dmg ${coldFoe.dmg} in [${Math.floor(defDmg * 0.9)}, ${Math.ceil(defDmg * 1.5)}] (def ${defDmg}, echoDmgMul ${echoDmgMul.toFixed(2)})`);
+  }
+
+  // Clean up cold run
+  for (const f of sys.hordes.foes) nw.ctx.views?.removeFoe?.(f.uid);
+  sys.hordes.foes = [];
+  sys.hordes.toSpawn = 0;
+  net.lastEcho = null;
+
+  // ---- Warm fixture: echo without cold route → Shelled does NOT trigger ----
+  const beforeWarm = sys.hordes.foes.length;
+  net.lastEcho = {
+    ms: 180,
+    cold: false,
+    jitterAtBirth: 45,
+    route: { label: 'DE-CIX', region: 'Europe', countryCode: 'DE' },
+    tsMs: performance.now(),
+  };
+
+  sys.hordes.spawn();
+  for (let i = 0; i < 10 && sys.hordes.foes.length === beforeWarm; i++) {
+    sys.hordes.spawn();
+  }
+
+  const warmFoe = sys.hordes.foes[sys.hordes.foes.length - 1];
+  ok(warmFoe !== undefined && warmFoe.uid !== undefined, 'warm fixture: foe spawned via hordes.spawn()');
+
+  if (warmFoe) {
+    ok(warmFoe.specialSkill !== 'Shelled',
+      `warm fixture: Shelled does NOT trigger when cold=false (got ${JSON.stringify(warmFoe.specialSkill)})`);
+    ok(warmFoe.echoSoak === 0,
+      `warm fixture: echoSoak === 0 when not cold (got ${warmFoe.echoSoak})`);
+    ok(typeof warmFoe.epithetName === 'string' && !warmFoe.epithetName.startsWith('Pale'),
+      `warm fixture: epithetName does NOT start with 'Pale' (got '${warmFoe.epithetName}')`);
+  }
+
+  // Clean up
+  for (const f of sys.hordes.foes) nw.ctx.views?.removeFoe?.(f.uid);
+  sys.hordes.foes = [];
+  sys.hordes.toSpawn = 0;
+  net.lastEcho = null;
 }
 
 async function testDamageRollBounds(nw: any) {
