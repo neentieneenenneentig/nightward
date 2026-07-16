@@ -337,11 +337,12 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   {
     label: 'Gold Rate',
     netKey: 'downlink',
-    // More flow = more gold. 10 Mbps = 1×, 1 Mbps = 0.5×, 50 Mbps = 1.5×.
-    transform: (dl: number) => Math.max(0.3, Math.min(2.0, 0.5 + dl / 20)),
+    // Downlink observable range is (0, 10] Mbps (anti-fingerprinting cap).
+    // 1 Mbps → 0.58×, 5 Mbps → 0.88×, 10 Mbps → 1.25×.
+    transform: (dl: number) => Math.max(0.5, Math.min(1.25, 0.5 + dl * 0.075)),
     target: 'goldRate',
-    min: 0.3,
-    max: 2.0,
+    min: 0.5,
+    max: 1.25,
   },
   {
     label: 'Enemy Scaling',
