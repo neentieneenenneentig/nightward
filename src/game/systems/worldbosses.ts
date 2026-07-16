@@ -94,7 +94,7 @@ export class WorldBossSystem {
     b.reviveAt = 0; b.hunting = false; b.provokedUntil = 0; b.atkT = 0; b.telegraphT = 0;
     this.warned.delete(b.uid);
     this.ctx.views.addBoss(b);
-    this.ctx.toast(`${b.name} re-forms in the deep network, stronger.`, 'bad');
+    this.ctx.toast(`${b.name} re-forms in the deep dark, stronger.`, 'bad');
     this.ctx.log?.push('boss', `${b.name} re-forms, stronger (level ${b.level})`, this.ctx.state.clock);
   }
 
@@ -235,7 +235,7 @@ export class WorldBossSystem {
       }
     }
     Sound.play('enemyDie');
-    this.ctx.toast(`You have slain ${b.name}! The network trembles.`, 'good');
+    this.ctx.toast(`You have slain ${b.name}! The land trembles.`, 'good');
     this.ctx.log?.push('boss', `Slain ${b.name}!`, state.clock);
   }
 }

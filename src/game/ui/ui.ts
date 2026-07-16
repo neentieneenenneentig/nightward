@@ -97,7 +97,7 @@ export class UI {
       <div class="nw-badge nw-gold">&#9679; <span id="nw-gold">0</span></div>
       <div class="nw-badge nw-clock" id="nw-clock"></div>
       <div class="nw-badge" id="nw-nights" title="damage · defense · population · territory"></div>
-      <div class="nw-badge nw-domain" id="nw-domain" title="the network realm you stand in"></div>
+      <div class="nw-badge nw-domain" id="nw-domain" title="the realm you stand in"></div>
       <div class="nw-spacer"></div>
       <div class="nw-badge nw-btn" id="nw-mute" style="pointer-events:auto" title="sound on/off">&#128266;</div>
       <div class="nw-badge nw-btn" id="nw-newworld" style="pointer-events:auto" title="new world">&#10227;</div>`;
@@ -571,8 +571,8 @@ export class UI {
 
   showGameOver(onRestart: () => void) {
     const over = el('div', 'nw-gameover');
-    over.innerHTML = `<h1>CONNECTION LOST</h1>
-      <div style="color:var(--ink-dim);max-width:340px">Your Node Core is destroyed and the network goes dark.
+    over.innerHTML = `<h1>THE THREAD IS CUT</h1>
+      <div style="color:var(--ink-dim);max-width:340px">Your Hearthstone lies in ruin and the dark takes the rest.
       You survived ${this.state.nightsSurvived} night${this.state.nightsSurvived === 1 ? '' : 's'}.</div>`;
     const btn = el('div', 'nw-btn primary'); btn.textContent = 'Try again';
     btn.style.pointerEvents = 'auto';

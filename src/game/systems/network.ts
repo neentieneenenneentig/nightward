@@ -251,13 +251,13 @@ export class NetworkSystem {
 
   /**
    * Select biome using D1 priority:
-   * 1. Offline → Loopback
+   * 1. Offline → The Hollow
    * 2. Beacon-echo profile (median + variance) → realm
    * 3. Android connection.type bonus (only if type is known and not 'unknown')
-   * 4. Fallback → Ethernet Plains (civilized default)
+   * 4. Fallback → The Steadfast Vale (calm default)
    */
   selectBiome(): BiomeDef {
-    // 1. Offline is always Loopback
+    // 1. Offline is always The Hollow
     if (!this.snap.online) return BIOMES[3];
 
     // 2. Try beacon-echo profile
@@ -272,7 +272,7 @@ export class NetworkSystem {
     if (ct) return ct;
 
     // 4. Fallback
-    return BIOMES[0]; // Ethernet Plains
+    return BIOMES[0]; // The Steadfast Vale
   }
 
   /** Get rift stability as 0-1 fraction. */
@@ -391,7 +391,7 @@ export class NetworkSystem {
       'https://www.google.com/generate_204',
       'https://www.microsoft.com/favicon.ico',
     ];
-    this.netLog('resonance-echo', `Pinging beacon...`);
+    this.netLog('resonance-echo', `probing ${new URL(endpoints[0]).hostname}...`);
     this.tryEndpoints(endpoints, 0, t0);
   }
 
@@ -514,9 +514,9 @@ export class NetworkSystem {
     // Log the transition
     if (this.transitionLogCallback) {
       const msg = to === 'offline'
-        ? 'Connection lost — entering Loopback'
+        ? 'The world grows still — you have crossed into the Hollow'
         : from === 'offline'
-          ? `Reconnected — entering ${this.currentBiome.name}`
+          ? `The world rekindles — you stand in ${this.currentBiome.name}`
           : `Realm Rift: ${oldBiome.name} → ${this.currentBiome.name}`;
       this.transitionLogCallback(msg);
     }
@@ -538,7 +538,7 @@ export class NetworkSystem {
       this.lastRiftTime = now;
       this.riftStability = 100;
       this.snap.online = false;
-      if (this.riftCallback) this.riftCallback(oldBiome, BIOMES[3] /* Loopback */);
+      if (this.riftCallback) this.riftCallback(oldBiome, BIOMES[3] /* The Hollow */);
     } else if (from === 'offline') {
       // Coming back online — immediate rift
       this.lastRiftTime = now;

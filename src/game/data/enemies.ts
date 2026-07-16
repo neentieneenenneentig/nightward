@@ -25,21 +25,21 @@ export const isBoss = (id: string) => ENEMIES.find((e) => e.id === id)?.boss ===
 
 export const ENEMIES: EnemyDef[] = [
   {
-    id: 'gnawer', name: 'Packet Rat',
+    id: 'gnawer', name: 'Gnawer',
     hp: 20, speed: 62, dmg: 5, atkCooldown: 1.0, telegraphSec: 0.3, xp: 14, gold: [1, 3],
     loot: [{ id: 'berry', min: 1, max: 2, chance: 0.2 }],
     fromNight: 1, weight: 10, daytime: true,
     art: { size: 16, body: ramp('#3a2030', '#5c2e42', '#7c3f52'), eye: ramp('#ffd9b0')[0] },
   },
   {
-    id: 'brute', name: 'Proxy Brute',
+    id: 'brute', name: 'Brute',
     hp: 70, speed: 42, dmg: 12, atkCooldown: 1.4, telegraphSec: 0.55, xp: 40, gold: [4, 8],
     loot: [{ id: 'stone', min: 1, max: 2, chance: 0.3 }, { id: 'ring_copper', min: 1, max: 1, chance: 0.06 }],
     fromNight: 3, weight: 3,
     art: { size: 24, body: ramp('#2e2a20', '#4a4030', '#665740'), eye: ramp('#d97b7b')[0] },
   },
   {
-    id: 'wisp', name: 'Signal Wisp',
+    id: 'wisp', name: 'Wisp',
     hp: 12, speed: 95, dmg: 3, atkCooldown: 0.7, telegraphSec: 0.28, xp: 22, gold: [2, 5],
     loot: [{ id: 'moonbell', min: 1, max: 1, chance: 0.15 }, { id: 'charm_ember', min: 1, max: 1, chance: 0.05 }],
     fromNight: 5, weight: 4, daytime: true,

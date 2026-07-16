@@ -137,7 +137,7 @@ export class HordeSystem {
     views.addFoe(foe);
     this.toSpawn--;
     const s = this.ctx.net?.snap;
-    this.ctx.log?.push('spawn', `A ${def.name} joins the night wave (${foe.hp} hp) [RTT ${s?.rtt?.toFixed(0) ?? '?'}ms · BW ${s?.downlink?.toFixed(1) ?? '?'}Mbps · JIT ${s?.jitter?.toFixed(1) ?? '?'}ms]`, state.clock);
+    this.ctx.log?.push('spawn', `A ${def.name} joins the night wave (${foe.hp} hp)`, state.clock);
   }
 
   /** Day prey: spawns around the PLAYER at base (night-1) stats — loot on legs. */
@@ -174,7 +174,7 @@ export class HordeSystem {
     this.foes.push(foe);
     views.addFoe(foe);
     const s = this.ctx.net?.snap;
-    this.ctx.log?.push('spawn', `A ${def.name} prowls into view (${foe.hp} hp) [RTT ${s?.rtt?.toFixed(0) ?? '?'}ms]`, state.clock);
+    this.ctx.log?.push('spawn', `A ${def.name} prowls into view (${foe.hp} hp)`, state.clock);
   }
 
   private updateFoe(f: Foe, dt: number) {
@@ -312,8 +312,8 @@ export class HordeSystem {
     this.toSpawn = Math.max(0, this.toSpawn - reduced);
     // also reduce territory score temporarily for boss aggression calculations
     const s = this.ctx.net?.snap;
-    toast(`Cache scattered! −${cost} gold, ${reduced} fewer enemies incoming [RTT ${s?.rtt?.toFixed(0) ?? '?'}ms]`, 'good');
-    this.ctx.log?.push('network', `Scattered cache: −${cost} gold, horde reduced by ${reduced} (${this.toSpawn} remaining) [RTT ${s?.rtt?.toFixed(0) ?? '?'}ms · BW ${s?.downlink?.toFixed(1) ?? '?'}Mbps]`, state.clock);
+    toast(`Cache scattered! −${cost} gold, ${reduced} fewer enemies incoming`, 'good');
+    this.ctx.log?.push('economy', `Scattered hoard: −${cost} gold, horde reduced by ${reduced} (${this.toSpawn} remaining)`, state.clock);
     return true;
   }
   hurt(f: Foe, dmg: number, awardXp = true) {
@@ -340,7 +340,7 @@ export class HordeSystem {
         if (cl) { toast(`Your charm drinks the kill — soul level ${cl}!`, 'good'); this.ctx.log?.push('level', `Charm reached soul level ${cl}`, state.clock); }
       }
     }
-    this.ctx.log?.push('combat', `Slew a ${f.def.name} [RTT ${this.ctx.net?.snap?.rtt?.toFixed(0) ?? '?'}ms · BW ${this.ctx.net?.snap?.downlink?.toFixed(1) ?? '?'}Mbps]`, state.clock);
+    this.ctx.log?.push('combat', `Slew a ${f.def.name}`, state.clock);
     // G1: death poof particles at foe location
     this.ctx.particles?.spawn?.('death', f.x, f.y, 12);
   }

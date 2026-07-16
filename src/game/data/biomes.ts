@@ -36,13 +36,13 @@ export interface BiomeDef {
 export const BIOMES: BiomeDef[] = [
   {
     id: 'ethernet',
-    name: 'Ethernet Plains',
+    name: 'The Steadfast Vale',
     connectionType: 'ethernet',
     color: [100, 200, 80],
     hex: '#64C850',
     tintDay: [255, 252, 245],
     tintNight: [65, 80, 150],
-    description: 'Stable, civilized. The heart of the network.',
+    description: 'Calm and rooted. The world holds its shape here.',
     tier: 1,
     ambientParticle: 'spark',
     windMult: 0.7,
@@ -50,13 +50,13 @@ export const BIOMES: BiomeDef[] = [
   },
   {
     id: 'wifi',
-    name: 'WiFi Wilds',
+    name: 'The Shifting Wilds',
     connectionType: 'wifi',
     color: [80, 140, 255],
     hex: '#508CFF',
     tintDay: [250, 248, 255],
     tintNight: [50, 60, 160],
-    description: 'Wild, unpredictable. Rich but risky.',
+    description: 'Rich and restless. Nothing stays where you left it.',
     tier: 2,
     ambientParticle: 'wisp',
     windMult: 1.2,
@@ -64,13 +64,13 @@ export const BIOMES: BiomeDef[] = [
   },
   {
     id: 'cellular',
-    name: 'Cellular Chaos',
+    name: 'The Stormlands',
     connectionType: 'cellular',
     color: [255, 100, 50],
     hex: '#FF6432',
     tintDay: [255, 245, 240],
     tintNight: [70, 40, 120],
-    description: 'Hostile, shifting. High risk, high reward.',
+    description: 'Hostile and howling. High risk, high reward.',
     tier: 3,
     ambientParticle: 'glitch',
     windMult: 1.6,
@@ -78,13 +78,13 @@ export const BIOMES: BiomeDef[] = [
   },
   {
     id: 'loopback',
-    name: 'Loopback',
+    name: 'The Hollow',
     connectionType: 'unknown',
     color: [180, 180, 190],
     hex: '#B4B4BE',
     tintDay: [240, 240, 242],
     tintNight: [80, 82, 100],
-    description: 'Static, neutral. The offline realm.',
+    description: 'Severed and still. The world holds its breath.',
     tier: 0,
     ambientParticle: 'none',
     windMult: 0.5,
@@ -101,17 +101,17 @@ export function biomeForConnection(type: string): BiomeDef | null {
 
 /**
  * Derive a biome from the beacon-echo latency profile (D1).
- * - median < 80ms && variance < 2000  → Ethernet Plains (civilized)
- * - median < 80ms && variance >= 2000 → WiFi Wilds (wild)
- * - median >= 80ms || variance >= 8000  → Cellular Chaos (chaos)
+ * - median < 80ms && variance < 2000  → The Steadfast Vale (calm)
+ * - median < 80ms && variance >= 2000 → The Shifting Wilds (restless)
+ * - median >= 80ms || variance >= 8000  → The Stormlands (howling)
  * - no data → null (caller should use fallback)
  */
 export function biomeForProfile(median: number, variance: number): BiomeDef | null {
   if (median <= 0) return null; // no data
-  if (median >= 80) return BIOMES[2]; // Cellular Chaos
+  if (median >= 80) return BIOMES[2]; // The Stormlands
   if (variance >= 8000) return BIOMES[2]; // very unstable → chaos
-  if (variance >= 2000) return BIOMES[1]; // WiFi Wilds
-  return BIOMES[0]; // Ethernet Plains (stable + fast)
+  if (variance >= 2000) return BIOMES[1]; // The Shifting Wilds
+  return BIOMES[0]; // The Steadfast Vale (calm + fast)
 }
 
 /** Biome index by id. */

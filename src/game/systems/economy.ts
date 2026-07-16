@@ -38,14 +38,12 @@ export class EconomySystem {
       this.ctx.toast(`Flux surge! +${bonusGold} gold`, 'good');
       this.ctx.log?.push('economy', `Flux surge → +${bonusGold} bonus gold`, this.ctx.state.clock);
     }
-    // N1: spawn network floater showing bandwidth→gold rate
+    // N2a: raw numbers moved to the Lens feed; if a floater is wanted, it speaks fiction
     if (gain > 0 && this.ctx.floaters && this.ctx.net) {
-      const dl = this.ctx.net.snap?.downlink ?? 10;
       const goldMul = this.ctx.net.getGameValue?.('goldRate') ?? 1.0;
       const px = this.ctx.state.player.x, py = this.ctx.state.player.y;
-      this.ctx.floaters.spawn(px, py - 30, 'downlink', dl, 'Mbps', this.ctx.cam);
       if (goldMul !== 1.0) {
-        this.ctx.floaters.spawn(px + 8, py - 42, 'goldRate', goldMul, '', this.ctx.cam);
+        this.ctx.floaters.spawn(px, py - 30, 'current', goldMul, '', this.ctx.cam);
       }
     }
   }
