@@ -380,9 +380,9 @@ async function boot() {
     state.explored[rk] = 1;
     const dom = domainAt(ptx, pty, seed!);
     ui.setDomain(dom.name, dom.danger);
-    log.push('region', `Entered
+    log.push('region', `Entered ${dom.name}${dom.danger > 0 ? ` (${dom.lord.title})` : ''}`, state.clock);
     // Passive trace chain refresh — re-reads Performance API, zero HTTP
-    net.samplePassive('explore'); ${dom.name}${dom.danger > 0 ? ` (${dom.lord.title})` : ''}`, state.clock);
+    net.samplePassive('explore');
     // Action-gated beacon echo — new regions ping Far East discovery
     net.probeAction('explore');
     if (CFG.domain.announce) {

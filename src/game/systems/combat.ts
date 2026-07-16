@@ -168,7 +168,7 @@ export class CombatSystem {
       if (resonance) {
         this.ctx.floaters?.spawnInfo?.(cx, cy - 30, `⚡RESONANCE ${resonance.label}`, '#ffcc00', this.ctx.camera);
         this.ctx.particles?.spawn?.('crit', cx, cy - 8, 15);
-        this.ctx.toast?.(`Resonance crit! ${resonance.label} @ ${resonance.rtt}ms`, 'good');
+        this.ctx.toast?.(`Resonance crit! ${resonance.label} — your strike rings true`, 'good');
         Sound.play('hit'); // extra impact
       }
       const lvl = awardSoulXp(state, 'weapon', CFG.soulgear.weaponXpPerSwing);
