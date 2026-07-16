@@ -46,6 +46,28 @@ export class GameLog {
     return lines.join('\n');
   }
 
+  /** Fiction kinds — shown in the Chronicle (L key). */
+  static FICTION_KINDS = new Set<LogKind>([
+    'gather', 'craft', 'build', 'combat', 'boss', 'level', 'death',
+    'region', 'economy', 'system', 'spawn', 'world',
+  ]);
+
+  /** Truth kinds — shown in the Lens feed. */
+  static TRUTH_KINDS = new Set<LogKind>([
+    'network', 'resonance-pulse', 'resonance-flow', 'resonance-flux',
+    'resonance-echo', 'resonance-link', 'resonance-rift', 'resonance',
+  ]);
+
+  /** Recent entries filtered to fiction only (for the Chronicle). */
+  recentFiction(n = 50) {
+    return this.entries.filter(e => GameLog.FICTION_KINDS.has(e.kind)).slice(-n).reverse();
+  }
+
+  /** Recent entries filtered to truth only (for the Lens feed). */
+  recentFeed(n = 50) {
+    return this.entries.filter(e => GameLog.TRUTH_KINDS.has(e.kind)).slice(-n).reverse();
+  }
+
   /** Trigger a download of the log as a .txt file. */
   download(filename = 'nightward-log.txt') {
     const text = this.exportText();

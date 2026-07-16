@@ -361,15 +361,19 @@ export class UI {
 
   private fillLog(body: HTMLElement) {
     const entries = this.hooks.logEntries();
-    if (!entries.length) {
+    // N2a: Chronicle shows fiction kinds only — filter out truth (network/resonance-*)
+    const fictionKinds = new Set(['gather','craft','build','combat','boss','level','death','region','economy','system','spawn','world']);
+    const fiction = entries.filter(e => fictionKinds.has(e.kind));
+    if (!fiction.length) {
       const empty = el('div', 'nw-empty'); empty.textContent = 'Nothing has happened yet. Go do something.';
       body.appendChild(empty); return;
     }
-    for (const e of entries) {
+    for (const e of fiction) {
       const row = el('div', 'nw-logrow nw-log-' + e.kind);
       const t = Math.floor(e.t);
       const kindLabel = NET_LOG_LABELS[e.kind] ?? e.kind;
-      row.innerHTML = `<span class="nw-logt">${String((t / 60) | 0).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}</span><span class="nw-logk">${kindLabel}</span><span class="nw-logm">${styleNetworkMsg(e.msg)}</span>`;
+      // N2a: Chronicle never gets technical styling — plain text only
+      row.innerHTML = `<span class="nw-logt">${String((t / 60) | 0).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}</span><span class="nw-logk">${kindLabel}</span><span class="nw-logm">${e.msg}</span>`;
       body.appendChild(row);
     }
     // N2: export button at the bottom of the log panel
@@ -592,7 +596,7 @@ const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
 // ---- N2: network log abbreviations & styling ----
 /** Short pixel-style labels for each log kind. */
-const NET_LOG_LABELS: Record<string, string> = {
+export const NET_LOG_LABELS: Record<string, string> = {
   'gather': 'GATHER',
   'craft': 'CRAFT',
   'build': 'BUILD',
@@ -615,7 +619,7 @@ const NET_LOG_LABELS: Record<string, string> = {
 };
 
 /** Wrap known network abbreviations in styled <span> tags for pixel-art feel. */
-function styleNetworkMsg(msg: string): string {
+export function styleNetworkMsg(msg: string): string {
   // Replace known abbreviations with styled spans
   const abbrs: [string, string][] = [
     ['RTT', 'rtt'], ['DNS', 'dns'], ['TLS', 'tls'], ['TTFB', 'ttfb'],
