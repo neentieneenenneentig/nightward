@@ -1,12 +1,19 @@
 # N2 — The Wire Realm (content + theming pass)
 
+> ⚠️ **SUPERSEDED FOR N2a (2026-07-16): see `docs/plans/N2a-veil-and-lens.md`.**
+> The user's playtest verdict INVERTED this brief's theming direction: network terminology
+> must be scrubbed OUT of the fiction (zone/boss names, death screen, skills, buildings),
+> and the raw data moves INTO the observatory panel instead. The N2b scope (material effect
+> hooks, further below) is unaffected and still stands as future work. Everything between
+> here and the N2b section is a historical design artifact — do not implement it.
+
 **Updated 2026-07-16 per N1.5 design decisions D1 + D3. Split into N2a (theming + rifts +
 realm HUD, cheap) and N2b (material effect hooks — real engine work, own playtest gate).**
 
-Goal: replace every trace of the "dream world" with network terminology. The game's systems
-stay identical — this is a re-theme, not a genre change. After N2, the player gathers
-resources in the "WiFi Wilds," builds territory to defend against hordes, and watches the
-realm shift when their beacon-echo profile changes.
+Goal (SUPERSEDED — see warning above): replace every trace of the "dream world" with network
+terminology. The game's systems stay identical — this is a re-theme, not a genre change.
+After N2, the player gathers resources in the "WiFi Wilds," builds territory to defend
+against hordes, and watches the realm shift when their beacon-echo profile changes.
 
 Prereq: N1 merged (`v0.16-n1-network-seed`) — `NW.NET` + network event log entries + HUD
 readout must be functional. This brief builds on the N1 data plumbing to add CONTENT that

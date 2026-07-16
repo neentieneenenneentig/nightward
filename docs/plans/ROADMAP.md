@@ -547,13 +547,27 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 
 ---
 
-#### N2 — The Wire Realm (content + theming pass)
+#### N2 — split: N2a "The Veil & the Lens" (ACTIVE) + N2b (material hooks)
 
-> **Brief:** `docs/plans/N2-wire-realm.md` (updated 2026-07-16 per D1+D3)
+> **N2a brief (ACTIVE, NEXT MILESTONE):** `docs/plans/N2a-veil-and-lens.md` — written
+> 2026-07-16 from the user's playtest verdict on `v0.16.1-n15-ground-truth`. **Supersedes the
+> theming direction in `N2-wire-realm.md`** (which put network terminology INTO the fiction —
+> the verdict inverts that). N2b (material effect hooks) stays in `N2-wire-realm.md`,
+> unscheduled, own playtest gate.
 
-**Status:** Early N2 plumbing (biomes, rift plumbing) is already in the tree as part of the
-N1-batch checkpoint. N2 is now split into **N2a** (theming + rifts + realm HUD, cheap) and
-**N2b** (material effect hooks — real engine work, new mechanics, own playtest gate).
+**Playtest verdict (2026-07-16):** network jargon leaked into the fiction (zone names, boss
+toasts, skills, buildings, the death screen) and must be scrubbed to pure fantasy — while ALL
+raw data (per-URL latency, bandwidth, IP/geo/ISP, device info) gets a real home in the O-key
+observatory. The variables keep driving the game (naming conventions, mob hp/damage/defense/
+specials derived from the operation that spawned them, move/gather/xp modifiers) but are never
+*named* in fiction. Two-layer law: **the Veil** (fiction) / **the Lens** (truth panel) /
+invisible bridge. Includes Lens **inspect mode** — highlight any row → SOURCE (browser API) /
+ACTION (game action that drives it) / FLOWS INTO (game values it feeds).
+
+**Parked idea (2026-07-16, user):** "network monitoring automation" as gameplay — e.g.
+buildings that auto-probe routes on a schedule, threshold alerts that fire game events (build
+your own monitoring dashboard out of base-building). Candidate for a post-N2a slice or N3
+flavor; not scheduled, needs its own brief.
 
 **D1 update:** Rift trigger = realm-profile change (beacon-echo median+variance band crossing,
 debounced ≥30s), not connection.type. Realms derived from echo profile, not connection type.
