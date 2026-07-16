@@ -76,6 +76,10 @@ export class NetworkSystem {
   lastResonanceLabel: string = '';
   /** Pending resonance from a fast-resolving attack probe — consumed by combat. */
   private pendingResonance: { rtt: number; label: string; multiplier: number } | null = null;
+  /** Timestamp of last full attack volley (ms). Throttled to 1 per 1.5s. */
+  private lastAttackVolleyMs = 0;
+  /** Beacon URLs that have been contacted at least twice — crit-eligible. */
+  private warmedRoutes: Set<string> = new Set();
 
   // ---- M3.6: Passive metric snapshots (zero-request, browser APIs only) ----
   /** Bandwidth snapshot from the most recent gather action (Mbps). */
@@ -583,9 +587,25 @@ export class NetworkSystem {
    * (not just the attack pool), with NO cooldown. Every swing sends echoes.
    */
   probeAction(action: string) {
-    // Attack volley — 3 echoes from all pools, no cooldown, every swing
+    // Attack: one echo per swing (always), full volley at most once per 1.5s (F3)
     if (action === 'attack') {
-      this.probeAttackVolley(3);
+      const now = performance.now();
+      // Always fire a single echo to a random attack-pool beacon
+      const pool = ACTION_ECHO_POOLS['attack'];
+      if (pool && pool.length > 0) {
+        const lastLabel = this.lastProbedLabel.get('attack');
+        const candidates = pool.filter(p => p.label !== lastLabel);
+        const ep = candidates.length > 0
+          ? candidates[(Math.random() * candidates.length) | 0]
+          : pool[(Math.random() * pool.length) | 0];
+        this.lastProbedLabel.set('attack', ep.label);
+        this.probeSingleEndpoint(ep.url, ep.label, ep.detail, ep.region, ep.countryCode, 'attack');
+      }
+      // Full volley (3 echoes from all pools) only every 1.5s
+      if (now - this.lastAttackVolleyMs >= 1500) {
+        this.lastAttackVolleyMs = now;
+        this.probeAttackVolley(3);
+      }
       return;
     }
 
@@ -661,9 +681,19 @@ export class NetworkSystem {
         this.discoveredEndpoints.add(label);
         this.activeProbes.delete(url);
         this.trackEchoSample(url, rtt); // F1: per-beacon echo tracking for echoJitter
-        this.netLog('resonance-echo', `${label}: ${rtt}ms (${region})`);
-        // fast echo → resonance crit for the current swing
-        if (action === 'attack' && rtt > 0 && rtt < 30) {
+
+        // F3: route warmth — first contact is "discovery" (never crits),
+        // second+ contact warms the route (crit-eligible)
+        const wasWarm = this.warmedRoutes.has(url);
+        if (!wasWarm) {
+          this.warmedRoutes.add(url);
+          this.netLog('resonance-echo', `${label}: ${rtt}ms (${region}) — route discovered`);
+        } else {
+          this.netLog('resonance-echo', `${label}: ${rtt}ms (${region})`);
+        }
+
+        // fast echo → resonance crit ONLY from warmed routes (F3)
+        if (action === 'attack' && rtt > 0 && rtt < 30 && wasWarm) {
           this.pendingResonance = { rtt, label, multiplier: 1.5 };
           this.netLog('resonance',
             `⚡ Resonance: ${label} @ ${rtt}ms → crit ready!`);
