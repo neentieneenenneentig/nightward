@@ -68,6 +68,22 @@ connections make different worlds from the same seed.
 
 Full roadmap: [`docs/plans/ROADMAP.md`](docs/plans/ROADMAP.md)
 
+## Privacy & external endpoints
+
+This game uses your browser's Network Information API to drive gameplay. To measure
+real-world latency ("echoes"), it may fire no-cors `fetch()` requests to public
+websites (CDN edges, news favicons, search engines) when you perform in-game actions —
+attack, gather, build, craft, explore, or survive the night. These requests carry
+your browser's implicit IP address just like visiting any website would. No data
+leaves the browser except the implicit IP in requests to the listed public endpoints;
+nothing is stored server-side.
+
+Your IP, city, ISP, and ASN are fetched from ipify.org, ipapi.co, and Cloudflare
+only after your first `explore` action — "scrying reveals who you are." Until then,
+identity fields show `...`.
+
+A full list of contacted endpoints is logged to the browser console at boot.
+
 ## Live tuning
 
 In the browser console:

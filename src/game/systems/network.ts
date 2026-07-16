@@ -56,6 +56,8 @@ export class NetworkSystem {
   private ipFetching = false;
   private lastGeoFetchMs = 0;
   private geoFetching = false;
+  /** Whether identity probes (IP/geo) have been fetched at least once. */
+  private identityFetched = false;
 
   // ---- Action-gated beacon discovery ----
   /** Set of endpoint labels that have been discovered through gameplay. */
@@ -118,15 +120,29 @@ export class NetworkSystem {
     this.lastOnline = this.snap.online;
     this.currentBiome = this.selectBiome();
     this.buildMappingIndex();
-    // M3.5: kick off IP/geo discovery after a short delay (avoid browser aborting
-    // cross-origin fetches during page init). ipify + ipapi.co are CORS-enabled.
-    // These are PASSIVE identity probes — they identify the connection, not the player's
-    // actions. Endpoint probes are now GATED behind gameplay actions (see probeAction).
-    const self = this;
-    setTimeout(() => {
-      self.fetchIpInfo();
-      self.fetchGeoInfo();
-    }, 2000);
+    // F8: Identity probes (IP/geo) are gated behind the first `explore` action.
+    // No automatic fetch on boot — "scrying reveals who you are."
+    // Boot log: list every external endpoint the game may contact.
+    this.logEndpointDisclosure();
+  }
+
+  /** Boot-time disclosure of every external endpoint the game contacts. */
+  private logEndpointDisclosure() {
+    const endpoints = new Set<string>();
+    for (const pool of Object.values(ACTION_ECHO_POOLS)) {
+      for (const ep of pool) endpoints.add(ep.url);
+    }
+    // Also the identity endpoints
+    endpoints.add('https://api.ipify.org');
+    endpoints.add('https://ipapi.co/json/');
+    endpoints.add('https://cloudflare.com/cdn-cgi/trace');
+    // Also the hardcoded poll endpoints
+    endpoints.add('https://www.google.com/generate_204');
+    endpoints.add('https://www.microsoft.com/favicon.ico');
+
+    const list = [...endpoints].sort().join(', ');
+    console.log('[NIGHTWARD] External endpoints this game may contact (discovery gated behind in-game actions): '
+      + list + '. No data leaves the browser except the implicit IP in HTTP requests to these listed public endpoints; nothing is stored server-side.');
   }
 
   // ---- public API ----
@@ -878,6 +894,13 @@ export class NetworkSystem {
       case 'explore': {
         this.buildTraceChain();
         this.netLog('resonance', `Explore: refreshed resonance chain (${this.snap.traceChain.length} hops)`);
+        // F8: first explore action triggers identity probes — "scrying reveals who you are"
+        if (!this.identityFetched) {
+          this.identityFetched = true;
+          this.fetchIpInfo();
+          this.fetchGeoInfo();
+          this.netLog('resonance', 'Scrying: probing connection identity...');
+        }
         break;
       }
       case 'survive_night': {
