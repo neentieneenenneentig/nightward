@@ -406,17 +406,26 @@ are parallelizable after M3.6 (content vs. visuals touch different files).
     pool. Attack pool: 6 endpoints (Yandex, Naver, Baidu, Yahoo JP, Cloudflare, Microsoft).
     Gather/build/craft/damage/economy/explore/survive_night each have 3–6 endpoint pools.
   - **Only attacks make HTTP requests:** `fetch()` probes fire exclusively from the attack
-    action. All other actions sample passive browser APIs (zero HTTP requests) — this keeps
-    the network quiet except during combat.
-  - **Attack speed ← probe RTT (design locked, implementation deferred to M3.6):** The RTT
-    measured by the attack's `fetch()` will modulate the next swing's speed. Low latency =
-    snappy swings, high latency = heavy swings.
+    action. All other actions sample passive browser APIs (zero HTTP requests).
   - **Observatory shows discovery progress:** Discovered endpoints show flag + RTT bar.
     Undiscovered show 🔒 `???` with endpoint descriptions. Network map fills in as you play.
-  - **Concurrent probes allowed:** URL-based guard replaces global lock — attacking rapidly
-    probes different endpoints simultaneously.
   - Full brief: `docs/plans/M3.5-action-network.md`. Files: `network.ts` (data + system),
     `gather.ts`, `combat.ts`, `build.ts`, `crafting.ts`, `economy.ts`, `main.ts`.
+
+- **M3.6v2 — Sync RTT → Damage + Resonance Crits** ✅ (2026-07-16, SHIPPED):
+  - **DEVIATION from original M3.6:** The original M3.6 brief described attack-speed
+    modulation from async probe RTT. During implementation, this felt "wonky" — the async
+    probe fed back to the NEXT swing, not the current one, and speed changes were too subtle.
+    **M3.6v2 replaces attack-speed modulation with:**
+  - **Sync damage multiplier:** `navigator.connection.rtt` → immediate damage multiplier
+    (≤20ms→1.4×, 20-40ms→1.2×, 40-80ms→1.05×, 80-200ms→1.0×, 200-400ms→0.85×, >400ms→0.7×).
+    Later rebased to beacon-echo latency in N1.5-F4.
+  - **Resonance crits:** Attack probe resolving <30ms during windup → 1.5× bonus
+    (later gated behind route warmth in N1.5-F3).
+  - **Attack volley:** Every swing fires 1 echo (was 3); full volley throttled to 1/1.5s
+    (N1.5-F3).
+  - **Observatory** shows ⚔ Damage Mod row with sync RTT + multiplier + resonance label.
+  - Recorded here so the roadmap reflects what actually shipped.
 
 ---
 
@@ -450,9 +459,11 @@ get totally different experiences — and that's the point.
 - **Network→game mappings are data rows.** `src/game/data/network.ts` is the single table.
   Adding a new metric mapping is a row edit, never engine code. The mappings are live-
   tweakable at runtime via `window.NW.NET`.
-- **No privacy leak.** All data stays in the browser. No metrics are uploaded anywhere. The
-  game is a static site with zero backend. `fetch()` timing probes go to well-known public
-  endpoints (Cloudflare, Google) — the same requests every browser makes constantly.
+- **No privacy leak.** No data leaves the browser except the implicit IP in HTTP requests
+  to the listed public endpoints (ipify.org, ipapi.co, cloudflare.com, and the favicon/CDN
+  endpoints in action echo pools); nothing is stored server-side. Identity probes (IP, city,
+  ISP, ASN) are gated behind the first `explore` action. A full endpoint disclosure is
+  logged to the browser console at boot and documented in README.md.
 - **Two-language rule stands.** Rust never sees network metrics directly — TS polls, packs
   into a `Float32Array`, and uploads via `core.set_network_params()` (same pattern as
   `set_materials` / `set_fire_params`).
@@ -478,33 +489,20 @@ verdict, THEN build the full pipeline — the W1 lesson applied to art.
 
 ### Milestones (one worktree each, in order)
 
+> **Note (2026-07-16):** Early G1 (particles, postprocess) and early N2 (biomes, rift plumbing)
+> are already in the tree as part of the N1-batch checkpoint (tagged `v0.16-n1-network-seed`).
+> G1's remaining scope is bloom/LUT/SUBPIX-prototype/drop-shadows. N2's remaining scope is
+> N2a (theming + rifts + realm HUD) and N2b (material effect hooks — real engine work).
+
 ---
 
-#### M3.6 — Attack Speed ← Probe RTT (close the loop) ← **NEXT**
+#### M3.6v2 — Sync RTT → Damage + Resonance Crits ✅ SHIPPED (2026-07-16)
 
-> **Brief:** `docs/plans/M3.5-action-network.md` (bottom section)
+> **Brief:** `docs/plans/M3.5-action-network.md` (bottom section, recorded as M3.6v2)
 
-**Dependencies:** M3.5 merged (action-gated pools + attack-only HTTP fetches).
-
-**The one thing:** When you attack, a `fetch()` fires to a random global endpoint. The RTT
-of THAT response modulates your NEXT swing's speed. Low latency (nearby CDN) = snappy.
-High latency (far continent) = heavy. The network becomes something you *feel* in combat.
-
-**Entry criteria:**
-- M3.5 action-gated pools live and verified
-- Attack pool (6 endpoints) correctly randomizes per swing
-- Observatory shows discovered/locked endpoint state
-
-**Exit criteria:**
-- Attack windup/recovery duration scaled by `attackSpeedMul` derived from most recent probe RTT
-- Baseline: 50ms RTT → 1.0× speed. <30ms → 0.8× (fast). >120ms → 1.3× (heavy)
-- First swing of a session uses default 1.0× (no probe yet); second swing feels the first probe
-- Attack speed multiplier visible in combat log entries and observatory modifiers
-- Passive metric sampling wired for other action pools (gather→downlink, build→PerfAPI, etc.)
-  — observatory shows the sampled value but no game mechanics ride on them yet
-- Typecheck clean, build green, regression passes
-
-**Estimated effort:** 1 session.
+**Shipped as M3.6v2 — sync damage multiplier + resonance crits instead of attack-speed
+modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup applied
+(F1–F9, tagged `v0.16.1-n15-ground-truth`).**
 
 ---
 
@@ -551,53 +549,23 @@ High latency (far continent) = heavy. The network becomes something you *feel* i
 
 #### N2 — The Wire Realm (content + theming pass)
 
-> **Brief:** `docs/plans/N2-wire-realm.md` (to be created)
+> **Brief:** `docs/plans/N2-wire-realm.md` (updated 2026-07-16 per D1+D3)
 
-**Dependencies:** N1 merged (needs `NW.NET` + network event log entries).
+**Status:** Early N2 plumbing (biomes, rift plumbing) is already in the tree as part of the
+N1-batch checkpoint. N2 is now split into **N2a** (theming + rifts + realm HUD, cheap) and
+**N2b** (material effect hooks — real engine work, new mechanics, own playtest gate).
 
-**Entry criteria:**
-- N1 merged and tagged (`v0.16-n1-network-seed`)
-- Network data plumbing verified (HUD works, mappings live-tweakable, real clock sync functions)
+**D1 update:** Rift trigger = realm-profile change (beacon-echo median+variance band crossing,
+debounced ≥30s), not connection.type. Realms derived from echo profile, not connection type.
+Connection.type switches (Android only) are a bonus path.
 
-**Exit criteria:**
-- All "dream" flavor text replaced: log messages, toast notifications, item descriptions, building
-  names, skill names, UI labels — zero references to "dream" remain in user-facing text
-- Four biomes defined: **Ethernet Plains** (stable, civilized — connectionType=ethernet), **WiFi
-  Wilds** (wild, unpredictable — connectionType=wifi), **Cellular Chaos** (hostile, shifting —
-  connectionType=cellular), **Loopback** (offline/fallback — static, neutral)
-- Connection-type transitions trigger a **"rift" event**: brief screen effect (color shift +
-  particle burst in N2, upgraded to full shader transition in G2), world terrain regenerated
-  from new biome table, log event + toast
-- Online→offline transition: sim pauses, "Connection Lost" overlay, world persists in memory.
-  Offline→online transition: "Rift Detected" toast, new realm seed derived from connection type,
-  world regenerated around player
-- 8+ new material properties with network theming: "packet loss" zones (slow movement), "latency
-  spike" fields (stun enemies on entry), "bandwidth bloom" (resource-rich), "dead zone" (no
-  building), "firewall" (blocks projectiles), "DNS cache" (reveals map), "routing loop" (teleports
-  entity to random nearby tile), "signal booster" (amplifies soul gear effects)
-- Network events (jitter spikes >30ms, type switches, bandwidth dips >50%, online/offline toggles)
-  produce: log entry (+ new cyan/lime LogKind colors), toast notification, ambient particle effect
-  (brief spark/glitch burst at player position)
-- HUD expanded from 3-line to 5-line: adds biome name + "rift stability" meter (how long since
-  last type switch — stable connections get bonuses)
-- Existing game loop (gather→craft→build→survive nights) plays identically — this is a re-theme,
-  not a genre change. All system behavior changes are cosmetic (names, colors, particles) or
-  terrain-driven (biome tables, material properties)
+**D3 update:** Material/skill/building rename tables (Wood→"Copper Packet" etc.) are DROPPED.
+Flavor is mystical resonance; the physical world stays physical. The network theme lives in
+the overlay systems: Pulse/Flow/Flux, beacons, echoes, rifts, realms, resonance crits.
 
-**Estimated effort:** 2–3 sessions.
-
-**Sub-tasks (implementation order):**
-1. Design document: biome definitions (terrain palette, material weights, feature probabilities, enemy tables per biome), flavor text replacement map (old string → new string for all user-facing text), material property definitions (8 new `MaterialProps` entries)
-2. Flavor text sweep: search `src/game/` for "dream", "nightmare", "sleep", "wake", "dreamer", "dreaming" → replace with network terminology. Update: `data/items.ts` descriptions, `data/buildings.ts` names/descriptions, `data/skills.ts` names, `data/soulgear.ts` flavor, `systems/log.ts` message templates, `ui/toast.ts` messages, `ui/ui.ts` labels, `world/worldgen.ts` biome names
-3. Biome data: create `src/game/data/biomes.ts` — `BiomeTable` with 4 entries (Ethernet Plains, WiFi Wilds, Cellular Chaos, Loopback), each specifying: terrain palette, material weights, feature probabilities, enemy spawn tables, ambient particle type, day/night tint
-4. Connection-type → biome mapping: `NetworkSystem.detectTransitions()` emits a typed event (`'rift'` with `{from, to}`), `worldgen.ts` reads current biome from `net.snap.connectionType` and selects the corresponding `BiomeTable`
-5. Rift event: on type change → screen flash (full-screen colored rectangle, 200ms fade), particle burst (50 particles at random screen positions, biome-colored), log entry, toast. Debounce: no more than one rift per 30 seconds (prevent WiFi flapping from spamming rifts)
-6. Material properties: add 8 new entries to `src/game/data/materials.ts` with `onEnter`/`onStay`/`onExit` hooks. Systems read these hooks from the material at the entity's tile position each sim tick
-7. HUD expansion: add biome name (colored by type) + rift stability meter (0–100%, decays toward 0 over 5 minutes, resets to 100% on rift). Stability >80% → small bonus to all stats ("stable connection")
-8. Playtest gate: user verdict on the new theming — does "Ethernet Plains" feel different from "WiFi Wilds"? Are rifts interesting or annoying? Are the material effects legible?
-
-**Per-milestone risks:**
-- Flavor text replacement might miss some strings (e.g., in combat messages or procgen descriptions) → use `grep_search` for exhaustive search; add a script that dumps all user-facing strings and flags "dream" occurrences
+**Note:** The N2 brief's claim that material `onEnter/onStay/onExit` hooks are "existing R1
+infrastructure" is FALSE. R1 materials have static props like `speedMult` — active hooks do
+not exist and require real engine work (N2b scope).
 - Rift events on WiFi (which can flap between `wifi` and `unknown`) could fire too frequently → 30s debounce is essential; also ignore `unknown`→`wifi` transitions (only fire on actual type changes between known types)
 - Material properties with `onStay` hooks could be expensive if checked every tick for every entity → only check when entity moves to a new tile; cache the material at entity's current position
 

@@ -1,9 +1,12 @@
 # N2 — The Wire Realm (content + theming pass)
 
+**Updated 2026-07-16 per N1.5 design decisions D1 + D3. Split into N2a (theming + rifts +
+realm HUD, cheap) and N2b (material effect hooks — real engine work, own playtest gate).**
+
 Goal: replace every trace of the "dream world" with network terminology. The game's systems
 stay identical — this is a re-theme, not a genre change. After N2, the player gathers
-"bandwidth crystals" in the "WiFi Wilds," builds "firewall towers" to defend against
-"packet-loss wraiths," and watches the realm shift when their connection type changes.
+resources in the "WiFi Wilds," builds territory to defend against hordes, and watches the
+realm shift when their beacon-echo profile changes.
 
 Prereq: N1 merged (`v0.16-n1-network-seed`) — `NW.NET` + network event log entries + HUD
 readout must be functional. This brief builds on the N1 data plumbing to add CONTENT that
@@ -23,6 +26,25 @@ uses it.
 4. **Every string must be replaced.** Zero references to "dream," "nightmare," "sleep," "wake,"
    "dreamer," "dreaming," "slumber," "awaken," "night terror," "oneiric" in any user-facing
    text. The grep is the acceptance test.
+
+## D1 update — Realm selection is profile-based (2026-07-16)
+
+**Rift trigger = realm-profile band crossing, not connection.type.** The realm is derived from
+the beacon echo latency profile (rolling median + variance over recently-probed beacons):
+- median < 80ms & low variance → civilized realm (Ethernet Plains)
+- median < 80ms & high variance → wild realm (WiFi Wilds)
+- median ≥ 80ms or very unstable → chaos realm (Cellular Chaos)
+- Loopback = actually-offline (snap.online === false)
+
+Real connection.type switches (Android only) may still trigger bonus rifts. A realm-profile
+change (sustained band crossing, debounced ≥30s) becomes the rift trigger for N2a.
+
+## D3 update — Flavor is mystical resonance; physical world stays physical (2026-07-16)
+
+**The item/skill/building rename tables below (Wood → "Copper Packet", etc.) are DROPPED.**
+Wood is wood, trees are trees. The network theme lives in the overlay systems: Pulse/Flow/Flux,
+beacons, echoes, rifts, realms, resonance crits — i.e., what the code already does. The N2
+brief's original rename tables are preserved below as a design artifact but marked DROPPED.
 
 ## Flavor text replacement — the complete map
 
@@ -54,11 +76,14 @@ uses it.
 | — (new) | **Cellular Chaos** | cellular | Red/orange, harsh contrast | Hostile, shifting. Scarce resources. Tougher enemies. Frequent rifts. High-risk, high-reward. |
 | — (new) | **Loopback** | unknown/offline | Gray/white, muted | Static, neutral. Fixed resource density. No rifts. The "offline mode" realm — playable, but not live-driven. |
 
-### Materials (re-theming existing or adding new)
+### Materials (NOTE — onEnter/onStay/onExit hooks DO NOT EXIST in R1)
 
-Material names and descriptions are updated to network terminology. New material effects
-(8 entries) are added to `src/game/data/materials.ts`. Each has `onEnter`, `onStay`, or
-`onExit` hooks that systems read.
+**⚠️ FALSE CLAIM in original brief:** R1 materials have static props like `speedMult` — there
+are NO `onEnter`/`onStay`/`onExit` hooks. Adding active per-tile callbacks requires real
+engine work in both TS and Rust. This is deferred to **N2b** (own playtest gate).
+
+The material effect concepts below are preserved as a design sketch for N2b but are NOT
+implementable without engine changes:
 
 | Material key | Name | Color | Effect | Rarity |
 |-------------|------|-------|--------|--------|
@@ -71,7 +96,10 @@ Material names and descriptions are updated to network terminology. New material
 | `routing_loop` | Routing Loop | Purple (#8800FF) | `onStay`: every 3s, teleport entity to random tile within 3-tile radius. | Rare in Cellular |
 | `signal_booster` | Signal Booster | Bright green (#00FF44) | `onStay`: soul gear XP gain ×2.0. Building construction speed ×1.5. | Very rare, any realm |
 
-### Enemies (re-theming + new)
+### Enemies (re-theming + new) — DROPPED per N1.5 D3
+
+Enemy rename tables are dropped. The network theme lives in overlay systems. Preserved as
+design artifact:
 
 | Old enemy | New enemy | Realm | Behavior change |
 |-----------|-----------|-------|----------------|
@@ -82,7 +110,7 @@ Material names and descriptions are updated to network terminology. New material
 | (new) | Signal Wisp | Ethernet (day) | Passive. Follows player. If protected for 60s, drops bandwidth crystal. |
 | (new) | Proxy Brute | WiFi | Slow but high HP. Reflects 20% of melee damage back. |
 
-### Buildings (re-theming)
+### Buildings (re-theming) — DROPPED per N1.5 D3
 
 | Old building | New building | Description |
 |-------------|-------------|-------------|
@@ -92,7 +120,7 @@ Material names and descriptions are updated to network terminology. New material
 | Tower | Watchtower (unchanged, but flavor updated) | "Monitors for incoming threats. Auto-engages at range." |
 | Campfire | Beacon | "A stable signal in the dark. Keeps the local realm from degrading." |
 
-### Skills (re-theming)
+### Skills (re-theming) — DROPPED per N1.5 D3
 
 | Old skill | New skill | Description |
 |-----------|-----------|-------------|
@@ -103,27 +131,21 @@ Material names and descriptions are updated to network terminology. New material
 | Firemaking | Signal Amplification | "Boost local signal strength. Creates beacons." |
 | (new, if added) | DNS Scrying | "Reveal the map by resolving distant domains." |
 
-### Items (re-theming)
+### Items (re-theming) — DROPPED per N1.5 D3
 
-| Old item | New item | Description |
-|----------|----------|-------------|
-| Wood | Copper Packet | "Basic data unit. Common in Ethernet Plains." |
-| Stone | Fiber Shard | "Durable transmission medium. Found in all realms." |
-| Iron | Wireless Spectrum | "Valuable frequency band. Rare, found in WiFi Wilds." |
-| Gold | Bandwidth Crystal | "Pure throughput. The most valuable resource." |
-| Fiber | Dark Fiber | "Unlit transmission line. High capacity potential." |
-| Herbs | Signal Herbs | "Natural amplifiers. Used in signal processing." |
-| Coal | Compressed Packet | "Dense data. Burns with intense heat." |
-| Charcoal | Refined Spectrum | "Processed signal. Clean-burning, long-lasting." |
+Wood is wood, trees are trees. The network theme lives in the overlay systems. These renames
+are preserved as a design artifact only — do NOT implement.
 
 ## Rift events — detailed spec
 
-A "rift" occurs when the connection type changes (e.g., ethernet → wifi). This is the
-core "wow moment" of the network theming — the world visibly reshapes around the player.
+A "rift" occurs when the realm profile band crosses a threshold (N1.5 D1 — beacon-echo
+median+variance, not connection.type). This is the core "wow moment" of the network theming —
+the world visibly reshapes around the player.
 
 ### Trigger conditions
-- Connection type transitions between known types (ethernet, wifi, cellular) with a
-  5-second debounce (see N1 transition debouncing spec)
+- Realm-profile band crossing (median <80ms→≥80ms, or variance crosses 2000/8000 thresholds)
+  with ≥30s debounce (see N1 transition debouncing spec)
+- Connection.type switches (Android only) as a BONUS path — profile is primary
 - Online→offline and offline→online also count as rifts
 - Manual trigger: `NW.NET.triggerRift('cellular')` for testing
 
