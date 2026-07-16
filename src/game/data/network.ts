@@ -30,6 +30,8 @@ export interface BeaconEcho {
   detail?: string;
   region: string;
   countryCode: string;
+  /** Timestamp when this echo was recorded (performance.now() ms). */
+  ts?: number;
 }
 
 // Backwards-compat alias

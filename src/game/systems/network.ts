@@ -745,7 +745,10 @@ export class NetworkSystem {
     }
   }
 
+  /** Merge a single echo result into snap.endpointProbes, replacing any
+   *  previous result for the same label. Stamps ts for F4 recency checks. */
   private mergeProbeResult(result: BeaconEcho) {
+    result.ts = performance.now();
     const probes = this.snap.endpointProbes;
     const idx = probes.findIndex(p => p.label === result.label);
     if (idx >= 0) {
@@ -767,25 +770,53 @@ export class NetworkSystem {
   // ---- M3.6v2: Sync Pulse → Damage + Resonance Crits ----
 
   /**
-   * Get the damage multiplier from the CURRENT sync browser pulse time.
-   * Reads navigator.connection.rtt synchronously — immediate, no fetch needed.
-   *   < 20ms  → 1.4×  (blade sings with clarity)
-   *   20-40ms → 1.2×  (sharp edge)
+   * Get the damage multiplier. Drives from best recent beacon-echo latency
+   * (continuous, not quantized) when available; falls back to connection.rtt
+   * with 25ms-grid-aligned tier edges (F4).
+   *   ≤20ms  → 1.4×  (resonant clarity)
+   *   20-40ms → 1.2× (sharp edge)
    *   40-80ms → 1.05× (slightly keen)
    *   80-200ms→ 1.0×  (steady)
    *   200-400ms→0.85× (dulled by distance)
-   *   > 400ms → 0.7×  (heavy interference)
+   *   >400ms → 0.7×  (heavy interference)
    */
   getDamageMul(): number {
+    // 1. Try best recent beacon echo (continuous latency)
+    const bestEcho = this.bestRecentEcho();
+    if (bestEcho > 0) {
+      this.lastSwingRtt = bestEcho;
+      return this.lastSwingDmgMul = this.rttToDamageMul(bestEcho);
+    }
+
+    // 2. Fall back to connection.rtt (quantized to 25ms buckets)
     const con = (navigator as any).connection;
     const rtt = con?.rtt != null ? this.safeNum(con.rtt, this.snap.rtt, 1, 5000) : this.snap.rtt;
     this.lastSwingRtt = rtt;
-    if (rtt <= 20) return this.lastSwingDmgMul = 1.4;
-    if (rtt <= 40) return this.lastSwingDmgMul = 1.2;
-    if (rtt <= 80) return this.lastSwingDmgMul = 1.05;
-    if (rtt <= 200) return this.lastSwingDmgMul = 1.0;
-    if (rtt <= 400) return this.lastSwingDmgMul = 0.85;
-    return this.lastSwingDmgMul = 0.7;
+    return this.lastSwingDmgMul = this.rttToDamageMul(rtt);
+  }
+
+  /** Map an RTT value to a damage multiplier. */
+  private rttToDamageMul(rtt: number): number {
+    if (rtt <= 20) return 1.4;
+    if (rtt <= 40) return 1.2;
+    if (rtt <= 80) return 1.05;
+    if (rtt <= 200) return 1.0;
+    if (rtt <= 400) return 0.85;
+    return 0.7;
+  }
+
+  /** Get the best (lowest positive) echo RTT from the last 10s of probes. */
+  private bestRecentEcho(): number {
+    let best = Infinity;
+    const now = performance.now();
+    for (const probe of this.snap.endpointProbes) {
+      // Only consider probes with valid RTT and within ~10s
+      if (probe.rtt <= 0) continue;
+      // Use the probe's timestamp if available, otherwise treat all as recent
+      const age = (probe as any).ts ? now - (probe as any).ts : 0;
+      if (age <= 10000 && probe.rtt < best) best = probe.rtt;
+    }
+    return best === Infinity ? 0 : best;
   }
 
   /**
