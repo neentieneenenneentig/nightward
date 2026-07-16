@@ -6,6 +6,7 @@ import { ITEMS } from '../data/items';
 import { SKILLS } from '../data/skills';
 import { RECIPES } from '../data/recipes';
 import { BUILDINGS } from '../data/buildings';
+import { ECHOES } from '../data/echoes';
 import { iconUrl } from '../../engine/procgen/icons';
 import {
   invCount, invHasAll, skillLevel, xpProgress, slotOf,
@@ -55,6 +56,8 @@ export class UI {
   private nights!: HTMLElement;
   private domainEl!: HTMLElement;
   private muteEl!: HTMLElement;
+  private echoEl!: HTMLElement;
+  private echoChipsCache = '';
   private gather!: HTMLElement;
   private gatherFill!: HTMLElement;
   private gatherLabel!: HTMLElement;
@@ -97,6 +100,7 @@ export class UI {
       <div class="nw-badge nw-gold">&#9679; <span id="nw-gold">0</span></div>
       <div class="nw-badge nw-clock" id="nw-clock"></div>
       <div class="nw-badge" id="nw-nights" title="damage · defense · population · territory"></div>
+      <div class="nw-badge" id="nw-echoes" style="display:none" title="echoes of the slain"></div>
       <div class="nw-badge nw-domain" id="nw-domain" title="the realm you stand in"></div>
       <div class="nw-spacer"></div>
       <div class="nw-badge nw-btn" id="nw-mute" style="pointer-events:auto" title="sound on/off">&#128266;</div>
@@ -107,6 +111,7 @@ export class UI {
     this.goldText = top.querySelector('#nw-gold')!;
     this.clock = top.querySelector('#nw-clock')!;
     this.nights = top.querySelector('#nw-nights')!;
+    this.echoEl = top.querySelector('#nw-echoes')!;
     this.domainEl = top.querySelector('#nw-domain')!;
     this.muteEl = top.querySelector('#nw-mute')!;
     top.querySelector('#nw-newworld')!.addEventListener('click', () => this.hooks.newWorld());
@@ -548,6 +553,17 @@ export class UI {
     const def = armorDef(this.state);
     this.nights.innerHTML =
       `&#9876;${dmg} &middot; &#128737;${def} &middot; &#9823;${population(this.state)} &middot; &#9873;${territoryScore(this.state)}`;
+
+    // C1: echo chips — icon + level per held echo (rebuilt only on change)
+    const held = this.state.player.echoes ?? {};
+    const chips = ECHOES.filter((e) => (held[e.id] ?? 0) > 0)
+      .map((e) => `<span title="${e.name} — ${e.desc}">${e.icon}${held[e.id]}</span>`)
+      .join(' ');
+    if (chips !== this.echoChipsCache) {
+      this.echoChipsCache = chips;
+      this.echoEl.style.display = chips ? '' : 'none';
+      this.echoEl.innerHTML = chips;
+    }
 
     // gather progress ring
     const gv = this.hooks.gatherView();

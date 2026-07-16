@@ -1064,6 +1064,195 @@ async function testSurvivalPlaythrough(nw: any) {
 }
 
 // ---------------------------------------------------------------------------
+// C1: Echoes of the Slain
+// ---------------------------------------------------------------------------
+
+/** Synthetic slain-able lord. MUST carry `level` — worldbosses.hurt() pays
+ * `b.level * 20` gold on death (testBossFight's fake omits it and transiently
+ * NaNs the gold; pre-existing, masked by a later test overwriting gold). */
+function makeTestBoss(nw: any, defId: string) {
+  const { state } = nw;
+  return {
+    uid: state.nextUid++, defId, lordId: 'test', name: 'Test Lord',
+    x: state.player.x + 60, y: state.player.y, px: 0, py: 0,
+    hp: 10, maxHp: 10, dmg: 0, level: 1,
+    atkT: 0, telegraphT: 0, animT: 0, hunting: false, provokedUntil: 0,
+    reviveAt: 0, homeGx: 0, homeGy: 0,
+  };
+}
+
+/** Dummy melee-range foe for echo damage checks: tanky, harmless, non-boss. */
+function makeDummyFoe(nw: any, def: any, dx: number, dy: number, hp = 500) {
+  const { state } = nw;
+  const x = state.player.x + dx, y = state.player.y + dy;
+  return {
+    uid: state.nextUid++, def,
+    x, y, px: x, py: y, hp, maxHp: hp,
+    dmg: 0, atkT: 9999, telegraphT: 0, animT: 0,
+  };
+}
+
+async function testEchoGrantAndLevel(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+  state.gameOver = false; // an earlier test (game over) leaves the flag set
+  state.player.echoes = {};
+
+  // first kill grants the lord's signature echo at level 1
+  let b: any = makeTestBoss(nw, 'thornwarden');
+  state.worldBosses.push(b);
+  sys.worldbosses.hurt(b, 9999);
+  eq(state.player.echoes['thornring'], 1, 'first Thornwarden kill grants Thornring L1');
+  ok(nw.log.entries.some((e: any) => e.msg.includes('echo clings')), 'Chronicle logs the grant in fiction voice');
+
+  // re-kill deepens it
+  b = makeTestBoss(nw, 'thornwarden');
+  state.worldBosses.push(b);
+  sys.worldbosses.hurt(b, 9999);
+  eq(state.player.echoes['thornring'], 2, 're-kill levels Thornring to 2');
+  ok(nw.log.entries.some((e: any) => e.msg.includes('echo deepens')), 'Chronicle logs the level-up');
+
+  // every lord maps to a distinct echo
+  const { ECHOES, echoForBoss } = await import('../data/echoes');
+  eq(ECHOES.length, 5, 'five echoes defined');
+  for (const bossId of ['thornwarden', 'cindermaw', 'rimewraith', 'tideculler', 'nullmaw']) {
+    ok(echoForBoss(bossId) !== undefined, `${bossId} grants an echo`);
+  }
+
+  // grant past the cap deepens nothing
+  state.player.echoes['thornring'] = CFG.echoes.maxLevel;
+  b = makeTestBoss(nw, 'thornwarden');
+  state.worldBosses.push(b);
+  sys.worldbosses.hurt(b, 9999);
+  eq(state.player.echoes['thornring'], CFG.echoes.maxLevel, `echo level capped at ${CFG.echoes.maxLevel}`);
+
+  // cleanup: drop the synthetic reviving bosses and the granted echoes
+  state.worldBosses = state.worldBosses.filter((x: any) => x.lordId !== 'test');
+  state.player.echoes = {};
+}
+
+async function testEchoDamage(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+  const { ENEMIES } = await import('../data/enemies');
+  const dummyDef = ENEMIES.find((e: any) => !e.boss)!;
+  state.gameOver = false;
+  state.god = true; state.player.hp = 100; // stray patch/foe contact must not end the run mid-test
+  const es: any = sys.echoes;
+
+  const holdOnly = (id: string, lvl = 1) => {
+    state.player.echoes = { [id]: lvl };
+    es.cooldowns = {}; es.patches = []; es.orbHitAt?.clear?.();
+  };
+  const withDummy = (dx: number, dy: number) => {
+    const foe: any = makeDummyFoe(nw, dummyDef, dx, dy);
+    sys.hordes.foes.push(foe);
+    return foe;
+  };
+  const dropFoe = (foe: any) => { sys.hordes.foes = sys.hordes.foes.filter((f: any) => f.uid !== foe.uid); };
+
+  // -- pulse: Thornring hits an adjacent foe within one cadence
+  holdOnly('thornring');
+  let foe = withDummy(30, 0);
+  nw.step(15); // 0.5 s ≫ first fire (cooldown starts spent)
+  ok(foe.hp < foe.maxHp, `Thornring pulse damaged adjacent foe (${foe.maxHp - foe.hp} dmg)`);
+  dropFoe(foe);
+
+  // -- nova: Rime Nova damages AND chills
+  holdOnly('rime_nova');
+  foe = withDummy(30, 0);
+  nw.step(15);
+  ok(foe.hp < foe.maxHp, `Rime Nova damaged adjacent foe (${foe.maxHp - foe.hp} dmg)`);
+  ok(foe.chillUntil > state.clock - 0.1, 'Rime Nova stamped chillUntil');
+  ok(foe.chillMult < 1, `chillMult slows the march (${foe.chillMult})`);
+  dropFoe(foe);
+
+  // -- volley: Tide Lash reaches out to range
+  holdOnly('tide_lash');
+  foe = withDummy(120, 0);
+  nw.step(15);
+  ok(foe.hp < foe.maxHp, `Tide Lash damaged ranged foe (${foe.maxHp - foe.hp} dmg)`);
+  dropFoe(foe);
+
+  // -- orbit: Null Orb contact over one sweep
+  holdOnly('null_orb');
+  foe = withDummy(Math.round(1.8 * 32), 0);
+  nw.step(180); // 6 s ≫ full orbit at CFG.echoes.orbitRadPerSec
+  ok(foe.hp < foe.maxHp, `Null Orb contact damaged foe (${foe.maxHp - foe.hp} dmg)`);
+  dropFoe(foe);
+
+  // -- trail: patch drops on the tile you LEAVE; the patch burns foes standing in it.
+  // Real-CA ignition is disabled for determinism (wild fire spreading through the rest
+  // of the suite); the flag itself is pinned by testEchoBounds and witnessed live.
+  const igniteWas = CFG.echoes.cinderIgnitesCA;
+  CFG.echoes.cinderIgnitesCA = false;
+  try {
+    holdOnly('cinder_trail');
+    nw.step(2); // let the trail tracker settle on the current tile
+    const fromTx = Math.floor(state.player.x / 32), fromTy = Math.floor(state.player.y / 32);
+    nw.player.teleport(state.player.x + 40, state.player.y); // one tile over — a step, not a jump
+    nw.step(3);
+    ok(es.patches.length >= 1, 'leaving a tile drops a cinder patch');
+    ok(es.patches.some((p: any) => p.tx === fromTx && p.ty === fromTy), 'patch sits on the EXITED tile');
+    foe = withDummy(0, 0); // park the dummy wherever the patch is
+    foe.x = (fromTx + 0.5) * 32; foe.y = (fromTy + 0.5) * 32;
+    const hpBefore = foe.hp;
+    nw.step(30); // 1 s — two patch ticks
+    ok(foe.hp < hpBefore, `cinder patch burned the foe standing in it (${hpBefore - foe.hp} dmg)`);
+    dropFoe(foe);
+  } finally {
+    CFG.echoes.cinderIgnitesCA = igniteWas;
+  }
+
+  state.player.echoes = {};
+  es.patches = [];
+  state.god = false;
+}
+
+async function testEchoBounds(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+  const { ECHOES, statsFor } = await import('../data/echoes');
+  state.gameOver = false;
+
+  // T5 verdict pinned: the real-fire flag SHIPS true (tests toggle it locally only)
+  eq(CFG.echoes.cinderIgnitesCA, true, 'T5 verdict: cinderIgnitesCA ships TRUE');
+
+  // scaling is monotonic and floored
+  for (const def of ECHOES) {
+    const lo = statsFor(def, 1), hi = statsFor(def, CFG.echoes.maxLevel);
+    ok(hi.dmg > lo.dmg, `${def.id}: dmg scales up with level`);
+    ok(hi.cooldown <= lo.cooldown, `${def.id}: cooldown never grows with level`);
+    ok(statsFor(def, 99).cooldown >= CFG.echoes.minCooldownSec, `${def.id}: cooldown floored at ${CFG.echoes.minCooldownSec}s`);
+    ok(hi.projectiles >= 1 && hi.orbCount >= 1, `${def.id}: counts stay ≥ 1`);
+  }
+
+  // rolled echo damage stays inside the D5 band: base × [dmgRow.min, dmgRow.max]
+  const { NET_GAME_MAP } = await import('../data/network');
+  const dmgRow = NET_GAME_MAP.find((m: any) => m.target === 'damage')!;
+  const thorn = ECHOES.find((e) => e.id === 'thornring')!;
+  const base = statsFor(thorn, 1).dmg;
+  const minDmg = Math.max(1, Math.round(base * dmgRow.min)) - 1; // rounding slack
+  const maxDmg = Math.round(base * dmgRow.max) + 1;
+  const { ENEMIES } = await import('../data/enemies');
+  const dummyDef = ENEMIES.find((e: any) => !e.boss)!;
+  state.god = true; state.player.hp = 100;
+  state.player.echoes = { thornring: 1 };
+  const es: any = sys.echoes;
+  for (let i = 0; i < 10; i++) {
+    const foe: any = makeDummyFoe(nw, dummyDef, 30, 0);
+    sys.hordes.foes.push(foe);
+    es.cooldowns = {}; // force an immediate fire
+    nw.step(3);
+    const dealt = foe.maxHp - foe.hp;
+    ok(dealt >= minDmg && dealt <= maxDmg, `echo roll ${i + 1} within D5 band: ${dealt} ∈ [${minDmg}, ${maxDmg}]`);
+    sys.hordes.foes = sys.hordes.foes.filter((f: any) => f.uid !== foe.uid);
+  }
+  state.player.echoes = {};
+  state.god = false;
+}
+
+// ---------------------------------------------------------------------------
 // test registry & runner
 // ---------------------------------------------------------------------------
 
@@ -1103,6 +1292,9 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Damage roll bounds — calm vs stormy variance', fn: testDamageRollBounds },
   { name: 'Network fallbacks — offline, all modifiers', fn: testNetworkFallbacks },
   { name: 'UI smoke — panels, Lens, inspect box', fn: testUISmoke },
+  { name: 'Echoes — grant on boss kill, re-kill levels, cap', fn: testEchoGrantAndLevel },
+  { name: 'Echoes — every kind deals damage (pulse/nova/volley/orbit/trail)', fn: testEchoDamage },
+  { name: 'Echoes — scaling monotonic, cooldown floor, D5 roll band', fn: testEchoBounds },
 ];
 
 /** Run all registered tests sequentially. Returns { pass, fail, total, report }. */

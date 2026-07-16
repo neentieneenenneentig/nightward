@@ -102,6 +102,17 @@ export const CFG = {
     wakeGold: 350,           // gold threshold that rouses bosses regardless of territory
   },
 
+  // C1: Echoes of the Slain — global knobs; per-echo numbers are rows in data/echoes.ts
+  echoes: {
+    maxLevel: 8,             // re-kills past this deepen nothing
+    minCooldownSec: 0.6,     // per-level cooldown reduction floors here
+    // T5 verdict: Cinder Trail attempts REAL fire-CA ignition on every patch.
+    // This is a kill-switch (flip false live via NW.CFG), not a someday-toggle.
+    cinderIgnitesCA: true,
+    orbitRadPerSec: 1.6,     // Null Orb angular speed
+    orbContactImmunitySec: 0.8, // per-foe grace between orb contact hits
+  },
+
   audio: {
     enabled: true,
   },

@@ -285,7 +285,10 @@ export class HordeSystem {
     const ux = (tx - f.x) / dist, uy = (ty - f.y) / dist;
     const terrain = world.speedAt(Math.floor(f.x / TILE), Math.floor(f.y / TILE));
     const fear = this.nearestCampfireDist(f.x, f.y) < CFG.fire.campfireFearTiles * TILE ? CFG.fire.campfireFearSpeedMult : 1;
-    const step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain * fear;
+    // C1: Rime Nova chill — the echo system stamps chillUntil/chillMult on struck foes
+    const ef2 = f as any;
+    const chill = ef2.chillUntil > state.clock ? (ef2.chillMult ?? 1) : 1;
+    const step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain * fear * chill;
     let blocked: Building | null = null;
     const nx = f.x + ux * step, ny = f.y + uy * step;
     if (world.canStand(nx, f.y, 5)) f.x = nx;

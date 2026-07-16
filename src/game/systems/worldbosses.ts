@@ -219,6 +219,10 @@ export class WorldBossSystem {
     b.hunting = false;
     this.warned.delete(b.uid);
 
+    // C1: the lord's echo clings to the slayer — granted on ANY death (player,
+    // tower, or another echo); the echo belongs to the run, not the blow
+    this.ctx.echoes?.onBossSlain?.(b);
+
     const def = defOf(b.defId);
     const [gmin, gmax] = CFG.worldBoss.goldOnKill;
     state.player.gold += gmin + Math.floor(Math.random() * (gmax - gmin + 1)) + b.level * 20;

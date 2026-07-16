@@ -25,6 +25,7 @@ import { HordeSystem } from './game/systems/hordes';
 import { CombatSystem } from './game/systems/combat';
 import { WorldBossSystem } from './game/systems/worldbosses';
 import { FireSystem } from './game/systems/fire';
+import { EchoSystem } from './game/systems/echoes';
 import { NetworkSystem } from './game/systems/network';
 import { craft } from './game/systems/crafting';
 import { toggleEquip, invAdd } from './game/rules';
@@ -134,6 +135,9 @@ async function boot() {
   ctx.worldbosses = worldbosses;
   const fire = new FireSystem(ctx);
   ctx.fire = fire;
+  // C1: Echoes of the Slain — boss-granted auto-abilities (worldbosses.hurt grants)
+  const echoes = new EchoSystem(ctx);
+  ctx.echoes = echoes;
 
   // resonance system — polls browser APIs, feeds game systems
   const net = new NetworkSystem();
@@ -347,7 +351,7 @@ async function boot() {
   let frames = 0;
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
-    sys: { gather, economy, build, hordes, combat, worldbosses, fire }, world, player, gen, chunks,
+    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes }, world, player, gen, chunks,
     get log() { return log; },  // expose full GameLog (entries + export + download)
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
@@ -430,6 +434,7 @@ async function boot() {
     hordes.update(effectiveDt);
     worldbosses.update(effectiveDt);
     fire.update(effectiveDt);
+    echoes.update(effectiveDt);
   }
 
   function enterRegion(ptx: number, pty: number, rk: string) {
