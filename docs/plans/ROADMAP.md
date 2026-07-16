@@ -547,7 +547,37 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 
 ---
 
-#### N2 — split: N2a "The Veil & the Lens" (ACTIVE) + N2b (material hooks)
+> ## Direction update (2026-07-16, evening — supersedes the queue order below)
+>
+> N2a SHIPPED (`v0.17-n2a-veil-lens` + hotfixes; verified scrub-clean, known gaps recorded
+> in `docs/plans/P1-platform-hardening.md`). User's direction after shipping:
+>
+> 1. **Scaling is the joy.** Feel-polish gates are RELAXED until the content batch exists —
+>    we are "playing a level-1 character over and over." Content pillars (design session
+>    with the user required before briefing): Vampire-Survivors-style abilities from boss
+>    kills, PoE-like passive tree, Terraria-like gear tiers, **Legion TD 2-style building
+>    variety** (current buildings verdict: "shit" — full rework, our own art style).
+>    Endgame fantasy: a vast map covered in buildings. ⚠️ Reality check recorded: the map
+>    IS infinite (worldgen pure fn of tile+seed) but `CFG.build.maxDistFromHall = 18` caps
+>    building sprawl — the content batch needs a territory-extension mechanic (outposts /
+>    waystones) to honor that endgame.
+> 2. **D5 (recorded):** outcome modifiers widen to ~0.3–1.5× with damage as a per-swing
+>    ROLL (PoE-lightning feel, width scales with flux); time-feel modifiers (simSpeed,
+>    moveSpeed) deliberately stay tight — wide swings there read as lag (D4 rationale).
+> 3. **QA is the answer to shipped-with-gaps:** the Gauntlet (behavioral suite — fights a
+>    boss, fights each mob, walks into stuff, exercises every recipe/building/feature) +
+>    a definition-of-done rule in WORKFLOW.md.
+> 4. **Painterly look:** investigate a classical-painting filter over the pixel art
+>    (Kuwahara-style oil-paint pass in `postprocess.ts` + canvas grain/LUT) — lives under
+>    G1's prototype-first gate: 2–3 baked samples for the user's verdict BEFORE any pipeline.
+>
+> **Queue now: P1 (platform hardening, `docs/plans/P1-platform-hardening.md`, ACTIVE) →
+> content-batch design session with the user → G1-P painterly prototype → N2b/G1-remainder
+> as they slot in.**
+
+---
+
+#### N2 — split: N2a "The Veil & the Lens" ✅ SHIPPED (2026-07-16, `v0.17-n2a-veil-lens`) + N2b (material hooks)
 
 > **N2a brief (ACTIVE, NEXT MILESTONE):** `docs/plans/N2a-veil-and-lens.md` — written
 > 2026-07-16 from the user's playtest verdict on `v0.16.1-n15-ground-truth`. **Supersedes the
