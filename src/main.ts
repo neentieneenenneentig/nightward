@@ -354,7 +354,10 @@ async function boot() {
 
     const a = ui.isOpen() ? { x: 0, y: 0 } : input.axis();
     const feetSpeed = world.speedAt(Math.floor(player.x / TILE), Math.floor(player.y / TILE));
-    const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y), feetSpeed);
+    // N2a: move speed modifier from echo jitter (1.06 − echoJitter×0.002, clamp 0.92–1.06)
+    const echoJit = net.snap.echoJitter;
+    const moveSpeedMul = Math.max(0.92, Math.min(1.06, 1.06 - echoJit * 0.002));
+    const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y), feetSpeed * moveSpeedMul);
     state.player.x = player.x;
     state.player.y = player.y;
 

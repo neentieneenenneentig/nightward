@@ -77,6 +77,10 @@ export class GatherSystem {
     // N1: resonance modulates gather speed
     const netMul = this.ctx.net?.getGameValue?.('simSpeed') ?? 1.0;
     speed *= netMul;
+    // N2a: gather speed modifier from downlink (0.85 + downlink×0.04, clamp 0.85–1.25)
+    const dl = this.ctx.net?.snap?.downlink ?? 10;
+    const gatherSpeedMul = Math.max(0.85, Math.min(1.25, 0.85 + dl * 0.04));
+    speed *= gatherSpeedMul;
 
     // M3.5: Action-gated beacon echo — gathers ping resource-region beacons
     this.ctx.net?.probeAction?.('gather');
@@ -127,7 +131,7 @@ export class GatherSystem {
     const got = drops.map((d) => `+${d.n} ${ITEMS[d.id].name}`).join('  ');
     toast(`${got}   (+${a.def.xp} ${SKILL_NAME[a.def.skill]} xp)`);
     const s = this.ctx.net?.snap;
-    this.ctx.log?.push('gather', `${got || 'Gathered nothing'} from ${a.def.name} [RTT ${s?.rtt?.toFixed(0) ?? '?'}ms · sim ${this.ctx.net?.getGameValue?.('simSpeed')?.toFixed(2) ?? '?'}×]`, state.clock);
+    this.ctx.log?.push('gather', `${got || 'Gathered nothing'} from ${a.def.name}`, state.clock);
 
     // N1: spawn network floaters showing what metrics influenced this gather
     if (this.ctx.floaters && this.ctx.net) {

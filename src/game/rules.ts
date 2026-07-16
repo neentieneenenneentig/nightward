@@ -62,7 +62,11 @@ export function skillLevel(state: GameState, skill: string): number {
 /** Grants xp; returns the new level if this crossed a threshold, else 0. */
 export function addXp(state: GameState, skill: string, amount: number): number {
   const before = skillLevel(state, skill);
-  state.player.xp[skill] = (state.player.xp[skill] ?? 0) + amount;
+  // N2a: xp rate modifier from distinct regions probed (1 + regions×0.06, clamp 1.0–1.30)
+  const net = (window as any).NW?.NET;
+  const regions = net?.distinctRegionsProbed ?? 0;
+  const xpMul = Math.max(1.0, Math.min(1.30, 1 + regions * 0.06));
+  state.player.xp[skill] = (state.player.xp[skill] ?? 0) + Math.round(amount * xpMul);
   const after = skillLevel(state, skill);
   return after > before ? after : 0;
 }
