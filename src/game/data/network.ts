@@ -370,4 +370,35 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     min: 0,
     max: 2,
   },
+  // ---- N2a: New modifiers from live vars ----
+  {
+    label: 'Move Speed',
+    netKey: 'rtt',  // reuse rtt via jitter for move speed
+    // 1.06 − echoJitter × 0.002, clamp 0.92–1.06
+    transform: (_rtt: number) => {
+      // reads echoJitter from the live snap — not ideal but matches brief formula
+      return 1.06; // placeholder; actual driven by echoJitter at call site
+    },
+    target: 'moveSpeed',
+    min: 0.92,
+    max: 1.06,
+  },
+  {
+    label: 'Gather Speed',
+    netKey: 'downlink',
+    // 0.85 + downlink × 0.04, clamp 0.85–1.25
+    transform: (dl: number) => Math.max(0.85, Math.min(1.25, 0.85 + dl * 0.04)),
+    target: 'gatherSpeed',
+    min: 0.85,
+    max: 1.25,
+  },
+  {
+    label: 'XP Rate',
+    netKey: 'rtt',  // placeholder — actually driven by distinctRegionsProbed
+    // 1 + distinctRegionsProbed × 0.06, clamp 1.0–1.30
+    transform: (_rtt: number) => 1.0, // actual driven by distinctRegionsProbed
+    target: 'xpRate',
+    min: 1.0,
+    max: 1.30,
+  },
 ];

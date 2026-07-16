@@ -99,6 +99,12 @@ export class NetworkSystem {
   lastBuildTcp: number = 0;
   lastBuildTls: number = 0;
 
+  // ---- N2a: Last echo record (for mobs born from operations) ----
+  /** Most recent completed probe result. Set on every completed beacon fetch. */
+  lastEcho: { ms: number; cold: boolean; jitterAtBirth: number; route: { label: string; region: string; countryCode: string }; tsMs: number } | null = null;
+  /** Number of distinct route regions probed this session. */
+  distinctRegionsProbed: number = 0;
+
   /** Record a history sample for sparkline rendering. Called from the render loop. */
   recordHistory(nowMs: number) {
     if (nowMs - this.lastHistorySampleMs < this.historyInterval) return;
@@ -707,6 +713,25 @@ export class NetworkSystem {
         } else {
           this.netLog('resonance-echo', `${label}: ${rtt}ms (${region})`);
         }
+
+        // N2a: record last echo for mob birth stats
+        const sameUrlSamples = this.echoSamples.get(url) ?? [];
+        const jitterAtBirth = sameUrlSamples.length >= 2
+          ? Math.abs(sameUrlSamples[sameUrlSamples.length - 1] - sameUrlSamples[sameUrlSamples.length - 2])
+          : 0;
+        const cold = rtt > 100 && wasWarm; // proxy for paid DNS+TLS handshake
+        const prevRegions = new Set<string>();
+        for (const p of this.snap.endpointProbes) {
+          if (p.rtt > 0) prevRegions.add(p.region);
+        }
+        prevRegions.add(region);
+        this.distinctRegionsProbed = prevRegions.size;
+        this.lastEcho = {
+          ms: rtt, cold,
+          jitterAtBirth,
+          route: { label, region, countryCode },
+          tsMs: performance.now(),
+        };
 
         // fast echo → resonance crit ONLY from warmed routes (F3)
         if (action === 'attack' && rtt > 0 && rtt < 30 && wasWarm) {

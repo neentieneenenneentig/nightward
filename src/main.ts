@@ -29,6 +29,7 @@ import { NetworkSystem } from './game/systems/network';
 import { craft } from './game/systems/crafting';
 import { toggleEquip, invAdd } from './game/rules';
 import { BUILDINGS } from './game/data/buildings';
+import { NET_GAME_MAP } from './game/data/network';
 import { phase, tintAt } from './game/systems/daynight';
 import { Fog } from './game/world/fog';
 import { domainAt, regionOf, regionKey } from './game/world/domains';
@@ -156,66 +157,25 @@ async function boot() {
     particles.spawn('rift', px, py, 80);
   });
 
-  // Resonance panel (toggled with O key) — simplified readout
+  // N2a: The Lens — raw observatory panel (O key). 8 sections:
+  // 1.Connection 2.Realm 3.Routes 4.Identity 5.Vessel 6.Threads 7.Feed 8.Inspect
   const obsPanel = document.createElement('div');
   obsPanel.id = 'nw-observatory';
   obsPanel.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:35;'
-    + 'font-family:ui-monospace,Consolas,monospace;font-size:11px;line-height:1.4;'
-    + 'color:#ccc;background:#0a0a12e8;padding:14px 18px;border-radius:8px;'
-    + 'border:1px solid #334;display:none;min-width:280px;max-width:360px;max-height:92vh;overflow-y:auto;'
+    + 'font-family:ui-monospace,Consolas,monospace;font-size:10px;line-height:1.35;'
+    + 'color:#bbb;background:#080810f2;padding:12px 16px;border-radius:8px;'
+    + 'border:1px solid #334;display:none;min-width:340px;max-width:420px;max-height:94vh;overflow-y:auto;'
     + 'pointer-events:auto;user-select:none;';
   obsPanel.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;border-bottom:1px solid #334;padding-bottom:6px;">
-      <span style="color:#c9b6e6;font-weight:bold;font-size:13px;">✨ Soul Resonance</span>
-      <span style="color:#666;font-size:10px;">O to close</span>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;border-bottom:1px solid #334;padding-bottom:4px;">
+      <span style="color:#aaa;font-weight:bold;font-size:12px;">🔍 The Lens</span>
+      <span style="color:#555;font-size:9px;">O to close</span>
     </div>
-
-    <!-- Big number readouts -->
-    <div style="margin-bottom:8px;display:flex;gap:10px;">
-      <div style="flex:1;text-align:center;background:#0d0d18;border-radius:4px;padding:6px 4px;">
-        <div style="font-size:9px;color:#f96;">PULSE</div>
-        <div id="nw-obs-rtt-big" style="font-size:18px;font-weight:bold;color:#f96;line-height:1.2;">--</div>
-        <div style="font-size:9px;color:#885;">ms</div>
-      </div>
-      <div style="flex:1;text-align:center;background:#0d0d18;border-radius:4px;padding:6px 4px;">
-        <div style="font-size:9px;color:#6cf;">FLOW</div>
-        <div id="nw-obs-bw-big" style="font-size:18px;font-weight:bold;color:#6cf;line-height:1.2;">--</div>
-        <div style="font-size:9px;color:#885;">Mbps</div>
-      </div>
-      <div style="flex:1;text-align:center;background:#0d0d18;border-radius:4px;padding:6px 4px;">
-        <div style="font-size:9px;color:#fc6;">FLUX</div>
-        <div id="nw-obs-jit-big" style="font-size:18px;font-weight:bold;color:#fc6;line-height:1.2;">--</div>
-        <div style="font-size:9px;color:#885;">ms</div>
-      </div>
-    </div>
-
-    <!-- Realm card -->
-    <div id="nw-obs-realm" style="background:#111122;border-radius:4px;padding:6px 10px;margin-bottom:8px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span id="nw-obs-biome" style="font-weight:bold;font-size:12px;">--</span>
-        <span id="nw-obs-stability" style="font-size:11px;">--</span>
-      </div>
-      <div style="margin-top:3px;height:3px;background:#222;border-radius:2px;overflow:hidden;">
-        <div id="nw-obs-stabbar" style="height:100%;width:0%;background:#0c0;transition:width 0.5s;"></div>
-      </div>
-    </div>
-
-    <!-- Active modifiers -->
-    <div id="nw-obs-modifiers" style="font-size:10px;line-height:1.6;margin-bottom:6px;">
-      <div style="color:#888;margin-bottom:2px;">ACTIVE MODIFIERS</div>
-    </div>
-
-    <!-- Danger level -->
-    <div id="nw-obs-danger" style="margin-top:6px;padding-top:6px;border-top:1px solid #333;font-size:10px;">
-      <div style="display:flex;justify-content:space-between;">
-        <span style="color:#f66;">⚔ DANGER</span>
-        <span id="nw-obs-danger-val" style="color:#f66;">--</span>
-      </div>
-    </div>
+    <div id="nw-lens-body"></div>
   `;
   document.body.appendChild(obsPanel);
 
-  // O key toggles the observatory (works regardless of debug mode)
+  // O key toggles the Lens
   window.addEventListener('keydown', (e) => {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
     if (e.key === 'o' || e.key === 'O') {
@@ -598,55 +558,112 @@ async function boot() {
     if (changed.length) worldCore.bumpRebakes(chunks.rebakeTiles(changed));
   }
 
-  // Resonance panel update
+  // N2a: Lens update — rebuilds all 8 sections
   function updateObservatory() {
+    const body = document.getElementById('nw-lens-body');
+    if (!body) return;
     const s = net.snap;
     const biome = net.getBiome();
     const stability = net.getStability();
+    const profile = (net as any).computeRealmProfile?.() ?? { median: s.rtt, variance: s.jitter * s.jitter };
 
-    // big number readouts
-    const rttBig = document.getElementById('nw-obs-rtt-big');
-    const bwBig  = document.getElementById('nw-obs-bw-big');
-    const jitBig = document.getElementById('nw-obs-jit-big');
-    if (rttBig) rttBig.textContent = s.rtt.toFixed(0);
-    if (bwBig)  bwBig.textContent  = s.downlink.toFixed(1);
-    if (jitBig) jitBig.textContent = s.jitter.toFixed(1);
+    let html = '';
 
-    // realm card
-    const biomeEl = document.getElementById('nw-obs-biome');
-    const stabEl  = document.getElementById('nw-obs-stability');
-    const stabBar = document.getElementById('nw-obs-stabbar');
-    if (biomeEl) biomeEl.textContent = biome.name;
-    if (stabEl)  stabEl.textContent  = `Stability ${Math.round(stability * 100)}%`;
-    if (stabBar) stabBar.style.width = `${Math.round(stability * 100)}%`;
+    // ── 1. Connection ──
+    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
+    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">CONNECTION</div>';
+    html += `<div style="display:flex;gap:8px;">`;
+    html += `<span style="color:#f96;">RTT <b>${s.rtt.toFixed(0)}</b>ms</span>`;
+    html += `<span style="color:#6cf;">DL <b>${s.downlink.toFixed(1)}</b>Mbps</span>`;
+    html += `<span style="color:#fc6;">Jit <b>${s.jitter.toFixed(1)}</b>ms</span>`;
+    html += `</div>`;
+    html += `<div style="font-size:8px;color:#556;margin-top:1px;">`;
+    html += `RTT quantized to 25 ms by browser · DL capped at 10 Mbps`;
+    html += `<br>effectiveType: ${s.effectiveType} · type: ${s.connectionType || '— (desktop browsers hide this)'}`;
+    html += ` · saveData: ${(navigator as any).connection?.saveData ? 'yes' : 'no'} · online: ${s.online}`;
+    html += `</div></div>`;
 
-    // active modifiers
-    const modEl = document.getElementById('nw-obs-modifiers');
-    if (modEl) {
-      const dm = net.getDamageMul();
-      const gm = net.getGameValue('goldRate');
-      const sm = net.getGameValue('simSpeed');
-      let html = '<div style="color:#888;margin-bottom:2px;">ACTIVE MODIFIERS</div>';
-      if (dm !== 1.0) html += `<div>⚔ Damage: ${dm.toFixed(2)}×</div>`;
-      if (gm !== 1.0) html += `<div>💰 Gold: ${gm.toFixed(2)}×</div>`;
-      if (sm !== 1.0) html += `<div>⏱ Sim: ${sm.toFixed(2)}×</div>`;
-      if (dm === 1.0 && gm === 1.0 && sm === 1.0) html += '<div style="color:#666;">None — resonance is calm</div>';
-      modEl.innerHTML = html;
+    // ── 2. Realm profile ──
+    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
+    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">REALM PROFILE</div>';
+    html += `<div>echo median ${profile.median.toFixed(0)}ms · variance ${(profile.variance).toFixed(0)} → <b style="color:${biome.hex}">${biome.name}</b></div>`;
+    html += `<div style="margin-top:2px;height:3px;background:#222;border-radius:2px;overflow:hidden;">`;
+    html += `<div style="height:100%;width:${Math.round(stability*100)}%;background:${biome.hex};transition:width 0.5s;"></div></div>`;
+    html += `<div style="font-size:9px;color:#666;">Stability ${Math.round(stability*100)}%</div></div>`;
+
+    // ── 3. Routes ──
+    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
+    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">ROUTES</div>';
+    // Own origin row
+    html += `<div style="font-size:9px;"><b>this origin</b> DNS ${s.pageDnsTime.toFixed(0)}ms · TCP — · TLS ${s.pageTlsTime.toFixed(0)}ms · TTFB ${s.pageTtfb.toFixed(0)}ms</div>`;
+    // Per-beacon rows
+    const probes = s.endpointProbes ?? [];
+    const seen = new Set<string>();
+    for (const p of probes) {
+      if (seen.has(p.label)) continue; seen.add(p.label);
+      const route = (net as any).echoSamples?.get(p.host ?? p.label) as number[] | undefined;
+      const last = p.rtt > 0 ? p.rtt : '—';
+      const best = route?.length ? Math.min(...route).toFixed(0) : last;
+      const med = route?.length ? [...route].sort((a,b)=>a-b)[Math.floor(route.length/2)].toFixed(0) : last;
+      const warm = (net as any).warmedRoutes?.has(p.host ?? p.label) ? '🔥' : '';
+      html += `<div style="font-size:9px;">${warm} ${p.label} · ${p.detail ?? ''} · last ${last}ms · best ${best}ms · med ${med}ms · n=${route?.length ?? 0}</div>`;
     }
+    if (!probes.length) html += '<div style="font-size:9px;color:#555;">No beacons probed yet — attack to discover routes</div>';
+    html += '</div>';
 
-    // danger level
-    const dangerEl = document.getElementById('nw-obs-danger-val');
-    if (dangerEl) {
-      const hordeSize = hordes.foes.length;
-      const bossNear = worldbosses.nearestThreatTiles();
-      const nightMult = ctx.isNight() ? 1 : 0;
-      let danger = 'Low';
-      if (bossNear != null && bossNear < 10) danger = 'Extreme';
-      else if (hordeSize > 15) danger = 'High';
-      else if (hordeSize > 5 || nightMult) danger = 'Medium';
-      dangerEl.textContent = danger;
-      dangerEl.style.color = danger === 'Extreme' ? '#f33' : danger === 'High' ? '#f66' : danger === 'Medium' ? '#fc6' : '#6c6';
+    // ── 4. Identity ──
+    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
+    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">IDENTITY</div>';
+    const idRevealed = (net as any).identityFetched;
+    html += `<div style="font-size:9px;">IP: ${idRevealed && s.publicIp ? s.publicIp : '— unrevealed (explore to reveal)'}</div>`;
+    html += `<div style="font-size:9px;">ISP: ${idRevealed && s.isp ? s.isp : '— unrevealed (explore to reveal)'}</div>`;
+    html += `<div style="font-size:9px;">City: ${idRevealed && s.city ? s.city : '— unrevealed (explore to reveal)'} · Country: ${idRevealed && s.country ? s.country : '—'}</div>`;
+    html += `<div style="font-size:9px;">ASN: ${idRevealed && s.asn ? s.asn : '— unrevealed (explore to reveal)'}</div>`;
+    html += `<div style="font-size:9px;">CF colo: ${s.colo || '—'} · warp: ${s.warp ? 'yes' : 'no'}</div>`;
+    html += `<div style="font-size:9px;color:#887;">local gateway — not observable from a browser</div>`;
+    html += '</div>';
+
+    // ── 5. Vessel ──
+    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
+    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">VESSEL</div>';
+    const ua = navigator.userAgent;
+    const brand = /Edge|Chrome|Firefox|Safari/.exec(ua)?.[0] ?? '—';
+    html += `<div style="font-size:9px;">UA: ${brand} · cores: ${s.cpuCores} · RAM: ${s.deviceMemory}GB</div>`;
+    html += `<div style="font-size:9px;">Screen: ${screen.width}×${screen.height} @${devicePixelRatio}x · lang: ${navigator.language} · tz: ${Intl.DateTimeFormat().resolvedOptions().timeZone}</div>`;
+    // GPU: try WebGL renderer info
+    const gl = document.createElement('canvas').getContext('webgl2') || document.createElement('canvas').getContext('webgl');
+    const gpu = (gl as any)?.getParameter?.(gl?.RENDERER) ?? '—';
+    html += `<div style="font-size:9px;">GPU: ${gpu}</div>`;
+    html += '</div>';
+
+    // ── 6. Threads (decoder ring) ──
+    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
+    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">THREADS</div>';
+    for (const gm of NET_GAME_MAP) {
+      const raw = net.get(gm.netKey);
+      const val = Math.max(gm.min, Math.min(gm.max, gm.transform(raw)));
+      html += `<div style="font-size:9px;">${gm.label} ×${val.toFixed(2)} ← ${gm.netKey} ${raw.toFixed(1)} (clamp ${gm.min}–${gm.max})</div>`;
     }
+    // also show realm row
+    html += `<div style="font-size:9px;">Realm ← ${biome.name} (${biome.id})</div>`;
+    html += '</div>';
+
+    // ── 7. Feed (last 30 truth-kind entries) ──
+    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
+    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">FEED</div>';
+    const feedEntries = log.recentFeed(30);
+    if (!feedEntries.length) {
+      html += '<div style="font-size:9px;color:#555;">No truth events yet</div>';
+    } else {
+      for (const e of feedEntries) {
+        const t = Math.floor(e.t);
+        const ts = `${String((t/60)|0).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
+        html += `<div style="font-size:8px;color:#888;">[${ts}] ${e.kind} ${e.msg}</div>`;
+      }
+    }
+    html += '</div>';
+
+    body.innerHTML = html;
   }
 
   /** Draw a sparkline on a canvas element by id. */

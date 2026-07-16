@@ -13,6 +13,7 @@ import type { Building } from '../state';
 import { TILE } from '../world/worldgen';
 import { BUILDINGS } from '../data/buildings';
 import { Sound } from '../../engine/audio';
+import { epithetForRegion, prefixForBirth } from '../data/lexicon';
 
 const SKILL_NAME: Record<string, string> = Object.fromEntries(SKILLS.map((s) => [s.id, s.name]));
 
@@ -126,18 +127,61 @@ export class HordeSystem {
     const dmgMul = Math.pow(CFG.horde.dmgGrowth, n - 1);
     // N1: network enemy scaling (worse connection = tougher enemies)
     const netScale = this.ctx.net?.getGameValue?.('enemyScale') ?? 1.0;
+
+    // N2a: echo-derived stats for night-wave mobs (C2)
+    const echo = this.ctx.net?.lastEcho;
+    const echoFresh = echo && (performance.now() - echo.tsMs < 30000);
+    let echoHpMul = 1.0, echoDmgMul = 1.0, echoSoak = 0, epithetName = def.name, specialSkill: string | null = null;
+    let echoMoveMul = 1.0;
+    if (echoFresh) {
+      // hp × (0.9 + ms/400), clamp 0.9–1.6
+      echoHpMul = Math.max(0.9, Math.min(1.6, 0.9 + echo!.ms / 400));
+      // damage × (0.9 + jitterAtBirth/80), clamp 0.9–1.5
+      echoDmgMul = Math.max(0.9, Math.min(1.5, 0.9 + echo!.jitterAtBirth / 80));
+      // defense (flat soak): cold ? 2 : 0
+      echoSoak = echo!.cold ? 2 : 0;
+      // move speed × (1.25 − ms/300), clamp 0.85–1.2
+      echoMoveMul = Math.max(0.85, Math.min(1.2, 1.25 - echo!.ms / 300));
+
+      // Special skills (max one per foe)
+      const prof = this.ctx.net?.computeRealmProfile?.() ?? { median: echo!.ms, variance: 0 };
+      if (prof.variance >= 8000) {
+        specialSkill = 'Blinker'; // teleports 2 tiles away the first time hit
+      } else if (echo!.cold) {
+        specialSkill = 'Shelled'; // +2 extra soak until hit 3 times
+        echoSoak += 2;
+      }
+
+      // Epithet name: prefix + base name + region suffix
+      const prefix = prefixForBirth(echo!.cold, echo!.jitterAtBirth, echo!.ms);
+      const suffix = epithetForRegion(echo!.route.region);
+      epithetName = [prefix, def.name, suffix].filter(Boolean).join(' ');
+    }
+
     const foe: Foe = {
       uid: state.nextUid++, def,
       x, y, px: x, py: y,
-      hp: Math.round(def.hp * hpMul * netScale), maxHp: Math.round(def.hp * hpMul * netScale),
-      dmg: Math.round(def.dmg * dmgMul * netScale),
+      hp: Math.round(def.hp * hpMul * netScale * echoHpMul),
+      maxHp: Math.round(def.hp * hpMul * netScale * echoHpMul),
+      dmg: Math.round(def.dmg * dmgMul * netScale * echoDmgMul),
       atkT: 0, telegraphT: 0, animT: Math.random(),
-    };
+      // N2a: store echo-derived fields on foe
+      (foe as any).echoSoak = echoSoak,
+      (foe as any).echoMoveMul = echoMoveMul,
+      (foe as any).specialSkill = specialSkill,
+      (foe as any).epithetName = epithetName,
+      (foe as any).hitCount = 0,
+      (foe as any).blinked = false,
+    } as any;
     this.foes.push(foe);
     views.addFoe(foe);
     this.toSpawn--;
-    const s = this.ctx.net?.snap;
-    this.ctx.log?.push('spawn', `A ${def.name} joins the night wave (${foe.hp} hp)`, state.clock);
+    // N2a: Chronicle gets fiction voice, Lens feed gets technical
+    if (echoFresh) {
+      this.ctx.log?.push('spawn', `A ${epithetName} joins the night wave (${foe.hp} hp)`, state.clock);
+    } else {
+      this.ctx.log?.push('spawn', `A ${def.name} joins the night wave (${foe.hp} hp)`, state.clock);
+    }
   }
 
   /** Day prey: spawns around the PLAYER at base (night-1) stats — loot on legs. */
@@ -317,6 +361,27 @@ export class HordeSystem {
     return true;
   }
   hurt(f: Foe, dmg: number, awardXp = true) {
+    // N2a: Shelled soak — extra soak until hit 3 times
+    const ef = f as any;
+    if (ef.echoSoak > 0) {
+      const soaked = Math.min(dmg, ef.echoSoak);
+      dmg -= soaked;
+      ef.echoSoak -= soaked;
+      ef.hitCount = (ef.hitCount ?? 0) + 1;
+      if (ef.echoSoak <= 0 && ef.specialSkill === 'Shelled') {
+        this.ctx.log?.push('combat', `${ef.epithetName ?? f.def.name}'s shell cracks`, this.ctx.state.clock);
+      }
+    }
+    // N2a: Blinker — teleport 2 tiles away the first time hit
+    if (ef.specialSkill === 'Blinker' && !ef.blinked && dmg > 0) {
+      ef.blinked = true;
+      const ang = Math.random() * Math.PI * 2;
+      const dist = TILE * 2;
+      const nx = f.x + Math.cos(ang) * dist;
+      const ny = f.y + Math.sin(ang) * dist;
+      if (this.ctx.world.canStand(nx, ny, 5)) { f.x = nx; f.y = ny; }
+      this.ctx.log?.push('combat', `${ef.epithetName ?? f.def.name} blinks away!`, this.ctx.state.clock);
+    }
     f.hp -= dmg;
     if (f.hp > 0) return;
     const { state, views, toast } = this.ctx;
