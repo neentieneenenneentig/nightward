@@ -33,8 +33,9 @@ C1 echoes built, verified, and live-tested. Four findings:
    rebalance, and walls that actually break.
 
 3. **Lens is the UI future:** The user loves the Lens (observatory, O key): "i love the
-   lens. it is AWESOME!" Two directives: (a) the RPGUI panels go offscreen on small
-   viewports — need viewport clamping, and (b) ALL game panels should adopt the Lens's
+   lens. it is AWESOME!" Two directives: (a) the "popup information menu" goes offscreen
+   — review traced this to the Lens's own inspect box (`#nw-lens-inspect`), not the RPGUI
+   panels; fixed 2026-07-17 (real-size clamping), and (b) ALL game panels should adopt the Lens's
    dark, clean, technical aesthetic instead of RPGUI pixel-art frames. This spawned
    **U1 — Lens UI Unification** (`docs/plans/U1-lens-ui-unification.md`): replace all
    RPGUI chrome with Lens-style dark panels, monospace fonts, subtle borders. Supersedes

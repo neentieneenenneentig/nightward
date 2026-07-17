@@ -38,14 +38,20 @@ of the RPGUI pixel-art frames. This brief defines the unification scope.
 - RPGUI-specific CSS vars if any (the current `--ink`, `--gold`, etc. get remapped
   to Lens palette)
 
-### FIX (popup offscreen)
-- The RPGUI panels use `max-height: 86dvh` and `width: min(560px, 96vw)` centered via
-  flexbox — but on very small viewports (mobile / narrow windows) the panel can overflow
-  the viewport edges because there's no explicit clamping.
-- The Lens already handles this correctly: `max-height: 94vh`, `overflow-y: auto`,
-  properly centered with `transform: translate(-50%, -50%)`.
-- **Fix:** all panels adopt the Lens centering + clamping pattern. Additionally, add
-  `max-width: 96vw` guard and ensure the scrim handles edge-to-edge coverage.
+### FIX (popup offscreen) — ✅ FIXED 2026-07-17 (review session), culprit corrected
+- **Ground-truth correction:** the offscreen popup was NOT the RPGUI panels — they are
+  flex-centered inside `.nw-scrim` with `width: min(560px, 96vw)` + `max-height: 86dvh`
+  + scrim padding, and cannot leave the viewport. The actual culprit was **the Lens's
+  own inspect box** (`#nw-lens-inspect`, main.ts `showInspectBox`): it clamped with a
+  hardcoded ~100px height guess while real boxes (long SOURCE strings, wrapped at
+  320px) run 150–200px tall — so hovering rows near the bottom (the FEED section) ran
+  it off the bottom edge; and the left-flip (`rect.left − 328`) could push it past the
+  left edge on narrow viewports.
+- **Fix shipped:** `showInspectBox` now measures the box's real rendered size and clamps
+  both axes into the viewport (≥4px margins). Done on `c1-echoes`, same session as this
+  correction.
+- Remaining U1 work here is only hardening: keep the panels' existing clamps when the
+  chrome is rewritten (they are already correct).
 
 ## Implementation scope
 
@@ -91,17 +97,38 @@ Replace the current ~230 lines with a Lens-derived stylesheet:
    all `text-transform: uppercase` forced transforms.
 5. **Keep:** the global scrollbar styles (already match Lens aesthetic), the
    keyboard focus ring (already good), the viewport scaling via `--scale` (M1),
-   the `dvh` / safe-area support (M1).
+   the `dvh` / safe-area support (M1), the `[data-touch]` / `[data-narrow]`
+   adaptations, and the `@media (max-width: …)` compaction rules.
 
-### Phase 2: panel positioning fix
+### Phase 1 pitfalls (found ground-truthing against the shipped `styles.ts`, 2026-07-17)
 
-In `ui.ts` `renderPanel()`:
-- The `.nw-scrim` already uses flexbox centering. Add explicit clamping to the
-  `.nw-panel`: `max-width: min(560px, 96vw)`, `max-height: min(86dvh, 600px)`,
-  ensure `overflow-y: auto` on `.nw-pbody`.
-- Verify the scrim covers the full viewport (it uses `position: absolute; inset: 0` —
-  this is correct).
-- Test at narrow widths (320px) and short heights (400px).
+- **Button text color must flip.** `.nw-btn` and `.nw-make` use `color: #3a2a18`
+  (dark ink on the parchment button image). On a dark flat button that's invisible —
+  they move to `var(--ink)`.
+- **Three classes tint via `filter: hue-rotate(…)` on the button IMAGE** —
+  `.nw-btn.primary`, `.nw-make.short`, `.nw-buildbar .cancel`. With the image gone the
+  filter does nothing visible; replace with accent border/background variants
+  (`.primary` → `--accent` border, `.short`/`.cancel` → `--bad` tint).
+- **`--font-pixel` has consumers beyond headings:** `.nw-title`, `.nw-btn` labels,
+  `.nw-buildbar .nm`, `.nw-skill .lv b`, `.nw-make`, `.nw-tab`, `.nw-phead h2`,
+  `.nw-gameover h1`, and the Lens-feed `.res-abbr` badges. Keep the variable name and
+  remap it to the mono stack so nothing dangles, then retune the font *sizes* (Press
+  Start 2P renders huge at 8px; monospace at 8px is tiny — bump labels to 9–11px).
+- **Cursor rules live in three places:** `body, canvas { cursor: url(…) }` and the
+  `#hud .nw-btn, …` pointer rule at the top of styles.ts. Replace with
+  `default`/`pointer`; nothing else imports the cursor art.
+- **`rpgui` is a real npm dependency** (`^1.0.3` in package.json) and `styles.ts` is
+  its ONLY importer (verified by grep) — after the rewrite, remove the dependency and
+  reinstall so the lockfile drops it.
+- **The boot screen in `index.html` is independent** — no rpgui/Press Start references
+  outside `styles.ts` (verified by grep across html/ts/css).
+
+### Phase 2: panel positioning (mostly done already)
+
+The inspect-box offscreen bug — the user's actual repro — is already fixed (see FIX
+section above). `.nw-pbody` already has `overflow-y: auto`; `.nw-panel` is already
+width- and height-clamped. Remaining Phase-2 work: preserve those clamps through the
+Phase-1 rewrite and re-test at 320×400 after the chrome changes.
 
 ### Phase 3: action bar + top bar restyle
 

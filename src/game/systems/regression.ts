@@ -137,11 +137,17 @@ async function testGathering(nw: any) {
   sys.gather.tryStart();
   ok(sys.gather.active !== null, 'gather active after tryStart()');
 
+  // Gather progress advances by effectiveDt (dt × simSpeed), NOT raw dt, and `need`
+  // already folds simSpeed into its own speed term — so real frames-to-complete scale
+  // ~need·30/simSpeed. The old fixed budget ceil(need·30)+10 assumed dt=1/30 and fell
+  // exactly one frame short whenever the live network pushed simSpeed below ~0.86
+  // (rtt > ~97ms → simSpeed 0.85). Step until it clears, capped generously by `need`
+  // (simSpeed is clamped ≥0.85, so need·45 is a comfortable ceiling).
   const need = sys.gather.active ? sys.gather.active.need : 3;
-  const steps = Math.ceil(need / (1 / 30)) + 10;
-  for (let i = 0; i < steps; i++) nw.step(1);
-
-  ok(sys.gather.active === null, 'gather completed (active cleared)');
+  const cap = Math.ceil(need * 45) + 120;
+  let stepped = 0;
+  while (sys.gather.active !== null && stepped < cap) { nw.step(1); stepped++; }
+  ok(sys.gather.active === null, `gather completed (active cleared after ${stepped} steps, cap ${cap})`);
 }
 
 async function testCrafting(nw: any) {
@@ -1263,6 +1269,57 @@ async function testEchoBounds(nw: any) {
   state.god = false;
 }
 
+async function testNetMapIntegrity(nw: any) {
+  const { NET_GAME_MAP, NET_METRICS } = await import('../data/network');
+  const net = nw.ctx.net;
+  if (!net) { ok(true, 'no network system — skipping net-map integrity test'); return; }
+
+  // Every game-mapping netKey must resolve to a real metric. A typo'd key makes
+  // get() return 0 and the row silently computes garbage (caught live 2026-07-17:
+  // the S1 stub rows 'echoJitter' and 'hardwareConcurrency' were dead on arrival).
+  const metricKeys = new Set(NET_METRICS.map((m: any) => m.key));
+  for (const gm of NET_GAME_MAP) {
+    ok(metricKeys.has(gm.netKey), `${gm.label}: netKey '${gm.netKey}' exists in NET_METRICS`);
+  }
+  // Targets must be unique — getGameValue() resolves by find(); a duplicate shadows.
+  const targets = NET_GAME_MAP.map((m: any) => m.target);
+  eq(new Set(targets).size, targets.length, 'NET_GAME_MAP targets are unique');
+
+  // Pin the S1 vitals rows on the neutral snapshot CFG.vitals bases assume
+  // (10 Mbps, 50 ms RTT, 4g, 5 ms echo jitter, 4 cores, 4 GB) + band spot-checks.
+  const s = net.snap;
+  const saved = {
+    rtt: s.rtt, downlink: s.downlink, echoJitter: s.echoJitter,
+    effectiveType: s.effectiveType, cpuCores: s.cpuCores,
+    deviceMemory: s.deviceMemory, endpointLatency: s.endpointLatency,
+    timeOfDay: s.timeOfDay,
+  };
+  try {
+    s.rtt = 50; s.downlink = 10; s.echoJitter = 5; s.effectiveType = '4g';
+    s.cpuCores = 4; s.deviceMemory = 4; s.endpointLatency = 30; s.timeOfDay = 12 / 24;
+    eq(net.getGameValue('vigorDecay'), 0.8, 'neutral: vigorDecay 0.8× (10 Mbps = plenty)');
+    eq(net.getGameValue('vigorPerKill'), 1.0, 'neutral: vigorPerKill 1.0×');
+    eq(net.getGameValue('vigorPerGather'), 1.0, 'neutral: vigorPerGather 1.0×');
+    eq(net.getGameValue('vigorPerCampfire'), 1.0, 'neutral: vigorPerCampfire 1.0×');
+    eq(net.getGameValue('resolveDecay'), 1.0, 'neutral: resolveDecay 1.0× on 4g (tier encoding 4g=1)');
+    eq(net.getGameValue('resolvePerKill'), 1.0, 'neutral: resolvePerKill 1.0×');
+    eq(net.getGameValue('resolvePerBuild'), 1.0, 'neutral: resolvePerBuild 1.0×');
+    eq(net.getGameValue('resolveNearHall'), 1.0, 'neutral: resolveNearHall 1.0×');
+    eq(net.getGameValue('resolveNightMult'), 0.8, 'noon: resolveNightMult 0.8×');
+    // Tier bands (encoding: 4g=1, 3g=2, 2g=3, slow-2g=4 — the off-by-one this pins)
+    s.effectiveType = '3g'; eq(net.getGameValue('resolveDecay'), 1.5, '3g: resolveDecay 1.5×');
+    s.effectiveType = '2g'; eq(net.getGameValue('resolveDecay'), 2.5, '2g: resolveDecay 2.5×');
+    s.effectiveType = 'slow-2g'; eq(net.getGameValue('resolveDecay'), 4.0, 'slow-2g: resolveDecay 4.0×');
+    s.cpuCores = 8; eq(net.getGameValue('resolvePerBuild'), 1.5, '8 cores: resolvePerBuild 1.5×');
+    s.echoJitter = 70;
+    eq(net.getGameValue('resolvePerKill'), 0.3, 'stormy echoes: resolvePerKill 0.3×');
+    eq(net.getGameValue('moveSpeed'), 0.92, 'stormy echoes: moveSpeed clamps at 0.92×');
+    s.timeOfDay = 3 / 24; eq(net.getGameValue('resolveNightMult'), 2.5, '3am: resolveNightMult 2.5× (witching hours)');
+  } finally {
+    Object.assign(s, saved);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // test registry & runner
 // ---------------------------------------------------------------------------
@@ -1306,6 +1363,7 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Echoes — grant on boss kill, re-kill levels, cap', fn: testEchoGrantAndLevel },
   { name: 'Echoes — every kind deals damage (pulse/nova/volley/orbit/trail)', fn: testEchoDamage },
   { name: 'Echoes — scaling monotonic, cooldown floor, D5 roll band', fn: testEchoBounds },
+  { name: 'Net map integrity — netKeys resolve, vitals rows pinned', fn: testNetMapIntegrity },
 ];
 
 /** Run all registered tests sequentially. Returns { pass, fail, total, report }. */

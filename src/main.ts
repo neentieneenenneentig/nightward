@@ -226,15 +226,22 @@ async function boot() {
       <div style="margin-bottom:3px;"><span style="color:#888;">ACTION</span><br><span style="color:#ccc;">${inspectData.action}</span></div>
       <div><span style="color:#888;">FLOWS INTO</span><br><span style="color:#ccc;">${inspectData.flowsInto}</span></div>
     `;
-    // Position to the right of the target, clamped to viewport
+    // Position beside the target, clamped to the viewport. The box height varies
+    // with content (long SOURCE strings wrap), so measure the real size first —
+    // the old hardcoded ~100px estimate let tall boxes run off the bottom, and the
+    // left-flip could push the box past the left edge on narrow viewports.
     const rect = target.getBoundingClientRect();
+    box.style.left = '0px';
+    box.style.top = '-9999px';
+    box.style.display = '';
+    const bw = box.offsetWidth, bh = box.offsetHeight;
     let left = rect.right + 8;
+    if (left + bw > window.innerWidth - 4) left = rect.left - bw - 8;
+    left = Math.max(4, Math.min(left, window.innerWidth - bw - 4));
     let top = rect.top;
-    if (left + 320 > window.innerWidth) left = rect.left - 328;
-    if (top + 100 > window.innerHeight) top = window.innerHeight - 110;
+    top = Math.max(4, Math.min(top, window.innerHeight - bh - 4));
     box.style.left = left + 'px';
     box.style.top = top + 'px';
-    box.style.display = '';
   }
 
   // O key toggles the Lens
@@ -707,7 +714,10 @@ async function boot() {
     for (const gm of NET_GAME_MAP) {
       const raw = net.get(gm.netKey);
       const val = Math.max(gm.min, Math.min(gm.max, gm.transform(raw, gmCtx)));
-      html += `<div ${attr(gm.target)} style="font-size:9px;cursor:help;">${gm.label} ×${val.toFixed(2)} ← ${gm.netKey} ${raw.toFixed(1)} (clamp ${gm.min}–${gm.max})</div>`;
+      // Dormant threads: the mapping computes truthfully but no system consumes it yet.
+      const dim = gm.dormant ? 'opacity:0.4;' : '';
+      const tag = gm.dormant ? ' <span style="color:#557;">dormant</span>' : '';
+      html += `<div ${attr(gm.target)} style="font-size:9px;cursor:help;${dim}">${gm.label} ×${val.toFixed(2)} ← ${gm.netKey} ${raw.toFixed(1)} (clamp ${gm.min}–${gm.max})${tag}</div>`;
     }
     html += `<div style="font-size:9px;">Realm ← ${biome.name} (${biome.id})</div>`;
     html += '</div>';

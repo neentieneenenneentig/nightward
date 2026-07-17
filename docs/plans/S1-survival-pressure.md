@@ -82,7 +82,7 @@ faster, and the fix is always the same (hunt, kill, build).
 | Parameter | Network source | Intuition | Mapping |
 |---|---|---|---|
 | `resolveDecayPerSec` | **`effectiveType`** (connection tier) | Worse connection = the dark presses harder. 4g is civilization; 2g is the wild. | `'4g'` → 1.0×. `'3g'` → 1.5×. `'2g'` → 2.5×. `'slow-2g'` → 4.0×. Fallback: 1.0×. |
-| `resolvePerKill` | **`jitter`** (RTT variance ms, rolling MAD) | Stable connection = satisfying kill = mind restored. Jitter = chaotic kill = less peace. | <5ms → 1.4×. 5–15 → 1.0×. 15–30 → 0.7×. 30–60 → 0.5×. >60 → 0.3×. |
+| `resolvePerKill` | **`echoJitter`** (successive same-beacon echo deltas, ms — finer-grained than `connection.rtt` jitter, which Chrome quantizes to 25 ms buckets) | Stable connection = satisfying kill = mind restored. Jitter = chaotic kill = less peace. | <5ms → 1.4×. 5–15 → 1.0×. 15–30 → 0.7×. 30–60 → 0.5×. ≥60 → 0.3×. |
 | `resolvePerBuild` | **`hardwareConcurrency`** (CPU cores) | More cores = stronger anchor. Building with a powerful machine reinforces your thread. | ≥8 cores → 1.5×. 4–7 → 1.0×. <4 → 0.7×. |
 | `resolveNearHallPerSec` | **`deviceMemory`** (RAM GB) | More RAM = hall is a stronger sanctuary. Your machine remembers you. | ≥8GB → 1.5×. 4–8 → 1.0×. <4 → 0.6×. |
 | `resolvePerSurviveNight` | **night-RTT stability** (% of night where RTT stayed in its median band) | A stable night = a triumphant dawn. A chaotic night = barely held on. | ≥90% stable → 1.5×. 70–90% → 1.0×. 50–70% → 0.7×. <50% → 0.4×. |
@@ -197,8 +197,9 @@ vitals: {
   - `onBuild()` — restore resolve.
   - `onSurviveNight()` — restore resolve.
   - `onRespawn()` — reset to 50/50.
-  - Called from `hordes.ts` (kill), `gather.ts` (gather), `build.ts` (place), `daynight.ts`
-    (dawn), `combat.ts` (respawn).
+  - Called from `hordes.ts` (kill, and dawn — the dawn event is `HordesSystem.onDawn()`;
+    `daynight.ts` is pure tint math with no hooks), `gather.ts` (gather), `build.ts`
+    (place), `combat.ts` (respawn — death & scatter live there, `CFG.player.respawn*`).
 - **`src/game/state.ts`** — `player.vigor: number`, `player.resolve: number`, init to 100.
 - **`src/game/ui/ui.ts`** — HUD chips for vigor + resolve (◈ and ✦ icons, tooltips).
 - **`src/game/ui/floaters.ts`** — "+8 vigor" / "+12 resolve" floaters on restore events
@@ -217,7 +218,8 @@ vitals: {
 5. **testVitalsHUD** — assert vigor and resolve chips visible in DOM after boot.
 6. **testHordeScale** — on night 3 with 0 territory, assert horde count ≥ ~60 (was ~20).
 
-Suite count goes 37 → 43.
+Suite count goes 38 → 44 (the stub review of 2026-07-17 added a 38th test,
+`testNetMapIntegrity`, which pins the vitals mapping rows; S1 adds the six above).
 
 ## Explicitly out of scope
 
@@ -236,7 +238,7 @@ Suite count goes 37 → 43.
 5. Let resolve hit 0: move slower, red vignette pulses, "Your resolve crumbles" toast.
 6. Survive night 1: resolve jumps +30 at dawn.
 7. Night 1 horde: ~25+ mobs (was 9), walls take noticeable damage.
-8. `?seed=1234&test` → 43/43 green.
+8. `?seed=1234&test` → 44/44 green.
 
 ## Ordering
 
@@ -247,3 +249,77 @@ C5 (Buildings) gives you better defenses.
 
 The C-batch order becomes: **C1 (echoes) → S1 (survival pressure) → C2 (waystones) → C3 (loom)
 → C4 (armory) → G1-P (painterly verdict) → C5 (buildings rework).**
+(Amended same day: **U1 lens-UI unification slots between S1 and C2** — see
+`U1-lens-ui-unification.md`.)
+
+## Stub review record (2026-07-17 evening, chief-of-staff session)
+
+The CFG.vitals block + NET_GAME_MAP rows landed as stubs in `6059209`. Review findings,
+all fixed in-tree the same evening:
+
+1. **Three of the six mapping rows were dead or wrong on arrival:**
+   - `Resolve Decay` had an off-by-one across the whole tier ladder — the engine encodes
+     `4g=1, 3g=2, 2g=3, slow-2g=4` (see NET_METRICS `effectiveType`), but the transform
+     treated 4g as `tier <= 0`. A normal 4g connection got the 3g band (×1.5) and 2g got
+     the slow-2g band (×4.0). Fixed; tier encoding now documented at the row.
+   - `Resolve Per Kill` used `netKey: 'echoJitter'` — not a metric key, so `get()`
+     returned 0 and the row was permanently ×1.4. Fixed by promoting **echoJitter to a
+     real NET_METRICS row** (`Echo Flux`), which also let the Move Speed row drop its
+     ctx workaround and display truthfully in the Lens.
+   - `Resolve Per Build` used `netKey: 'hardwareConcurrency'` — the metric key is
+     `cpuCores`. Permanently ×0.7 as committed. Fixed.
+2. **Three more rows added** (their drivers already exist as metrics): `vigorPerGather`
+   ← `endpointLatency`, `vigorPerCampfire` ← `deviceMemory`, `resolveNightMult` ←
+   `timeOfDay` (real-clock witching-hour bands). **`resolvePerSurviveNight` is the one
+   mapping with NO row yet** — it needs a night-RTT-stability tracker in NetworkSystem;
+   build it at S1 implementation.
+3. **Dormant tagging:** all nine vitals rows carry `dormant: true` and the Lens THREADS
+   section renders them dimmed with a `dormant` tag. The Lens shows raw truth — a
+   mapping whose target nothing consumes must not look live. **S1 implementation must
+   remove the flags as it wires each target** (grep `dormant: true`).
+4. **Gauntlet:** new `testNetMapIntegrity` (suite test #38) asserts every NET_GAME_MAP
+   netKey resolves to a NET_METRICS key, targets are unique, and pins the neutral-
+   snapshot values + tier/core/jitter bands of every vitals row. It fails on exactly the
+   three bugs above if reintroduced.
+
+## Spec decisions locked at review (taste-flag if you disagree)
+
+- **Which kills feed vitals:** player swings AND echo kills restore vigor/resolve; tower
+  kills do NOT. Rationale: echoes only fire with you standing in the fight, but towers
+  kill while you hide — if towers fed you, the walled-in-AFK failure S1 exists to kill
+  comes straight back as "build towers, never leave". (Tower rule extended: auto-damage
+  never trains combat, tower kills never feed vitals.) Boss kills count for whoever
+  provoked — a boss kill is never AFK (C1 rule).
+- **`foeDmgToBuildings` is a NEW config key** — foe→building damage currently has no
+  multiplier (implicit 1× through `hordes.damageBuilding`). Add the key and apply it at
+  the damage site, don't bake it into per-foe dmg (bosses share that path).
+- **`spawnRadiusTiles` 10–18 spread needs a config shape change** — today it's a single
+  number. Ship it as `spawnRadiusMinTiles`/`spawnRadiusMaxTiles` and roll per spawn.
+- **Perf gate for the 10× rebalance:** `maxAlive` 250 (was 90) must be proven, not
+  assumed — add an acceptance item: night-5 wave at 250 alive holds ≥50 fps on the dev
+  machine, and the Gauntlet horde test steps a 200+ wave without frame-budget collapse.
+- **Fiction naming:** the campfire building's display name is **Watchfire** (id
+  `campfire`). Chronicle lines say Watchfire, never "campfire".
+
+## Open flag: gather is doubly `simSpeed`-sensitive (surfaced 2026-07-17 verification)
+
+Not an S1 item per se, but found while fixing the `testGathering` budget bug during the
+S1 review. `simSpeed` (rtt-derived, clamped 0.85–1.15) modulates gather **twice**:
+1. In `gather.ts tryStart()` — the N1 line `speed *= getGameValue('simSpeed')`, which
+   shrinks `need = gatherSec / speed`.
+2. In `main.ts sim()` — `gather.update(effectiveDt, …)` where `effectiveDt = dt·simSpeed`,
+   the universal lag-compensation scaling every system receives.
+
+Net effect: real gather time ∝ `1/simSpeed²`. Gather is the **only** gameplay system that
+double-applies `simSpeed` (combat/hordes/fire/echoes get `effectiveDt` only). At the 0.85
+floor, gather is ~1.38× slower than intended vs. the ~1.18× a single application gives.
+
+**Options (user's call — leaving as-is for now):**
+- **(a) Accept it** — "network fate hits gathering hardest" is on-theme; keep both.
+- **(b) Drop the N1 gather-specific line** — gather then slows with the sim uniformly
+  like everything else via `effectiveDt`. One-line removal, cleanest.
+- **(c) Feed `gather.update` raw `dt`** — gather ignores global sim-speed and is governed
+  only by `need`. Inconsistent with other systems; not recommended.
+
+Recommendation: **(b)** unless the extra sensitivity is deliberate. Either way it's a
+balance change → own commit, not folded into the review.

@@ -638,6 +638,39 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 >   AFTER the UI is unified (U1) and combat feel is solid (S1 horde rebalance), and
 >   probably after G1 (particles can enhance them). Candidate slot: between C4 and G1-P,
 >   or as part of G2 (Juice Pass). Not scheduled yet — needs user priority call.
+>
+> **🧰 EVENING REVIEW (2026-07-17, chief-of-staff session, on `c1-echoes`):** the day's
+> commits reviewed and repaired. (1) The crash fix `ca60e70` is correct and complete —
+> no other `ctx.camera` references exist. (2) **Three of the six S1 stub mapping rows
+> were dead or wrong** (effectiveType tier off-by-one → 4g players got ×1.5 resolve
+> decay; `echoJitter` and `hardwareConcurrency` aren't metric keys → rows frozen at
+> ×1.4/×0.7): fixed, `echoJitter` promoted to a real NET_METRICS row (`Echo Flux`),
+> three more vitals rows added (gather/campfire/night), all nine tagged `dormant` and
+> rendered dimmed in the Lens THREADS until S1 wires them. New Gauntlet test #38
+> (`testNetMapIntegrity`) pins all of it. (3) The user's "popup goes offscreen" repro
+> traced to the **Lens inspect box**, not the RPGUI panels — fixed with real-size
+> viewport clamping; U1 brief corrected. Full record: S1/U1 briefs' review sections.
+>
+> **🔁 VERIFICATION PASS (2026-07-17, later same session):** the above batch was re-run
+> headlessly (raw-CDP Chrome + vite, `?gl&seed=1234&test`) and ground-truthed. All the
+> S1/inspect-box/crash claims hold; `testNetMapIntegrity` passes. **(4) One pre-existing
+> Gauntlet failure surfaced — NOT caused by this batch** (confirmed by stashing the
+> working tree: it also fails on committed HEAD): `testGathering`'s step budget
+> `ceil(need·30)+10` assumed gather progress advances at raw `dt`, but it advances at
+> `effectiveDt = dt·simSpeed`, and `need` already folds `simSpeed` in — so real
+> frames-to-complete scale ~`need·30/simSpeed`. Under live `rtt≈100ms → simSpeed 0.85`
+> the budget fell exactly **one frame short** (need 2.07 → budget 73, actual 74). The
+> overnight run passed only because its live `rtt` gave `simSpeed≈1`. Fixed: the test now
+> steps-until-clear with a `need`-scaled cap (robust to any clamped `simSpeed`). Suite is
+> green again: **200 assertions / 38 functions, 0 page errors, deterministic**.
+> **(5) FLAG FOR USER (balance, not fixed):** that bug exposed that `simSpeed` is applied
+> to **gather twice** — once in `need` (gather.ts `speed *= getGameValue('simSpeed')`,
+> the N1 line) and again via the universal `effectiveDt`. Gather is the *only* gameplay
+> system that double-applies it (combat/hordes/fire/echoes each apply `effectiveDt`
+> only), so gather time is uniquely ~`1/simSpeed²` sensitive to lag. Likely an
+> unintended overlap from threading `effectiveDt` through `gather.update` after N1 added
+> the gather-specific term — but removing N1's line changes gather feel, so it's the
+> user's call (see `docs/plans/S1-survival-pressure.md` review record for options).
 
 ---
 

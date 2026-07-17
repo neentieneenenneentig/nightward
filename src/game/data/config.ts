@@ -168,8 +168,10 @@ export const CFG = {
   // STUBS ONLY (2026-07-17) — not yet wired; implementation per S1-survival-pressure.md.
   // ALL VALUES BELOW ARE BASE (neutral connection: 10Mbps, 50ms RTT, 4g, 5ms jitter,
   // 4 cores, 4GB RAM). At runtime, NetworkSystem applies multipliers on top via
-  // NET_GAME_MAP rows (vigorDecay, vigorPerKill, resolveDecay, resolvePerKill,
-  // resolvePerBuild, resolveNearHall). Same pattern as simSpeed/goldRate/enemyScale.
+  // NET_GAME_MAP rows (vigorDecay, vigorPerKill, vigorPerGather, vigorPerCampfire,
+  // resolveDecay, resolvePerKill, resolvePerBuild, resolveNearHall, resolveNightMult —
+  // all flagged `dormant` until the VitalsSystem consumes them; resolvePerSurviveNight
+  // still needs a night-RTT-stability tracker). Same pattern as simSpeed/goldRate.
   vitals: {
     vigorMax: 100,
     vigorDecayPerSec: 1 / 15,       // 4 min full→empty

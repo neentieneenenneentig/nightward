@@ -298,6 +298,10 @@ export interface NetGameMapping {
   min: number;
   /** Maximum allowed output (guardrail). */
   max: number;
+  /** True while the target system is not yet implemented (stub rows shipped ahead of
+   *  their milestone). The Lens renders dormant threads dimmed — the mapping exists
+   *  and computes truthfully, but nothing consumes it yet. */
+  dormant?: boolean;
 }
 
 /** Context passed to NetGameMapping transforms — the full snapshot + extras. */
@@ -324,7 +328,13 @@ export const NET_METRICS: NetMapping[] = [
     key: 'jitter', label: 'Flux',
     compute: (s) => s.jitter,
     fallback: 5, unit: 'ms', intervalMs: 1000,
-    inspect: { api: 'Computed from navigator.connection.rtt deltas (last 30 samples). Not a browser API — derived statistic.', action: 'always active (recomputed on every rtt poll)', flowsInto: 'move speed · enemy wobble' },
+    inspect: { api: 'Computed from navigator.connection.rtt deltas (last 30 samples). Not a browser API — derived statistic.', action: 'always active (recomputed on every rtt poll)', flowsInto: 'enemy wobble' },
+  },
+  {
+    key: 'echoJitter', label: 'Echo Flux',
+    compute: (s) => s.echoJitter,
+    fallback: 5, unit: 'ms', intervalMs: 1000,
+    inspect: { api: 'Successive same-beacon echo RTT deltas (rolling mean). Not a browser API — derived from action-gated probe echoes (F1).', action: 'updated on every beacon echo', flowsInto: 'move speed · resolve per kill (S1)' },
   },
   {
     key: 'effectiveType', label: 'Link Tier',
@@ -453,12 +463,9 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   // ---- N2a: New modifiers from live vars ----
   {
     label: 'Move Speed',
-    netKey: 'rtt',  // ctx carries the real driver (echoJitter)
+    netKey: 'echoJitter',
     // 1.06 − echoJitter × 0.002, clamp 0.92–1.06 (D4 rationale)
-    transform: (_rtt: number, ctx?: NetMappingContext) => {
-      const jit = ctx?.snap?.echoJitter ?? 5;
-      return Math.max(0.92, Math.min(1.06, 1.06 - jit * 0.002));
-    },
+    transform: (jit: number) => Math.max(0.92, Math.min(1.06, 1.06 - jit * 0.002)),
     target: 'moveSpeed',
     min: 0.92,
     max: 1.06,
@@ -487,6 +494,9 @@ export const NET_GAME_MAP: NetGameMapping[] = [
 
   // ---- S1: Vitals — survival stats derived from network metrics ----
   // Base values in CFG.vitals.*; these multipliers apply on top each tick.
+  // ALL rows dormant until S1 ships a VitalsSystem that consumes the targets.
+  // (resolvePerSurviveNight is the one S1 mapping with NO row yet — it needs a
+  // night-RTT-stability tracker in NetworkSystem, built at S1 implementation.)
   {
     label: 'Vigor Decay',
     netKey: 'downlink',
@@ -501,6 +511,7 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'vigorDecay',
     min: 0.8,
     max: 3.0,
+    dormant: true,
   },
   {
     label: 'Vigor Per Kill',
@@ -516,25 +527,28 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'vigorPerKill',
     min: 0.4,
     max: 1.3,
+    dormant: true,
   },
   {
     label: 'Resolve Decay',
     netKey: 'effectiveType',
     // Worse connection = mind frays faster. 4g→1×, 2g→2.5×, slow-2g→4×.
+    // Tier encoding (NET_METRICS 'effectiveType'): 4g/unknown=1, 3g=2, 2g=3, slow-2g=4.
     transform: (tier: number) => {
-      if (tier <= 0) return 1.0;   // 4g / fallback
-      if (tier <= 1) return 1.5;   // 3g
-      if (tier <= 2) return 2.5;   // 2g
+      if (tier <= 1) return 1.0;   // 4g / fallback
+      if (tier <= 2) return 1.5;   // 3g
+      if (tier <= 3) return 2.5;   // 2g
       return 4.0;                   // slow-2g
     },
     target: 'resolveDecay',
     min: 1.0,
     max: 4.0,
+    dormant: true,
   },
   {
     label: 'Resolve Per Kill',
     netKey: 'echoJitter',
-    // Stable connection = satisfying kill. <5ms jitter→1.4×, >60ms→0.3×.
+    // Stable connection = satisfying kill. <5ms echo jitter→1.4×, ≥60ms→0.3×.
     transform: (jit: number) => {
       if (jit < 5) return 1.4;
       if (jit < 15) return 1.0;
@@ -545,10 +559,11 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'resolvePerKill',
     min: 0.3,
     max: 1.4,
+    dormant: true,
   },
   {
     label: 'Resolve Per Build',
-    netKey: 'hardwareConcurrency',
+    netKey: 'cpuCores',
     // More cores = stronger anchor. ≥8→1.5×, <4→0.7×.
     transform: (cores: number) => {
       if (cores >= 8) return 1.5;
@@ -558,6 +573,7 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'resolvePerBuild',
     min: 0.7,
     max: 1.5,
+    dormant: true,
   },
   {
     label: 'Resolve Near Hall',
@@ -571,5 +587,53 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'resolveNearHall',
     min: 0.6,
     max: 1.5,
+    dormant: true,
+  },
+  {
+    label: 'Vigor Per Gather',
+    netKey: 'endpointLatency',
+    // Fast beacon echo = rich gathering node. Same banding as Vigor Per Kill.
+    transform: (ms: number) => {
+      if (ms <= 20) return 1.3;
+      if (ms <= 50) return 1.0;
+      if (ms <= 150) return 0.8;
+      if (ms <= 400) return 0.6;
+      return 0.4;
+    },
+    target: 'vigorPerGather',
+    min: 0.4,
+    max: 1.3,
+    dormant: true,
+  },
+  {
+    label: 'Vigor Campfire',
+    netKey: 'deviceMemory',
+    // More memory = the Watchfire burns steadier. ≥8GB→1.5×, <4GB→0.6×.
+    transform: (ram: number) => {
+      if (ram >= 8) return 1.5;
+      if (ram >= 4) return 1.0;
+      return 0.6;
+    },
+    target: 'vigorPerCampfire',
+    min: 0.6,
+    max: 1.5,
+    dormant: true,
+  },
+  {
+    label: 'Resolve Night',
+    netKey: 'timeOfDay',
+    // Real-clock witching hour: late-night play = deeper dark = faster fray.
+    // timeOfDay is a 0–1 fraction of the real 24h day.
+    transform: (frac: number) => {
+      const hour = frac * 24;
+      if (hour >= 2 && hour < 5) return 2.5;    // the witching hours
+      if (hour < 2) return 1.5;                  // midnight–2am
+      if (hour >= 18) return 1.0;                // evening
+      return 0.8;                                // daylight hours
+    },
+    target: 'resolveNightMult',
+    min: 0.8,
+    max: 2.5,
+    dormant: true,
   },
 ];
