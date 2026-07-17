@@ -360,6 +360,21 @@ balance change → own commit, not folded into the review.
 - `attack()` in `combat.ts`: clicking during windup/active now **restarts the swing**
   (deals damage immediately + resets windup). Spam-clicking = rapid single-target DPS at
   the cost of never reaching recovery (locked in swing animation). Recovery-phase buffering
-  unchanged. This makes high-APM combat rewarding and gives skilled players a way to
-  convert clicks into DPS.
+  unchanged. Rate-capped at `CFG.combat.restartMinIntervalSec` (0.12s) to prevent unbounded
+  autoclicker DPS; no beacon probe on restart (avoids HTTP spam).
 - Branch: `s1-survival` (off `c1-echoes`).
+
+### Audit fixes (2026-07-17, same session)
+
+- **Echo kills now feed vitals** (locked spec violation fixed): `HordesSystem.hurt()` gained
+  a `feedsVitals` parameter (defaults to `awardXp` for backward compat). All echo call sites
+  pass `feedsVitals=true`. `WorldBossSystem.hurt()` calls `vitals.onKill(true)` on boss death.
+- **testVitalsDecay**: pins network snapshot (downlink/rtt/effectiveType/timeOfDay) for
+  deterministic decay rates regardless of live connection.
+- **testVigorStarve**: pins worst-case network (downlink 0.3Mbps, rtt 15ms), sets vigor to
+  0.5, uses short HP-drain window with god-mode guard to prevent death/respawn skew.
+- **testHordeScale**: directly creates 250 foes (one per config maxAlive) and steps the sim
+  to prove the perf gate — no longer a config-only assertion.
+- **testCombatRestartRateCap** (new, 45th test): verifies click-restart increments swingCount,
+  rate cap suppresses within `restartMinIntervalSec`, and restart works after the window.
+- Full Gauntlet: **45/45 green, 228 assertions, 0 failures** (verified via CDP harness).
