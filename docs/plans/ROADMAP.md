@@ -580,10 +580,26 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 > **Queue now: Batch C "The Character" — taste verdicts IN (quiz 2026-07-16, see
 > `C-batch-quiz.md`): fixed signature echoes · Loom points from nights survived ·
 > all 4 keystones v1 · waystone loss = full collapse-decay · Cinder Trail ignites the
-> REAL fire CA day one · C1 first. Order: C1 echoes (brief `C1-echoes.md`, built
-> overnight on branch `c1-echoes`, awaiting user sign-off before merge) → C2 waystones
-> → C3 loom → C4 armory → G1-P painterly prototype verdict → C5 buildings rework.
+> REAL fire CA day one · C1 first. Order: C1 echoes → C2 waystones → C3 loom →
+> C4 armory → G1-P painterly prototype verdict → C5 buildings rework.
 > N2b/G1-remainder slot in where they fit.**
+>
+> **❗ C1 PLAYTEST VERDICT (2026-07-17):** C1 echoes built + verified on branch `c1-echoes`
+> (37/37 Gauntlet, 165 assertions, static trio green). Live playtest revealed a PRE-EXISTING
+> crash (resonance crit floater referenced `ctx.camera` instead of `ctx.cam` — fixed,
+> `ca60e70`). More critically, the playtest exposed a missing design pillar: **survival
+> pressure.** The user walled in their hall with 7 walls (260 HP each), survived 3 nights
+> with zero threats, and had no reason to fight, hunt, or expand. The game has no teeth.
+>
+> **NEW PRIORITY — S1 "Survival Pressure" inserted BEFORE C2:**
+> The C-batch builds progression systems (echoes, passives, gear, buildings) — but
+> progression needs a PROBLEM to solve. S1 creates that problem: two survival stats
+> (Vigor + Resolve) that decay and must be restored by hunting, killing, building, and
+> surviving nights; a 10× horde rebalance making nights genuinely dangerous; walls that
+> actually break. Brief: `docs/plans/S1-survival-pressure.md`.
+>
+> **Revised order: C1 (echoes) → S1 (survival pressure) → C2 (waystones) → C3 (loom)
+> → C4 (armory) → G1-P (painterly verdict) → C5 (buildings rework).**
 
 ---
 

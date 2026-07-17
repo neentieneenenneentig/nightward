@@ -1,32 +1,52 @@
 # Batch C — The Character (content batch design)
 
-**Status: LOCKED 2026-07-16 — quiz returned (see `C-batch-quiz.md`). Verdicts:
+**Status: ACTIVE — C1 built + verified on `c1-echoes`, awaiting merge. UPDATED 2026-07-17:
+S1 "Survival Pressure" inserted after C1 per playtest verdict.** Quiz verdicts (2026-07-16):
 T1 fixed signature echoes (default) · T2 Loom points from NIGHTS SURVIVED (override) ·
 T3 all 4 keystones in v1 (default) · T4 waystone destruction = FULL COLLAPSE, disconnected
 buildings decay (override) · T5 Cinder Trail ignites the REAL fire CA from day one
-(override) · T6 order C1→C2→C3→C4→(G1-P)→C5 (default).** The taste reads: danger-clock
-progression, maximum-stakes territory, real fire. Sections below are amended in place to
-match. Drafted overnight 2026-07-16→17 by the chief-of-staff session per "start planning";
-grounded in the shipped v0.18 tree. Individual milestone briefs get written to
-implementation grade AT ACTIVATION (anti-staleness, W1 lesson) — C1's brief is
-`docs/plans/C1-echoes.md` (written + built the night the verdicts landed).
+(override) · T6 order C1→→C2→C3→C4→(G1-P)→C5 (default). **T6 amended 2026-07-17: S1
+inserted before C2 — progression systems need a problem to solve first.** The taste reads:
+danger-clock progression, maximum-stakes territory, real fire. Sections below are amended
+in place to match. Drafted overnight 2026-07-16→17 by the chief-of-staff session per
+"start planning"; grounded in the shipped v0.18 tree. Individual milestone briefs get
+written to implementation grade AT ACTIVATION (anti-staleness, W1 lesson) — C1's brief is
+`docs/plans/C1-echoes.md` (written + built the night the verdicts landed), S1's brief is
+`docs/plans/S1-survival-pressure.md` (written 2026-07-17 from C1 playtest).
+
+## The C1 playtest — what we learned (2026-07-17)
+
+C1 echoes built, verified, and live-tested. Two findings:
+
+1. **Pre-existing crash:** resonance crit floater referenced `ctx.camera` instead of
+   `ctx.cam` — game froze on first resonance crit. Fixed in `ca60e70`. Latent since
+   M3.6v2; C1's increased combat frequency exposed it.
+
+2. **Missing design pillar — survival pressure:** The user walled in their hall (7 walls,
+   260 HP each), survived 3 nights with zero threats, had 402 gold, zero skill XP, zero
+   echoes, zero gear. No reason to fight, hunt, or expand. The game has no teeth. This
+   spawned **S1 — Survival Pressure** (`docs/plans/S1-survival-pressure.md`): two survival
+   stats (Vigor + Resolve) that decay and must be restored by action, a 10× horde
+   rebalance, and walls that actually break.
 
 ## The thesis
 
 The user's words: **"scaling is the joy — this is like playing a level-1 character over
 and over."** NIGHTWARD has no persistence, ever. That constraint is the design gift of
 this batch: every run starts naked, so *all* progression systems are per-run, which means
-they are **build-identity systems** (roguelite), not chore-trees (MMO). The four pillars
-must each answer one question: *what makes THIS run's level-30 different from last run's
-level-30?*
+they are **build-identity systems** (roguelite), not chore-trees (MMO). The ~~four~~
+**five** pillars must each answer one question: *what makes THIS run's level-30 different
+from last run's level-30?*
 
 - **Echoes** (VS-style boss abilities) — what your combat *does* automatically.
 - **The Loom** (PoE-style passives) — what your character *is* (keystone tradeoffs).
 - **Gear** (Terraria-style accessories) — what your loot *changed* about the rules.
 - **The Watch** (Legion-TD towers + waystones) — what your *land* is becoming.
+- **Vitals** (survival pressure) — what you *need* to keep doing (hunt, kill, build).
 
 One loop feeds them all: kill lords → echoes; do anything → skill xp → Loom points;
-fight/gather → gear mats; build → territory → income AND bigger nights → need all four.
+fight/gather → gear mats; build → territory → income AND bigger nights → need all four;
+**vitals decay → must hunt/kill/build → feeds the loop.**
 
 ## The inventory of what exists (verified in-tree, v0.18)
 
@@ -181,13 +201,20 @@ shit"). Tower ROLES + A/B upgrade paths (LTD2's shape), own procgen art style.
 
 ---
 
-## Sequencing & effort (recommendation)
+## Sequencing & effort (recommendation, amended 2026-07-17)
 
-**C1 → C2 → C3 → C4 → (G1-P verdict) → C5.**
-C1 small/hot, C2 tiny, C3 medium, C4 medium, C5 large+gated. Each ships per WORKFLOW:
-worktree → static trio → merge → FULL Gauntlet + new tests → live acceptance → tag
-(`v0.19-c1-echoes` onward). Feel gates stay RELAXED until C5 per the user's platform-era
-call — but the playtest agent runs after each merge anyway (cheap regression sanity).
+**C1 → S1 → C2 → C3 → C4 → (G1-P verdict) → C5.**
+
+S1 inserted after C1 playtest revealed zero survival pressure. Reasoning: C2 (waystones)
+lets you expand territory forever, but if there's no pressure to expand, it's a solution
+to a problem that doesn't exist. S1 creates the problem. C3 (Loom) gives you tools to
+solve it. C4 (Armory) gives you gear to survive it. C5 (Buildings) gives you better
+defenses.
+
+C1 small/hot, S1 small/hot (2 stats + config rebalance, ~1 session), C2 tiny, C3 medium,
+C4 medium, C5 large+gated. Each ships per WORKFLOW: worktree → static trio → merge →
+FULL Gauntlet + new tests → live acceptance → tag. Feel gates RELAXED until C5 per the
+user's platform-era call — but the playtest agent runs after each merge anyway.
 
 ## The taste-decision menu — VERDICTS IN (quiz, 2026-07-16)
 
@@ -198,7 +225,8 @@ call — but the playtest agent runs after each merge anyway (cheap regression s
 | T3 | Keystones in v1 | **Yes — all 4 build-warping keystones** | yes |
 | T4 | Waystone loss | **Full collapse — disconnected buildings decay** | **override** |
 | T5 | Cinder Trail | **Real fire-CA ignition from day one** (flag ships TRUE as kill-switch) | **override** |
-| T6 | Batch order | **C1 echoes first** | yes |
+| T6 | Batch order | **C1 first** (default), **amended → S1 before C2** (playtest verdict 2026-07-17) | yes |
+| T7 | Survival pressure | **Vitals (Vigor + Resolve) + 10× horde rebalance** — brief `S1-survival-pressure.md` | **new** (playtest verdict 2026-07-17) |
 
 ## Non-negotiables carried forward
 

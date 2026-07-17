@@ -164,6 +164,40 @@ export const CFG = {
     despawnTiles: 28,        // left this far behind, they despawn from the grid
   },
 
+  // S1: survival pressure — vitals that decay and must be restored by action.
+  // STUBS ONLY (2026-07-17) — not yet wired; implementation per S1-survival-pressure.md.
+  // ALL VALUES BELOW ARE BASE (neutral connection: 10Mbps, 50ms RTT, 4g, 5ms jitter,
+  // 4 cores, 4GB RAM). At runtime, NetworkSystem applies multipliers on top via
+  // NET_GAME_MAP rows (vigorDecay, vigorPerKill, resolveDecay, resolvePerKill,
+  // resolvePerBuild, resolveNearHall). Same pattern as simSpeed/goldRate/enemyScale.
+  vitals: {
+    vigorMax: 100,
+    vigorDecayPerSec: 1 / 15,       // 4 min full→empty
+    vigorPerKill: 8,
+    vigorPerBossKill: 25,
+    vigorPerGather: 3,
+    vigorPerCampfireSec: 2,          // standing near campfire
+    vigorStarveDmgPerSec: 2,         // damage when vigor=0
+    resolveMax: 100,
+    resolveDecayPerSec: 1 / 30,      // daytime baseline
+    resolveNightMult: 2,             // ×2 at night
+    resolveBossNearMult: 3,          // ×3 when hunting boss within 20 tiles
+    resolveIdleMult: 2,              // ×2 when no action in 30s
+    resolveBossNearTiles: 20,
+    resolveIdleSec: 30,
+    resolvePerKill: 12,
+    resolvePerBossKill: 40,
+    resolvePerBuild: 5,
+    resolvePerSurviveNight: 30,
+    resolveNearHallPerSec: 1 / 5,    // +0.2/sec near hall
+    resolveNearHallTiles: 8,
+    resolveZeroSpeedMult: 0.70,
+    resolveZeroDmgTakenMult: 1.50,
+    resolveZeroVignetteHz: 0.5,
+    respawnVigor: 50,
+    respawnResolve: 50,
+  },
+
   ui: {
     toastSec: 3.2,
   },

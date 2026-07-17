@@ -484,4 +484,92 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     min: 0.75,
     max: 1.50,
   },
+
+  // ---- S1: Vitals — survival stats derived from network metrics ----
+  // Base values in CFG.vitals.*; these multipliers apply on top each tick.
+  {
+    label: 'Vigor Decay',
+    netKey: 'downlink',
+    // Low bandwidth = scarcity = faster hunger. 10Mbps→0.8×, 0.5Mbps→3.0×.
+    transform: (dl: number) => {
+      if (dl >= 10) return 0.8;
+      if (dl >= 5) return 1.0;
+      if (dl >= 2) return 1.4;
+      if (dl >= 0.5) return 2.0;
+      return 3.0;
+    },
+    target: 'vigorDecay',
+    min: 0.8,
+    max: 3.0,
+  },
+  {
+    label: 'Vigor Per Kill',
+    netKey: 'rtt',
+    // Low latency = clean kill = more nourishment. ≤20ms→1.3×, >400ms→0.4×.
+    transform: (rtt: number) => {
+      if (rtt <= 20) return 1.3;
+      if (rtt <= 50) return 1.0;
+      if (rtt <= 150) return 0.8;
+      if (rtt <= 400) return 0.6;
+      return 0.4;
+    },
+    target: 'vigorPerKill',
+    min: 0.4,
+    max: 1.3,
+  },
+  {
+    label: 'Resolve Decay',
+    netKey: 'effectiveType',
+    // Worse connection = mind frays faster. 4g→1×, 2g→2.5×, slow-2g→4×.
+    transform: (tier: number) => {
+      if (tier <= 0) return 1.0;   // 4g / fallback
+      if (tier <= 1) return 1.5;   // 3g
+      if (tier <= 2) return 2.5;   // 2g
+      return 4.0;                   // slow-2g
+    },
+    target: 'resolveDecay',
+    min: 1.0,
+    max: 4.0,
+  },
+  {
+    label: 'Resolve Per Kill',
+    netKey: 'echoJitter',
+    // Stable connection = satisfying kill. <5ms jitter→1.4×, >60ms→0.3×.
+    transform: (jit: number) => {
+      if (jit < 5) return 1.4;
+      if (jit < 15) return 1.0;
+      if (jit < 30) return 0.7;
+      if (jit < 60) return 0.5;
+      return 0.3;
+    },
+    target: 'resolvePerKill',
+    min: 0.3,
+    max: 1.4,
+  },
+  {
+    label: 'Resolve Per Build',
+    netKey: 'hardwareConcurrency',
+    // More cores = stronger anchor. ≥8→1.5×, <4→0.7×.
+    transform: (cores: number) => {
+      if (cores >= 8) return 1.5;
+      if (cores >= 4) return 1.0;
+      return 0.7;
+    },
+    target: 'resolvePerBuild',
+    min: 0.7,
+    max: 1.5,
+  },
+  {
+    label: 'Resolve Near Hall',
+    netKey: 'deviceMemory',
+    // More RAM = hall is stronger sanctuary. ≥8GB→1.5×, <4GB→0.6×.
+    transform: (ram: number) => {
+      if (ram >= 8) return 1.5;
+      if (ram >= 4) return 1.0;
+      return 0.6;
+    },
+    target: 'resolveNearHall',
+    min: 0.6,
+    max: 1.5,
+  },
 ];
