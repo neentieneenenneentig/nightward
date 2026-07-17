@@ -600,6 +600,44 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 >
 > **Revised order: C1 (echoes) → S1 (survival pressure) → C2 (waystones) → C3 (loom)
 > → C4 (armory) → G1-P (painterly verdict) → C5 (buildings rework).**
+>
+> **🔍 C1 PLAYTEST — LENS VERDICT & UI DIRECTION (2026-07-17, same session):**
+> The user loves the Lens (observatory, O key): "i love the lens. it is AWESOME!"
+> Two UI directives from this:
+>
+> 1. **The popup info menu goes offscreen** — the RPGUI-styled panels (Bag/Craft/Skills/Log)
+>    have no viewport clamping and overflow on small/narrow viewports. The Lens handles
+>    this correctly (centered, scrollable, viewport-unit-bounded). Fix: apply the same
+>    clamping to all panels.
+> 2. **Replace RPGUI with Lens aesthetic** — "the lens' ui is pretty good, we could
+>    probably start the ui update by just replacing the rest of the rpgui stuff with the
+>    lens' ui." The dark, clean, technical Lens style (monospace fonts, subtle 1px borders,
+>    dark translucent backgrounds, no pixel-art chrome) becomes the universal UI skin.
+>    This supersedes W4.5 (pixel UI skin plan). New milestone: **U1 — Lens UI Unification**
+>    (`docs/plans/U1-lens-ui-unification.md`).
+>
+> **Revised order: C1 (echoes) → S1 (survival pressure) → U1 (lens UI unification)
+> → C2 (waystones) → C3 (loom) → C4 (armory) → G1-P (painterly verdict) →
+> C5 (buildings rework).**
+>
+> **Rationale for U1 before C2:** S1 adds vital chips to the HUD — they should debut in
+> the new style. C2–C5 all add new panels (Loom tree, Armory slots, Buildings upgrade UI)
+> — they should be authored against the final look. U1 is small (~1 session) and won't
+> delay the content batch.
+>
+> **🪓 ANIMATIONS / MINING / LUMBERJACKING (2026-07-17):** User asked if animations,
+> mining, and lumberjacking are planned. Status:
+> - The W1 360° parametric character rig was SHIPPED THEN REVERTED (user disliked the
+>   look). Current baseline is 4-direction baked frames.
+> - Combat has windup→active→recovery phase visuals (W3: tint/scale/slash/desaturate on
+>   the existing sprite). Spin attack deferred.
+> - Mining, Woodcutting, Foraging (renamed in N2a from network jargon) all use the generic
+>   gather progress bar — no per-skill animation exists.
+> - **Action-specific animations (mining swing, lumberjack chop, foraging kneel, etc.)
+>   are a future "Action Feel" milestone** — not in the current batch. They should land
+>   AFTER the UI is unified (U1) and combat feel is solid (S1 horde rebalance), and
+>   probably after G1 (particles can enhance them). Candidate slot: between C4 and G1-P,
+>   or as part of G2 (Juice Pass). Not scheduled yet — needs user priority call.
 
 ---
 
