@@ -671,6 +671,9 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 > unintended overlap from threading `effectiveDt` through `gather.update` after N1 added
 > the gather-specific term — but removing N1's line changes gather feel, so it's the
 > user's call (see `docs/plans/S1-survival-pressure.md` review record for options).
+> **→ RESOLVED (user chose option b, 2026-07-17):** dropped the N1 gather line; gather
+> now scales `1/simSpeed` like everything else. Verified `need` 2.07→1.76 & frames
+> 74→63 at simSpeed 0.85; suite green (200/38). Own commit.
 
 ---
 

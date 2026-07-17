@@ -74,9 +74,10 @@ export class GatherSystem {
       const power = tool ? soulStat(state, toolSlotFor(t.def.toolClass)) || tool.power : 0;
       speed = 1 + CFG.gather.toolSpeedBonus * power;
     }
-    // N1: resonance modulates gather speed
-    const netMul = this.ctx.net?.getGameValue?.('simSpeed') ?? 1.0;
-    speed *= netMul;
+    // simSpeed is NOT applied here: gather progress already advances at effectiveDt
+    // (dt × simSpeed) in the sim loop, the same universal lag-compensation every system
+    // gets. Folding simSpeed into `need` too made gather uniquely ~1/simSpeed² sensitive
+    // (removed 2026-07-17 — was the N1 line `speed *= getGameValue('simSpeed')`).
     // N2a: gather speed modifier from downlink (0.85 + downlink×0.04, clamp 0.85–1.25)
     const dl = this.ctx.net?.snap?.downlink ?? 10;
     const gatherSpeedMul = Math.max(0.85, Math.min(1.25, 0.85 + dl * 0.04));

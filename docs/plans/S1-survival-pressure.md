@@ -301,7 +301,16 @@ all fixed in-tree the same evening:
 - **Fiction naming:** the campfire building's display name is **Watchfire** (id
   `campfire`). Chronicle lines say Watchfire, never "campfire".
 
-## Open flag: gather is doubly `simSpeed`-sensitive (surfaced 2026-07-17 verification)
+## ✅ RESOLVED: gather was doubly `simSpeed`-sensitive (surfaced + fixed 2026-07-17)
+
+**Resolution: option (b) — dropped the N1 `speed *= getGameValue('simSpeed')` line in
+`gather.ts`.** Gather now slows with the sim uniformly via `effectiveDt` only, scaling
+`1/simSpeed` like every other system. Verified live at `simSpeed 0.85`: `need` 2.07 → 1.76
+(the removed 0.85 factor), frames-to-complete 74 → 63; Gauntlet stays green (200/38).
+Original analysis kept below for the record.
+
+---
+
 
 Not an S1 item per se, but found while fixing the `testGathering` budget bug during the
 S1 review. `simSpeed` (rtt-derived, clamped 0.85–1.15) modulates gather **twice**:
