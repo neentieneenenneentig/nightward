@@ -41,6 +41,7 @@ export const CFG = {
     attackSpeedFloor: 0.5,   // ...but never faster than this fraction of base
     telegraphSlackPx: 8,     // grace distance when an enemy's telegraphed hit resolves
     dmgBonusPerLevel: 5,     // +1 base dmg per N combat levels (M2.2: combat skill now matters)
+    restartMinIntervalSec: 0.12, // min time between click-restarts (caps autoclickers, preserves high-APM skill)
   },
 
   // Soul Gear: every equip slot is a soul-bound tool that levels on its own

@@ -127,7 +127,7 @@ export class EchoSystem {
       for (const f of [...(hordes?.foes ?? [])] as Foe[]) {
         if (f.hp <= 0) continue;
         if (Math.floor(f.x / TILE) === p.tx && Math.floor(f.y / TILE) === p.ty) {
-          hordes.hurt(f, p.dmg, false); // tower rule: auto-damage never trains combat
+          hordes.hurt(f, p.dmg, false, true); // tower rule: no combat xp, but echoes feed vitals
         }
       }
     }
@@ -175,7 +175,7 @@ export class EchoSystem {
         if (Math.hypot(f.x - ox, f.y - oy) > f.def.art.size / 2 + 7) continue;
         const mul = this.roll(def.id);
         this.orbHitAt.set(f.uid, state.clock);
-        this.ctx.hordes.hurt(f, Math.max(1, Math.round(st.dmg * mul)), false);
+        this.ctx.hordes.hurt(f, Math.max(1, Math.round(st.dmg * mul)), false, true);
         this.ctx.views?.addHitFlash?.(f.x, f.y);
       }
     }
@@ -235,7 +235,7 @@ export class EchoSystem {
         if (f.hp <= 0) continue;
         this.ctx.views?.addShot?.(px, py - 10, f.x, f.y - f.def.art.size / 2);
         this.ctx.views?.addHitFlash?.(f.x, f.y);
-        this.ctx.hordes.hurt(f, dmg, false);
+        this.ctx.hordes.hurt(f, dmg, false, true);
       } else {
         const b = bosses[i % bosses.length];
         if (b.hp <= 0) continue;
@@ -258,7 +258,7 @@ export class EchoSystem {
   private hitAll(t: { foes: Foe[]; bosses: WorldBoss[] }, dmg: number) {
     for (const f of t.foes) {
       if (f.hp <= 0) continue;
-      this.ctx.hordes.hurt(f, dmg, false); // tower rule: no combat xp from auto-damage
+      this.ctx.hordes.hurt(f, dmg, false, true); // no combat xp, but echoes feed vitals
       this.ctx.views?.addHitFlash?.(f.x, f.y);
     }
     for (const b of t.bosses) {

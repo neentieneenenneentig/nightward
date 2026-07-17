@@ -90,16 +90,25 @@ export class CombatSystem {
 
   /** Restart the swing from windup, dealing damage immediately. Spam-clicking
    * during windup/active lets you chain rapid hits at the cost of never reaching
-   * recovery (you stay locked in the swing animation). */
+   * recovery (you stay locked in the swing animation). Rate-capped at
+   * CFG.combat.restartMinIntervalSec to prevent unbounded autoclicker DPS. */
   private restartSwing() {
+    const { state } = this.ctx;
+    // Rate cap: enforce minimum interval between restarts
+    const lastRestart = (this as any)._lastRestartClock ?? -999;
+    if (state.clock - lastRestart < CFG.combat.restartMinIntervalSec) return;
+    (this as any)._lastRestartClock = state.clock;
+
     const env = this.envelope();
     // Deal damage right now (the "redaming" from the start of the swing)
     this.resolveHit();
     // Reset to windup so the next phase transition will deal damage again
     this.setPhase('windup');
     this.phaseT = env.windup;
+    // Re-roll damage for the new swing (seeded rng, no extra HTTP beacon —
+    // probeAction is skipped on restart to avoid beacon spam)
     this.swingCount++;
-    const swingSeed = (this.ctx.state.seed ?? 1234) ^ (this.swingCount * 0x9e3779b9);
+    const swingSeed = (state.seed ?? 1234) ^ (this.swingCount * 0x9e3779b9);
     const rng = (() => {
       let s = swingSeed >>> 0;
       return () => {
@@ -110,7 +119,8 @@ export class CombatSystem {
       };
     })();
     this.ctx.net?.rollDamageMul?.(rng);
-    this.ctx.net?.probeAction?.('attack');
+    // NOTE: no probeAction('attack') on restart — the beacon fired on the
+    // initial swing; restarts reuse the same connection window
     Sound.play('windup');
   }
 

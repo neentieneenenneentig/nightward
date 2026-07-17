@@ -238,6 +238,9 @@ export class WorldBossSystem {
         if (cl) { this.ctx.toast(`Your charm drinks deep — soul level ${cl}!`, 'good'); this.ctx.log?.push('level', `Charm reached soul level ${cl}`, state.clock); }
       }
     }
+    // S1: a boss kill always feeds vitals — never AFK (locked spec)
+    this.ctx.vitals?.onKill?.(true);
+
     Sound.play('enemyDie');
     this.ctx.toast(`You have slain ${b.name}! The land trembles.`, 'good');
     this.ctx.log?.push('boss', `Slain ${b.name}!`, state.clock);

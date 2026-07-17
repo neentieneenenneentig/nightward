@@ -363,7 +363,10 @@ export class HordeSystem {
     this.ctx.log?.push('economy', `Scattered hoard: −${cost} gold, horde reduced by ${reduced} (${this.toSpawn} remaining)`, state.clock);
     return true;
   }
-  hurt(f: Foe, dmg: number, awardXp = true) {
+  hurt(f: Foe, dmg: number, awardXp = true, feedsVitals?: boolean) {
+    // feedsVitals defaults to awardXp (backward compat: swings feed both,
+    // towers feed neither). Echoes pass awardXp=false, feedsVitals=true.
+    const feedVitals = feedsVitals ?? awardXp;
     // N2a: Shelled soak — extra soak until hit 3 times
     const ef = f as any;
     if (ef.echoSoak > 0) {
@@ -393,7 +396,7 @@ export class HordeSystem {
     Sound.play('enemyDie');
 
     // S1: only player-swing & echo kills feed vitals — tower kills do NOT
-    if (awardXp) {
+    if (feedVitals) {
       this.ctx.vitals?.onKill?.(!!f.def.boss);
     }
 
