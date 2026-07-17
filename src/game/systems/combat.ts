@@ -179,7 +179,7 @@ export class CombatSystem {
       this.ctx.log?.push('combat', `Hit ${hitLines.join('; ')}${mulInfo}`, state.clock);
       // M3.6v2: Resonance crit floaters + particles
       if (resonance) {
-        this.ctx.floaters?.spawnInfo?.(cx, cy - 30, `⚡RESONANCE ${resonance.label}`, '#ffcc00', this.ctx.camera);
+        this.ctx.floaters?.spawnInfo?.(cx, cy - 30, `⚡RESONANCE ${resonance.label}`, '#ffcc00', this.ctx.cam);
         this.ctx.particles?.spawn?.('crit', cx, cy - 8, 15);
         this.ctx.toast?.(`Resonance crit! ${resonance.label} — your strike rings true`, 'good');
         Sound.play('hit'); // extra impact
