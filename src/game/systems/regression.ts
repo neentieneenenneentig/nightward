@@ -640,6 +640,13 @@ async function testMobBirthStats(nw: any) {
     nw.step(2);
   }
 
+  // Pin the realm profile: the special-skill branch reads LIVE variance
+  // (Blinker wins at variance ≥ 8000), so on a jittery first-contact network
+  // the cold fixture nondeterministically birthed a Blinker instead of a
+  // Shelled. The fixture must own every input the birth path reads.
+  const origProfile = net.computeRealmProfile;
+  net.computeRealmProfile = () => ({ median: 180, variance: 0 });
+
   // ---- Cold fixture: paid DNS+TLS route → Shelled, Pale prefix ----
   const beforeCold = sys.hordes.foes.length;
   net.lastEcho = {
@@ -720,6 +727,7 @@ async function testMobBirthStats(nw: any) {
   sys.hordes.foes = [];
   sys.hordes.toSpawn = 0;
   net.lastEcho = null;
+  net.computeRealmProfile = origProfile;
 }
 
 async function testDamageRollBounds(nw: any) {
@@ -1081,14 +1089,17 @@ function makeTestBoss(nw: any, defId: string) {
   };
 }
 
-/** Dummy melee-range foe for echo damage checks: tanky, harmless, non-boss. */
+/** Dummy foe for echo damage checks: tanky, harmless, non-boss — and FROZEN
+ * in place (telegraphT ≫ 0 = the engine's committed-mid-swing state, which
+ * skips all AI movement) so every geometry assertion is deterministic: the
+ * orbit target stays ON the ring, the trail target stays ON its patch tile. */
 function makeDummyFoe(nw: any, def: any, dx: number, dy: number, hp = 500) {
   const { state } = nw;
   const x = state.player.x + dx, y = state.player.y + dy;
   return {
     uid: state.nextUid++, def,
     x, y, px: x, py: y, hp, maxHp: hp,
-    dmg: 0, atkT: 9999, telegraphT: 0, animT: 0,
+    dmg: 0, atkT: 9999, telegraphT: 9999, animT: 0,
   };
 }
 
