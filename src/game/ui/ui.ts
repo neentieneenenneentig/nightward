@@ -58,6 +58,8 @@ export class UI {
   private muteEl!: HTMLElement;
   private echoEl!: HTMLElement;
   private echoChipsCache = '';
+  private vigorText!: HTMLElement;
+  private resolveText!: HTMLElement;
   private gather!: HTMLElement;
   private gatherFill!: HTMLElement;
   private gatherLabel!: HTMLElement;
@@ -97,6 +99,12 @@ export class UI {
         <div class="nw-hpbar"><div class="nw-hpfill" id="nw-hp"></div></div>
         <span id="nw-hptext" style="font-size:11px"></span>
       </div>
+      <div class="nw-badge" id="nw-vigor" title="Vigor: restore by hunting or gathering">
+        <span>&#9672;</span> <span id="nw-vigor-text">100</span>
+      </div>
+      <div class="nw-badge" id="nw-resolve" title="Resolve: restore by fighting, building, or surviving nights">
+        <span>&#10022;</span> <span id="nw-resolve-text">100</span>
+      </div>
       <div class="nw-badge nw-gold">&#9679; <span id="nw-gold">0</span></div>
       <div class="nw-badge nw-clock" id="nw-clock"></div>
       <div class="nw-badge" id="nw-nights" title="damage · defense · population · territory"></div>
@@ -112,6 +120,8 @@ export class UI {
     this.clock = top.querySelector('#nw-clock')!;
     this.nights = top.querySelector('#nw-nights')!;
     this.echoEl = top.querySelector('#nw-echoes')!;
+    this.vigorText = top.querySelector('#nw-vigor-text')!;
+    this.resolveText = top.querySelector('#nw-resolve-text')!;
     this.domainEl = top.querySelector('#nw-domain')!;
     this.muteEl = top.querySelector('#nw-mute')!;
     top.querySelector('#nw-newworld')!.addEventListener('click', () => this.hooks.newWorld());
@@ -542,6 +552,14 @@ export class UI {
     this.hpFill.style.width = (100 * Math.max(0, p.hp) / CFG.player.maxHp).toFixed(1) + '%';
     this.hpText.textContent = Math.ceil(Math.max(0, p.hp)) + '';
     this.goldText.textContent = p.gold + '';
+
+    // S1: vigor & resolve HUD chips — pulse red at ≤25
+    const vigor = Math.round(p.vigor ?? 100);
+    const resolve = Math.round(p.resolve ?? 100);
+    this.vigorText.textContent = String(vigor);
+    this.vigorText.style.color = vigor <= 25 ? '#f66' : '';
+    this.resolveText.textContent = String(resolve);
+    this.resolveText.style.color = resolve <= 25 ? '#f66' : '';
 
     const ph = phase(this.state.clock);
     const rem = Math.ceil(phaseRemaining(this.state.clock));

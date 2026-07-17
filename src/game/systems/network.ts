@@ -94,6 +94,10 @@ export class NetworkSystem {
   private duskRtt: number = 0;
   /** RTT drift over the last night (dawn RTT − dusk RTT, ms). */
   nightRttDrift: number = 0;
+  /** S1: night-RTT stability tracker — RTT samples collected during the night. */
+  private nightRttSamples: number[] = [];
+  /** S1: clock time when the current night started. */
+  private nightStartClock: number = 0;
   /** DNS/TCP/TLS timing from last build action. */
   lastBuildDns: number = 0;
   lastBuildTcp: number = 0;
@@ -958,10 +962,48 @@ export class NetworkSystem {
     }
   }
 
-  /** Snapshot the current pulse as the dusk baseline. */
+  /** Snapshot the current pulse as the dusk baseline.
+   *  Also begins collecting RTT samples for the night-stability tracker. */
   snapshotDuskRtt() {
     this.duskRtt = this.snap.rtt;
+    this.nightRttSamples = []; // start fresh for the night ahead
     this.netLog('resonance', `Dusk pulse baseline: ${this.duskRtt.toFixed(0)}ms`);
+  }
+
+  /** Called every frame during the night to collect RTT samples. */
+  sampleNightRtt() {
+    if (this.nightRttSamples.length < 600) { // cap at ~10 min of 1Hz samples
+      this.nightRttSamples.push(this.snap.rtt);
+    }
+  }
+
+  /** Compute night-RTT stability at dawn.
+   *  Stability = % of samples where RTT stayed within ±25% of median.
+   *  Stores result in snap._nightRttStability for resolvePerSurviveNight mapping. */
+  computeNightRttStability(): number {
+    const samples = this.nightRttSamples;
+    if (samples.length < 4) {
+      this.snap._nightRttStability = 100; // not enough data = assume stable
+      return 100;
+    }
+    // sort and find median
+    const sorted = [...samples].sort((a, b) => a - b);
+    const mid = sorted.length >> 1;
+    const median = sorted.length % 2 === 1
+      ? sorted[mid]
+      : (sorted[mid - 1] + sorted[mid]) / 2;
+    if (median <= 0) {
+      this.snap._nightRttStability = 100;
+      return 100;
+    }
+    // count samples within ±25% of median
+    const band = median * 0.25;
+    const stable = samples.filter(s => Math.abs(s - median) <= band).length;
+    const pct = Math.round((stable / samples.length) * 100);
+    this.snap._nightRttStability = pct;
+    this.netLog('resonance',
+      `Night pulse stability: ${pct}% (${stable}/${samples.length} in ${median.toFixed(0)}±${band.toFixed(0)}ms band)`);
+    return pct;
   }
 
   // ---- M3.5: passive identity probes (IP, ISP, geo, colo) ----

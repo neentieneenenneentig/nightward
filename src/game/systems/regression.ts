@@ -1320,6 +1320,175 @@ async function testNetMapIntegrity(nw: any) {
   }
 }
 
+// =========================================================================
+// S1: Survival Pressure — vitals tests
+// =========================================================================
+
+async function testVitalsDecay(nw: any) {
+  const { state } = nw;
+  const p = state.player;
+  p.vigor = 100;
+  p.resolve = 100;
+  nw.step(60 * 30); // 60s at 30Hz
+  ok(p.vigor < 100, `vigor decayed after 60s: ${p.vigor.toFixed(1)}`);
+  ok(p.resolve < 100, `resolve decayed after 60s: ${p.resolve.toFixed(1)}`);
+  // decay rate should be roughly correct: vigor ~4 pts expected (1/15 × 60)
+  ok(p.vigor >= 94 && p.vigor <= 100, `vigor decay roughly ~${(100-p.vigor).toFixed(1)}pts over 60s`);
+}
+
+async function testVigorStarve(nw: any) {
+  const { state } = nw;
+  const p = state.player;
+  p.vigor = 1;
+  p.hp = 100;
+  // Need enough time for vigor to reach 0 considering network multiplier may slow decay
+  // CFG: vigorDecayPerSec = 1/15 ≈ 0.067/s, with net multiplier 0.8 → 0.053/s
+  // At worst (net multiplier 3.0) → 0.2/s. Step 5s to ensure vigor hits 0.
+  nw.step(5 * 30); // 5s at 30Hz
+  ok(p.vigor <= 0, `vigor reached 0 (got ${p.vigor.toFixed(2)} after 5s)`);
+  if (p.vigor > 0) {
+    // If somehow still >0, step more
+    nw.step(10 * 30);
+  }
+  const hpBefore = p.hp;
+  nw.step(5 * 30); // 5 more seconds of starvation
+  ok(p.hp < hpBefore || p.hp < 100, `HP drained after vigor=0: ${hpBefore.toFixed(0)} → ${p.hp.toFixed(0)}`);
+  // reset
+  p.vigor = 100;
+  p.hp = 100;
+}
+
+async function testResolveZero(nw: any) {
+  const { state, sys } = nw;
+  const p = state.player;
+
+  // set resolve to 0
+  p.resolve = 0;
+  nw.step(2);
+
+  // speed penalty should be applied
+  const speedMult = sys.vitals?.getSpeedMult?.() ?? 1;
+  ok(speedMult < 1, `resolve-zero speed mult ${speedMult} < 1`);
+
+  // damage taken penalty should be applied
+  const dmgMult = sys.vitals?.getDmgTakenMult?.() ?? 1;
+  ok(dmgMult > 1, `resolve-zero dmg taken mult ${dmgMult} > 1`);
+
+  p.resolve = 100;
+}
+
+async function testVitalsRestore(nw: any) {
+  const { state, sys, world } = nw;
+  const p = state.player;
+  const { ENEMIES } = await import('../data/enemies');
+  const { CFG } = await import('../data/config');
+
+  // --- kill restore ---
+  p.vigor = 50;
+  p.resolve = 50;
+  const dummyDef = ENEMIES.find((e: any) => !e.boss)!;
+  const foe = {
+    uid: state.nextUid++, def: dummyDef,
+    x: p.x + 30, y: p.y, px: p.x, py: p.y,
+    hp: 10, maxHp: 10, dmg: 0, atkT: 0, telegraphT: 0, animT: 0,
+  };
+  sys.hordes.foes.push(foe);
+  nw.step(1);
+  sys.hordes.hurt(foe, 999);
+  nw.step(1);
+  const netVigorPerKill = nw.ctx.net?.getGameValue?.('vigorPerKill') ?? 1.0;
+  const netResolvePerKill = nw.ctx.net?.getGameValue?.('resolvePerKill') ?? 1.0;
+  const expectedVigor = 50 + Math.round(CFG.vitals.vigorPerKill * netVigorPerKill);
+  const expectedResolve = 50 + Math.round(CFG.vitals.resolvePerKill * netResolvePerKill);
+  ok(p.vigor >= expectedVigor - 1 && p.vigor <= expectedVigor + 1,
+    `kill vigor: 50 → ${p.vigor} (expected ~${expectedVigor})`);
+  ok(p.resolve >= expectedResolve - 1 && p.resolve <= expectedResolve + 1,
+    `kill resolve: 50 → ${p.resolve} (expected ~${expectedResolve})`);
+
+  // --- gather restore ---
+  p.vigor = 50;
+  const { FEATURES } = await import('../data/features');
+  const treeFeat = FEATURES.find((f: any) => f.skill === 'woodcutting') ?? FEATURES[0];
+  const ptx = Math.floor(p.x / 32), pty = Math.floor(p.y / 32);
+  // ensure a hall exists for building test
+  if (!state.buildings.some((b: any) => b.type === 'hall')) {
+    state.buildings.push({ uid: state.nextUid++, type: 'hall', tx: ptx, ty: pty - 3, hp: 200 });
+    world.reindexBuildings();
+  }
+  // place a gather feature near player
+  // (we can't easily call the gather finish path directly, so test the onGather hook)
+  sys.vitals.onGather();
+  const netVigorPerGather = nw.ctx.net?.getGameValue?.('vigorPerGather') ?? 1.0;
+  const expectedGatherVigor = 50 + Math.round(CFG.vitals.vigorPerGather * netVigorPerGather);
+  ok(p.vigor >= expectedGatherVigor - 1 && p.vigor <= expectedGatherVigor + 1,
+    `gather vigor: 50 → ${p.vigor} (expected ~${expectedGatherVigor})`);
+
+  // --- build restore ---
+  p.resolve = 50;
+  sys.vitals.onBuild();
+  const netResolvePerBuild = nw.ctx.net?.getGameValue?.('resolvePerBuild') ?? 1.0;
+  const expectedBuildResolve = 50 + Math.round(CFG.vitals.resolvePerBuild * netResolvePerBuild);
+  ok(p.resolve >= expectedBuildResolve - 1 && p.resolve <= expectedBuildResolve + 1,
+    `build resolve: 50 → ${p.resolve} (expected ~${expectedBuildResolve})`);
+
+  // --- survive night restore ---
+  p.resolve = 50;
+  sys.vitals.onSurviveNight();
+  const netSurvive = nw.ctx.net?.getGameValue?.('resolvePerSurviveNight') ?? 1.0;
+  const expectedSurvive = 50 + Math.round(CFG.vitals.resolvePerSurviveNight * netSurvive);
+  ok(p.resolve >= expectedSurvive - 1 && p.resolve <= expectedSurvive + 1,
+    `survive night resolve: 50 → ${p.resolve} (expected ~${expectedSurvive})`);
+
+  p.vigor = 100;
+  p.resolve = 100;
+}
+
+async function testVitalsHUD(nw: any) {
+  if (typeof document === 'undefined') { ok(true, 'no DOM — skipping vitals HUD test'); return; }
+  const vigorEl = document.getElementById('nw-vigor');
+  const resolveEl = document.getElementById('nw-resolve');
+  ok(vigorEl !== null, 'vigor HUD chip exists in DOM');
+  ok(resolveEl !== null, 'resolve HUD chip exists in DOM');
+  // Vigor/resolve may have decayed slightly by now — check ≥90
+  if (vigorEl) {
+    const vigorVal = parseInt(vigorEl.querySelector('#nw-vigor-text')?.textContent ?? '0', 10);
+    ok(vigorVal >= 90, `vigor chip shows ≥90 (got ${vigorVal})`);
+  }
+}
+
+async function testHordeScale(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+
+  // pin the network so simSpeed doesn't distort timing
+  const net = nw.ctx.net;
+  const saved = { downlink: net.snap.downlink, rtt: net.snap.rtt, effectiveType: net.snap.effectiveType };
+  net.snap.rtt = 50; net.snap.downlink = 10; net.snap.effectiveType = '4g';
+
+  // ensure a hall exists
+  const { world } = nw;
+  if (!state.buildings.some((b: any) => b.type === 'hall')) {
+    const htx = Math.floor(state.player.x / 32);
+    const hty = Math.floor(state.player.y / 32) - 3;
+    state.player.inv.wood_scrap = 50; state.player.inv.plank = 30;
+    state.buildings.push({ uid: state.nextUid++, type: 'hall', tx: htx, ty: hty, hp: 200 });
+    world.reindexBuildings();
+  }
+
+  // night 3 (dayIndex=3): baseCount + perNight*(3-1) + perTerritory*0
+  const night3 = 3;
+  const expectedBase = CFG.horde.baseCount + CFG.horde.perNight * (night3 - 1);
+  // S1 values: 25 + 18*2 = 61
+  ok(expectedBase >= 60, `night 3 horde count base ${expectedBase} >= 60 (S1 rebalance)`);
+  ok(CFG.horde.maxAlive >= 200, `maxAlive ${CFG.horde.maxAlive} >= 200 (S1 perf gate)`);
+  ok(CFG.horde.spawnRadiusMinTiles !== undefined, 'spawnRadiusMinTiles exists');
+  ok(CFG.horde.spawnRadiusMaxTiles !== undefined, 'spawnRadiusMaxTiles exists');
+  ok(CFG.horde.spawnRadiusMinTiles < CFG.horde.spawnRadiusMaxTiles, 'spawnRadiusMin < spawnRadiusMax');
+
+  // restore network
+  Object.assign(net.snap, saved);
+}
+
 // ---------------------------------------------------------------------------
 // test registry & runner
 // ---------------------------------------------------------------------------
@@ -1364,6 +1533,12 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Echoes — every kind deals damage (pulse/nova/volley/orbit/trail)', fn: testEchoDamage },
   { name: 'Echoes — scaling monotonic, cooldown floor, D5 roll band', fn: testEchoBounds },
   { name: 'Net map integrity — netKeys resolve, vitals rows pinned', fn: testNetMapIntegrity },
+  { name: 'Vitals decay — vigor & resolve drain over time', fn: testVitalsDecay },
+  { name: 'Vigor starve — HP drains when vigor=0', fn: testVigorStarve },
+  { name: 'Resolve zero — speed & damage penalties apply', fn: testResolveZero },
+  { name: 'Vitals restore — kill/gather/build/survive night', fn: testVitalsRestore },
+  { name: 'Vitals HUD — chips visible in DOM', fn: testVitalsHUD },
+  { name: 'Horde scale — night 3 count ≥60, maxAlive≥200', fn: testHordeScale },
 ];
 
 /** Run all registered tests sequentially. Returns { pass, fail, total, report }. */

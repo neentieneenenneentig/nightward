@@ -27,6 +27,7 @@ import { WorldBossSystem } from './game/systems/worldbosses';
 import { FireSystem } from './game/systems/fire';
 import { EchoSystem } from './game/systems/echoes';
 import { NetworkSystem } from './game/systems/network';
+import { VitalsSystem } from './game/systems/vitals';
 import { craft } from './game/systems/crafting';
 import { toggleEquip, invAdd } from './game/rules';
 import { BUILDINGS } from './game/data/buildings';
@@ -138,6 +139,10 @@ async function boot() {
   // C1: Echoes of the Slain — boss-granted auto-abilities (worldbosses.hurt grants)
   const echoes = new EchoSystem(ctx);
   ctx.echoes = echoes;
+
+  // S1: Survival Pressure — vigor & resolve decay, restore via action
+  const vitals = new VitalsSystem(ctx);
+  ctx.vitals = vitals;
 
   // resonance system — polls browser APIs, feeds game systems
   const net = new NetworkSystem();
@@ -265,7 +270,7 @@ async function boot() {
     enterBuild: (id: string) => (id ? build.enter(id) : build.cancel()),
     startBuild: () => build.start(),
     cycleBuild: (dir: number) => build.cycle(dir),
-    craft: (id: string) => { craft(state, id, ctx.toast, log, net); ui.rebuildPanel(); },
+    craft: (id: string) => { const ok = craft(state, id, ctx.toast, log, net); if (ok) vitals.markAction(); ui.rebuildPanel(); },
     useItem: (id: string) => { useItem(id); ui.rebuildPanel(); },
     equip: (id: string) => { equipItem(id); ui.rebuildPanel(); },
     toggleMute: () => Sound.toggle(),
@@ -358,7 +363,7 @@ async function boot() {
   let frames = 0;
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
-    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes }, world, player, gen, chunks,
+    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals }, world, player, gen, chunks,
     get log() { return log; },  // expose full GameLog (entries + export + download)
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
@@ -413,6 +418,8 @@ async function boot() {
     if (ph.isNight && !wasNight) { hordes.onDusk(ph.dayIndex); Sound.play('nightfall'); net.snapshotDuskRtt(); }
     if (!ph.isNight && wasNight) {
       hordes.onDawn();
+      net.computeNightRttStability();
+      vitals.onSurviveNight();
       Sound.play('dawn');
       // Action-gated beacon echo — surviving the night pings the southern beacons
       net.probeAction('survive_night');
@@ -420,12 +427,16 @@ async function boot() {
       net.samplePassive('survive_night');
     }
     wasNight = ph.isNight;
+    // S1: collect RTT samples during the night for stability tracking
+    if (ph.isNight) net.sampleNightRtt();
 
     const a = ui.isOpen() ? { x: 0, y: 0 } : input.axis();
     const feetSpeed = world.speedAt(Math.floor(player.x / TILE), Math.floor(player.y / TILE));
     // N2a: move speed modifier from echo jitter — read from mapping (live-tweakable)
     const moveSpeedMul = net.getGameValue('moveSpeed');
-    const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y), feetSpeed * moveSpeedMul);
+    // S1: resolve-zero speed penalty
+    const resolveSpeedMul = vitals.getSpeedMult();
+    const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y), feetSpeed * moveSpeedMul * resolveSpeedMul);
     state.player.x = player.x;
     state.player.y = player.y;
 
@@ -442,6 +453,7 @@ async function boot() {
     worldbosses.update(effectiveDt);
     fire.update(effectiveDt);
     echoes.update(effectiveDt);
+    vitals.update(effectiveDt);
   }
 
   function enterRegion(ptx: number, pty: number, rk: string) {

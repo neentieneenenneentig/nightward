@@ -124,6 +124,10 @@ export class GatherSystem {
     world.deplete(a.tx, a.ty, a.def.respawnSec);
     chunks.rebakeTile(a.tx, a.ty);
 
+    // S1: gathering feeds vigor and marks non-idle action
+    this.ctx.vitals?.markAction?.();
+    this.ctx.vitals?.onGather?.();
+
     // G1: particle poof at gather location
     const px = (a.tx + 0.5) * TILE, py = (a.ty + 0.5) * TILE;
     this.ctx.particles?.spawn?.('poof', px, py, 8);

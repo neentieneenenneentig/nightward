@@ -180,6 +180,10 @@ export class BuildSystem {
     const px = (m.tx + 0.5) * TILE, py = (m.ty + 0.5) * TILE;
     this.ctx.particles?.spawn?.('spark', px, py, 6);
 
+    // S1: building restores resolve and marks non-idle action
+    this.ctx.vitals?.markAction?.();
+    this.ctx.vitals?.onBuild?.();
+
     // M3.5: Action-gated beacon echo — building pings fortress beacons
     this.ctx.net?.probeAction?.('build');
     // M3.6: Passive Performance API snapshot — DNS/TCP/TLS timing at build time

@@ -136,14 +136,16 @@ export const CFG = {
 
   horde: {
     firstNight: 1,           // nights before this one are quiet
-    baseCount: 9,            // enemies on the first hostile night (W4: 6→9)
-    perNight: 5.5,           // + per night survived (W4: 3.5→5; +0.5 danger pass)
-    perTerritory: 0.22,      // + per point of territory score (greed = risk)
-    maxAlive: 90,            // hard cap for perf & sanity
-    spawnRadiusTiles: 14,    // distance from hall (or player) they emerge at
-    spawnIntervalSec: 1.1,   // trickle rate (W4: 1.5→1.1 — faster = scarier)
-    hpGrowth: 1.21,          // per-night multiplier on enemy hp (danger pass: 1.18→1.21)
-    dmgGrowth: 1.15,         // per-night multiplier on enemy damage (danger pass: 1.12→1.15)
+    baseCount: 25,           // S1: 9→25 — first hostile night = a siege
+    perNight: 18,            // S1: 5.5→18 — each night escalates hard
+    perTerritory: 1.2,       // S1: 0.22→1.2 — expanding territory summons danger
+    maxAlive: 250,           // S1: 90→250 — headroom for bigger waves
+    spawnRadiusMinTiles: 10, // S1: was spawnRadiusTiles 14, now 10–18 spread
+    spawnRadiusMaxTiles: 18,
+    spawnIntervalSec: 0.55,  // S1: 1.1→0.55 — trickle becomes a flood
+    hpGrowth: 1.12,          // S1: 1.21→1.12 — more mobs, each less tanky
+    dmgGrowth: 1.10,         // S1: 1.15→1.10 — quantity over per-unit quality
+    foeDmgToBuildings: 3.0,  // S1: NEW — walls actually break now (~15 hits vs 45)
     aggroRangePx: 170,       // enemies switch to the player inside this
     dawnFlee: true,          // survivors melt away at sunrise
     // M3: gold = greed = danger. The network detects your cache and sends heavier waves.
@@ -157,11 +159,11 @@ export const CFG = {
   // — loot on legs to hunt between nights, not a siege. Only EnemyDef rows
   // flagged `daytime` spawn here, at their base (night-1) stats.
   dayspawn: {
-    maxAlive: 5,             // day mobs alive at once
-    spawnIntervalSec: 9,     // trickle rate while under the cap
-    minRadiusTiles: 8,       // spawn ring around the player
+    maxAlive: 18,            // S1: 5→18 — day prey is now a real hunt
+    spawnIntervalSec: 3,     // S1: 9→3 — they pour in faster
+    minRadiusTiles: 5,       // S1: 8→5 — closer = can't ignore
     maxRadiusTiles: 16,
-    despawnTiles: 28,        // left this far behind, they despawn from the grid
+    despawnTiles: 35,        // S1: 28→35 — they stick around further
   },
 
   // S1: survival pressure — vitals that decay and must be restored by action.
