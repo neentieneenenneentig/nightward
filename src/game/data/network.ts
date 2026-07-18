@@ -261,6 +261,9 @@ export interface NetworkSnapshot {
   /** Whether the user is behind Cloudflare WARP. */
   warp: boolean;
 
+  /** S1: transient — night RTT stability % (computed at dawn). */
+  _nightRttStability?: number;
+
   // ---- resonance chain ----
   /** Multi-hop connection breakdown. */
   traceChain: TraceHop[];
@@ -511,7 +514,6 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'vigorDecay',
     min: 0.8,
     max: 3.0,
-    dormant: true,
   },
   {
     label: 'Vigor Per Kill',
@@ -527,7 +529,6 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'vigorPerKill',
     min: 0.4,
     max: 1.3,
-    dormant: true,
   },
   {
     label: 'Resolve Decay',
@@ -543,7 +544,6 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'resolveDecay',
     min: 1.0,
     max: 4.0,
-    dormant: true,
   },
   {
     label: 'Resolve Per Kill',
@@ -559,7 +559,6 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'resolvePerKill',
     min: 0.3,
     max: 1.4,
-    dormant: true,
   },
   {
     label: 'Resolve Per Build',
@@ -573,7 +572,6 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'resolvePerBuild',
     min: 0.7,
     max: 1.5,
-    dormant: true,
   },
   {
     label: 'Resolve Near Hall',
@@ -587,7 +585,6 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'resolveNearHall',
     min: 0.6,
     max: 1.5,
-    dormant: true,
   },
   {
     label: 'Vigor Per Gather',
@@ -603,7 +600,6 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'vigorPerGather',
     min: 0.4,
     max: 1.3,
-    dormant: true,
   },
   {
     label: 'Vigor Campfire',
@@ -617,7 +613,6 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'vigorPerCampfire',
     min: 0.6,
     max: 1.5,
-    dormant: true,
   },
   {
     label: 'Resolve Night',
@@ -634,6 +629,23 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'resolveNightMult',
     min: 0.8,
     max: 2.5,
-    dormant: true,
+  },
+  {
+    label: 'Resolve Per Survive Night',
+    netKey: 'rtt',
+    // Night-RTT stability: % of night RTT stayed in its median band.
+    // Stable night = triumphant dawn. Chaotic night = barely held on.
+    // The stability is computed by NetworkSystem at dawn and stored in
+    // snap._nightRttStability before this transform runs.
+    transform: (_rtt: number, ctx?: NetMappingContext) => {
+      const stability = (ctx?.snap as any)?._nightRttStability ?? 100;
+      if (stability >= 90) return 1.5;
+      if (stability >= 70) return 1.0;
+      if (stability >= 50) return 0.7;
+      return 0.4;
+    },
+    target: 'resolvePerSurviveNight',
+    min: 0.4,
+    max: 1.5,
   },
 ];

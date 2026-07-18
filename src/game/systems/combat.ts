@@ -77,12 +77,51 @@ export class CombatSystem {
     }
   }
 
-  /** Player pressed attack: starts windup from idle, buffers one swing during
-   * recovery (keeps mashing from feeling ignored), ignored mid-swing. */
+  /** Player pressed attack: starts windup from idle, restarts windup with damage
+   * during windup/active (spam-clicking = rapid single-target DPS at the cost of
+   * never reaching recovery), buffers one swing during recovery. */
   attack() {
     if (this.ctx.state.gameOver) return;
+    this.ctx.vitals?.markAction?.(); // S1: attacking is not idle
     if (this.phase === 'idle') this.startSwing();
     else if (this.phase === 'recovery') this.queued = true;
+    else this.restartSwing(); // windup or active — restart with damage
+  }
+
+  /** Restart the swing from windup, dealing damage immediately. Spam-clicking
+   * during windup/active lets you chain rapid hits at the cost of never reaching
+   * recovery (you stay locked in the swing animation). Rate-capped at
+   * CFG.combat.restartMinIntervalSec to prevent unbounded autoclicker DPS. */
+  private restartSwing() {
+    const { state } = this.ctx;
+    // Rate cap: enforce minimum interval between restarts
+    const lastRestart = (this as any)._lastRestartClock ?? -999;
+    if (state.clock - lastRestart < CFG.combat.restartMinIntervalSec) return;
+    (this as any)._lastRestartClock = state.clock;
+
+    const env = this.envelope();
+    // Deal damage right now (the "redaming" from the start of the swing)
+    this.resolveHit();
+    // Reset to windup so the next phase transition will deal damage again
+    this.setPhase('windup');
+    this.phaseT = env.windup;
+    // Re-roll damage for the new swing (seeded rng, no extra HTTP beacon —
+    // probeAction is skipped on restart to avoid beacon spam)
+    this.swingCount++;
+    const swingSeed = (state.seed ?? 1234) ^ (this.swingCount * 0x9e3779b9);
+    const rng = (() => {
+      let s = swingSeed >>> 0;
+      return () => {
+        s = (s + 0x6d2b79f5) | 0;
+        let t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    })();
+    this.ctx.net?.rollDamageMul?.(rng);
+    // NOTE: no probeAction('attack') on restart — the beacon fired on the
+    // initial swing; restarts reuse the same connection window
+    Sound.play('windup');
   }
 
   private startSwing() {
@@ -237,7 +276,9 @@ export class CombatSystem {
     const { state, player, toast } = this.ctx;
     if (state.gameOver) return;
     if (state.god) { this.ctx.log?.push('combat', `${source ?? 'Something'} hits you for 0 (god mode)`, state.clock); return; }
-    const taken = Math.max(1, dmg - armorDef(state)); // armor softens, never fully negates
+    let taken = Math.max(1, dmg - armorDef(state)); // armor softens, never fully negates
+    // S1: resolve-zero = +50% damage taken
+    taken = Math.round(taken * (this.ctx.vitals?.getDmgTakenMult?.() ?? 1.0));
     state.player.hp -= taken;
     player.flash();
     Sound.play('hurt');
@@ -265,6 +306,8 @@ export class CombatSystem {
     state.player.x = spot.x;
     state.player.y = spot.y;
     player.teleport(spot.x, spot.y);
+    // S1: death scatters your vitals too — reset to 50/50
+    this.ctx.vitals?.onRespawn?.();
     toast(lost > 0
       ? `The thread snaps — you're scattered, ${lost} gold gone. Find your way home.`
       : 'The thread snaps — you are cast into distant lands…', 'bad');

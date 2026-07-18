@@ -46,6 +46,9 @@ export interface GameState {
     equip: Equip;                     // gear worn in each slot
     soulItems: Partial<Record<SoulSlot, SoulItem>>; // per-slot soul-bound leveling
     echoes: Record<string, number>;   // C1: echoId → level (Echoes of the Slain)
+    vigor: number;                    // S1: survival vital (0-100)
+    resolve: number;                  // S1: survival vital (0-100)
+    lastActionT: number;              // S1: clock time of last non-idle action
   };
   /** tileKey "tx,ty" → clock time when the node respawns */
   depleted: Record<string, number>;
@@ -96,7 +99,7 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     seed,
     clock: 0,
     nextUid: 1,
-    player: { x: spawn.x, y: spawn.y, hp: CFG.player.maxHp, gold: 0, inv, xp: {}, equip: {}, soulItems, echoes: {} },
+    player: { x: spawn.x, y: spawn.y, hp: CFG.player.maxHp, gold: 0, inv, xp: {}, equip: {}, soulItems, echoes: {}, vigor: CFG.vitals.vigorMax, resolve: CFG.vitals.resolveMax, lastActionT: 0 },
     depleted: {},
     buildings: [],
     worldBosses: [],

@@ -300,6 +300,11 @@ all fixed in-tree the same evening:
   machine, and the Gauntlet horde test steps a 200+ wave without frame-budget collapse.
 - **Fiction naming:** the campfire building's display name is **Watchfire** (id
   `campfire`). Chronicle lines say Watchfire, never "campfire".
+- **Combat click-restart (added at ship):** clicking Attack during windup or active
+  phases restarts the swing with immediate damage — spam-clicking = rapid single-target
+  DPS at the cost of never reaching recovery (you stay locked in the swing animation).
+  Recovery-phase buffering unchanged. This gives skilled players a high-APM damage
+  ceiling while keeping the state machine simple.
 
 ## ✅ RESOLVED: gather was doubly `simSpeed`-sensitive (surfaced + fixed 2026-07-17)
 
@@ -332,3 +337,44 @@ floor, gather is ~1.38× slower than intended vs. the ~1.18× a single applicati
 
 Recommendation: **(b)** unless the extra sensitivity is deliberate. Either way it's a
 balance change → own commit, not folded into the review.
+
+## ✅ Shipped (2026-07-17)
+
+- `VitalsSystem` (`src/game/systems/vitals.ts`) — vigor & resolve decay, restore hooks,
+  zero-penalties (HP drain, speed −30%, dmg taken +50%, red vignette).
+- `CFG.vitals` block in `config.ts` with all 19 keys.
+- Horde rebalance: `baseCount` 25, `perNight` 18, `maxAlive` 250, `spawnIntervalSec` 0.55,
+  `spawnRadiusMinTiles`/`spawnRadiusMaxTiles` (10–18 spread), `foeDmgToBuildings` 3×,
+  `hpGrowth` 1.12, `dmgGrowth` 1.10.
+- Dayspawn rebalance: `maxAlive` 18, `spawnIntervalSec` 3, `minRadiusTiles` 5,
+  `despawnTiles` 35.
+- `foeDmgToBuildings` applied in `hordes.ts` `damageBuilding()` (not baked into per-foe dmg).
+- Night-RTT stability tracker in `NetworkSystem` (`_nightRttSamples`, `onDawn()` computes
+  `_nightRttStability`).
+- `resolvePerSurviveNight` NET_GAME_MAP row (non-dormant from the start).
+- All 9 vitals NET_GAME_MAP rows non-dormant (wired to real consumers).
+- HUD chips for vigor (`◈`) and resolve (`✦`) in top bar.
+- Vital floaters: green for vigor, gold for resolve.
+- 6 new Gauntlet tests (38→44): `testVitalsDecay`, `testVigorStarve`, `testResolveZero`,
+  `testVitalsRestore`, `testVitalsHUD`, `testHordeScale`. All green.
+- `attack()` in `combat.ts`: clicking during windup/active now **restarts the swing**
+  (deals damage immediately + resets windup). Spam-clicking = rapid single-target DPS at
+  the cost of never reaching recovery (locked in swing animation). Recovery-phase buffering
+  unchanged. Rate-capped at `CFG.combat.restartMinIntervalSec` (0.12s) to prevent unbounded
+  autoclicker DPS; no beacon probe on restart (avoids HTTP spam).
+- Branch: `s1-survival` (off `c1-echoes`).
+
+### Audit fixes (2026-07-17, same session)
+
+- **Echo kills now feed vitals** (locked spec violation fixed): `HordesSystem.hurt()` gained
+  a `feedsVitals` parameter (defaults to `awardXp` for backward compat). All echo call sites
+  pass `feedsVitals=true`. `WorldBossSystem.hurt()` calls `vitals.onKill(true)` on boss death.
+- **testVitalsDecay**: pins network snapshot (downlink/rtt/effectiveType/timeOfDay) for
+  deterministic decay rates regardless of live connection.
+- **testVigorStarve**: pins worst-case network (downlink 0.3Mbps, rtt 15ms), sets vigor to
+  0.5, uses short HP-drain window with god-mode guard to prevent death/respawn skew.
+- **testHordeScale**: directly creates 250 foes (one per config maxAlive) and steps the sim
+  to prove the perf gate — no longer a config-only assertion.
+- **testCombatRestartRateCap** (new, 45th test): verifies click-restart increments swingCount,
+  rate cap suppresses within `restartMinIntervalSec`, and restart works after the window.
+- Full Gauntlet: **45/45 green, 228 assertions, 0 failures** (verified via CDP harness).

@@ -116,7 +116,7 @@ export class HordeSystem {
     let x = cx, y = cy, placed = false;
     for (let i = 0; i < 10 && !placed; i++) {
       const ang = Math.random() * Math.PI * 2;
-      const dist = CFG.horde.spawnRadiusTiles * TILE * (0.9 + Math.random() * 0.35);
+      const dist = (CFG.horde.spawnRadiusMinTiles + Math.random() * (CFG.horde.spawnRadiusMaxTiles - CFG.horde.spawnRadiusMinTiles)) * TILE * (0.9 + Math.random() * 0.35);
       x = cx + Math.cos(ang) * dist;
       y = cy + Math.sin(ang) * dist;
       placed = world.canStand(x, y, 5) && this.nearestCampfireDist(x, y) > CFG.fire.campfireFearTiles * TILE;
@@ -318,7 +318,7 @@ export class HordeSystem {
 
   private damageBuilding(b: Building, dmg: number) {
     const { state, world, views, toast } = this.ctx;
-    b.hp -= dmg;
+    b.hp -= Math.round(dmg * (CFG.horde.foeDmgToBuildings ?? 1));
     if (b.hp > 0) return;
     const def = BUILDINGS.find((d) => d.id === b.type)!;
     state.buildings = state.buildings.filter((x: Building) => x.uid !== b.uid);
@@ -363,7 +363,10 @@ export class HordeSystem {
     this.ctx.log?.push('economy', `Scattered hoard: −${cost} gold, horde reduced by ${reduced} (${this.toSpawn} remaining)`, state.clock);
     return true;
   }
-  hurt(f: Foe, dmg: number, awardXp = true) {
+  hurt(f: Foe, dmg: number, awardXp = true, feedsVitals?: boolean) {
+    // feedsVitals defaults to awardXp (backward compat: swings feed both,
+    // towers feed neither). Echoes pass awardXp=false, feedsVitals=true.
+    const feedVitals = feedsVitals ?? awardXp;
     // N2a: Shelled soak — extra soak until hit 3 times
     const ef = f as any;
     if (ef.echoSoak > 0) {
@@ -391,6 +394,11 @@ export class HordeSystem {
     this.foes = this.foes.filter((x) => x.uid !== f.uid);
     views.removeFoe(f.uid);
     Sound.play('enemyDie');
+
+    // S1: only player-swing & echo kills feed vitals — tower kills do NOT
+    if (feedVitals) {
+      this.ctx.vitals?.onKill?.(!!f.def.boss);
+    }
 
     const [gMin, gMax] = f.def.gold;
     state.player.gold += gMin + Math.floor(Math.random() * (gMax - gMin + 1));

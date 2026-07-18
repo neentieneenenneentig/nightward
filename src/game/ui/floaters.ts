@@ -78,10 +78,15 @@ export class FloaterSystem {
     this.floaters.push({
       text,
       born: performance.now() / 1000,
-      life: FLOAT_LIFE,
-      vx: (Math.random() - 0.5) * 10,
-      vy: FLOAT_RISE,
+      life: 1.4,  // shorter life for vitals floaters
+      vx: (Math.random() - 0.5) * 6,
+      vy: FLOAT_RISE * 0.7,
     });
+  }
+
+  /** S1: spawn a vital-change floater (smaller, quicker). */
+  spawnVital(wx: number, wy: number, _label: string, msg: string, color: string, cam: Camera) {
+    this.spawnInfo(wx, wy, msg, color, cam);
   }
 
   /** Call every frame with current time in seconds. */

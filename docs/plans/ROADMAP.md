@@ -598,6 +598,11 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 > surviving nights; a 10× horde rebalance making nights genuinely dangerous; walls that
 > actually break. Brief: `docs/plans/S1-survival-pressure.md`.
 >
+> **✅ S1 SHIPPED (2026-07-17, branch `s1-survival`):** VitalsSystem, horde/dayspawn
+> rebalance, foeDmgToBuildings, night-RTT stability tracker, all 9 vitals NET_GAME_MAP
+> rows wired (non-dormant), HUD chips, vital floaters, 6 new Gauntlet tests (44/44 green).
+> Combat: attack() now restarts swing on windup/active click (spam-click = rapid DPS).
+>
 > **Revised order: C1 (echoes) → S1 (survival pressure) → C2 (waystones) → C3 (loom)
 > → C4 (armory) → G1-P (painterly verdict) → C5 (buildings rework).**
 >

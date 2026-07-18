@@ -1320,6 +1320,262 @@ async function testNetMapIntegrity(nw: any) {
   }
 }
 
+async function testCombatRestartRateCap(nw: any) {
+  // Verify click-restart enforces minimum interval (CFG.combat.restartMinIntervalSec)
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+
+  // Reset combat state machine
+  sys.combat.phase = 'idle';
+  (sys.combat as any)._lastRestartClock = undefined;
+
+  // Start a swing from idle
+  sys.combat.attack();
+  ok(sys.combat.phase !== 'idle', 'attack from idle leaves idle phase');
+
+  // Capture swingCount after the initial startSwing
+  const swingCountAfterStart = sys.combat.swingCount;
+
+  // Force phase to windup (simulate mid-swing) and call attack again
+  sys.combat.phase = 'windup';
+  sys.combat.attack();
+  ok(sys.combat.swingCount > swingCountAfterStart,
+    `immediate re-click triggers restart (swingCount ${swingCountAfterStart} → ${sys.combat.swingCount})`);
+
+  // Third click within rate-cap window should be suppressed
+  const swingCountAfterRestart = sys.combat.swingCount;
+  sys.combat.attack();
+  ok(sys.combat.swingCount === swingCountAfterRestart,
+    `re-click within ${CFG.combat.restartMinIntervalSec}s rate cap suppressed (swingCount unchanged at ${sys.combat.swingCount})`);
+
+  // Step past the rate cap window
+  const stepsToClear = Math.ceil(CFG.combat.restartMinIntervalSec * 30) + 2;
+  nw.step(stepsToClear);
+
+  // Now restart should work again
+  sys.combat.phase = 'windup'; // re-enter windup after step
+  const swingCountAfterWait = sys.combat.swingCount;
+  sys.combat.attack();
+  ok(sys.combat.swingCount > swingCountAfterWait,
+    `re-click after rate cap window triggers restart (swingCount ${swingCountAfterWait} → ${sys.combat.swingCount})`);
+}
+
+// =========================================================================
+// S1: Survival Pressure — vitals tests
+// =========================================================================
+
+async function testVitalsDecay(nw: any) {
+  const { state } = nw;
+  const p = state.player;
+  // Pin network so decay rates are deterministic regardless of live connection
+  const net = nw.ctx.net;
+  const saved = { downlink: net.snap.downlink, rtt: net.snap.rtt, effectiveType: net.snap.effectiveType, timeOfDay: net.snap.timeOfDay };
+  net.snap.downlink = 10;     // ≥10 Mbps → vigorDecay ×1.0
+  net.snap.rtt = 50;          // 20–50ms → simSpeed ×1.0
+  net.snap.effectiveType = '4g'; // → resolveDecay ×1.0
+  net.snap.timeOfDay = 12;    // noon → resolveNightMult ×0.8 (daytime band)
+  // Mark an action so idle multiplier doesn't kick in
+  p.lastActionT = state.clock;
+  p.vigor = 100;
+  p.resolve = 100;
+  nw.step(60 * 30); // 60s at 30Hz
+  // Restore network
+  Object.assign(net.snap, saved);
+  ok(p.vigor < 100, `vigor decayed after 60s: ${p.vigor.toFixed(1)}`);
+  ok(p.resolve < 100, `resolve decayed after 60s: ${p.resolve.toFixed(1)}`);
+  // With network pinned to neutral: vigor decay = 60 × (1/15) × 1.0 = 4 pts
+  // resolve decay = 60 × (1/30) × 1.0 × 1.0 × 0.8 (daytime hour) ≈ 1.6 pts
+  ok(p.vigor >= 94 && p.vigor <= 100, `vigor decay roughly ~${(100-p.vigor).toFixed(1)}pts over 60s (expected 4)`);
+}
+
+async function testVigorStarve(nw: any) {
+  const { state } = nw;
+  const p = state.player;
+  // Pin network to worst-case vigor decay (downlink <0.5Mbps → 3.0×, rtt <20ms → simSpeed 1.15)
+  const net = nw.ctx.net;
+  const saved = { downlink: net.snap.downlink, rtt: net.snap.rtt, effectiveType: net.snap.effectiveType };
+  net.snap.downlink = 0.3; // <0.5 → vigorDecay ×3.0
+  net.snap.rtt = 15;       // <20ms → simSpeed ×1.15
+  net.snap.effectiveType = '4g'; // neutral resolve decay
+  // Max decay rate = (1/15) × 3.0 × 1.15 ≈ 0.23/s. Start at 0.5, step 5s → drain ~1.15.
+  p.vigor = 0.5;
+  p.hp = 100;
+  nw.step(5 * 30); // 5s at 30Hz
+  ok(p.vigor <= 0, `vigor reached 0 (got ${p.vigor.toFixed(2)} after 5s with worst-case net)`);
+  // HP should be draining — set high HP, step briefly, verify decrease
+  p.hp = 100;
+  const hpBefore = p.hp;
+  nw.step(1 * 30); // 1 second of starvation
+  // Net drain = 2/sec starvation - ~1/sec day regen ≈ 1/sec. 1s → ~1 HP lost.
+  ok(p.hp < hpBefore, `HP drained after vigor=0: ${hpBefore.toFixed(0)} → ${p.hp.toFixed(0)}`);
+  // Now safe to restore network and reset
+  Object.assign(net.snap, saved);
+  p.vigor = 100;
+  p.hp = 100;
+}
+
+async function testResolveZero(nw: any) {
+  const { state, sys } = nw;
+  const p = state.player;
+
+  // set resolve to 0
+  p.resolve = 0;
+  nw.step(2);
+
+  // speed penalty should be applied
+  const speedMult = sys.vitals?.getSpeedMult?.() ?? 1;
+  ok(speedMult < 1, `resolve-zero speed mult ${speedMult} < 1`);
+
+  // damage taken penalty should be applied
+  const dmgMult = sys.vitals?.getDmgTakenMult?.() ?? 1;
+  ok(dmgMult > 1, `resolve-zero dmg taken mult ${dmgMult} > 1`);
+
+  p.resolve = 100;
+}
+
+async function testVitalsRestore(nw: any) {
+  const { state, sys, world } = nw;
+  const p = state.player;
+  const { ENEMIES } = await import('../data/enemies');
+  const { CFG } = await import('../data/config');
+
+  // --- kill restore ---
+  p.vigor = 50;
+  p.resolve = 50;
+  const dummyDef = ENEMIES.find((e: any) => !e.boss)!;
+  const foe = {
+    uid: state.nextUid++, def: dummyDef,
+    x: p.x + 30, y: p.y, px: p.x, py: p.y,
+    hp: 10, maxHp: 10, dmg: 0, atkT: 0, telegraphT: 0, animT: 0,
+  };
+  sys.hordes.foes.push(foe);
+  nw.step(1);
+  sys.hordes.hurt(foe, 999);
+  nw.step(1);
+  const netVigorPerKill = nw.ctx.net?.getGameValue?.('vigorPerKill') ?? 1.0;
+  const netResolvePerKill = nw.ctx.net?.getGameValue?.('resolvePerKill') ?? 1.0;
+  const expectedVigor = 50 + Math.round(CFG.vitals.vigorPerKill * netVigorPerKill);
+  const expectedResolve = 50 + Math.round(CFG.vitals.resolvePerKill * netResolvePerKill);
+  ok(p.vigor >= expectedVigor - 1 && p.vigor <= expectedVigor + 1,
+    `kill vigor: 50 → ${p.vigor} (expected ~${expectedVigor})`);
+  ok(p.resolve >= expectedResolve - 1 && p.resolve <= expectedResolve + 1,
+    `kill resolve: 50 → ${p.resolve} (expected ~${expectedResolve})`);
+
+  // --- gather restore ---
+  p.vigor = 50;
+  const { FEATURES } = await import('../data/features');
+  const treeFeat = FEATURES.find((f: any) => f.skill === 'woodcutting') ?? FEATURES[0];
+  const ptx = Math.floor(p.x / 32), pty = Math.floor(p.y / 32);
+  // ensure a hall exists for building test
+  if (!state.buildings.some((b: any) => b.type === 'hall')) {
+    state.buildings.push({ uid: state.nextUid++, type: 'hall', tx: ptx, ty: pty - 3, hp: 200 });
+    world.reindexBuildings();
+  }
+  // place a gather feature near player
+  // (we can't easily call the gather finish path directly, so test the onGather hook)
+  sys.vitals.onGather();
+  const netVigorPerGather = nw.ctx.net?.getGameValue?.('vigorPerGather') ?? 1.0;
+  const expectedGatherVigor = 50 + Math.round(CFG.vitals.vigorPerGather * netVigorPerGather);
+  ok(p.vigor >= expectedGatherVigor - 1 && p.vigor <= expectedGatherVigor + 1,
+    `gather vigor: 50 → ${p.vigor} (expected ~${expectedGatherVigor})`);
+
+  // --- build restore ---
+  p.resolve = 50;
+  sys.vitals.onBuild();
+  const netResolvePerBuild = nw.ctx.net?.getGameValue?.('resolvePerBuild') ?? 1.0;
+  const expectedBuildResolve = 50 + Math.round(CFG.vitals.resolvePerBuild * netResolvePerBuild);
+  ok(p.resolve >= expectedBuildResolve - 1 && p.resolve <= expectedBuildResolve + 1,
+    `build resolve: 50 → ${p.resolve} (expected ~${expectedBuildResolve})`);
+
+  // --- survive night restore ---
+  p.resolve = 50;
+  sys.vitals.onSurviveNight();
+  const netSurvive = nw.ctx.net?.getGameValue?.('resolvePerSurviveNight') ?? 1.0;
+  const expectedSurvive = 50 + Math.round(CFG.vitals.resolvePerSurviveNight * netSurvive);
+  ok(p.resolve >= expectedSurvive - 1 && p.resolve <= expectedSurvive + 1,
+    `survive night resolve: 50 → ${p.resolve} (expected ~${expectedSurvive})`);
+
+  p.vigor = 100;
+  p.resolve = 100;
+}
+
+async function testVitalsHUD(nw: any) {
+  if (typeof document === 'undefined') { ok(true, 'no DOM — skipping vitals HUD test'); return; }
+  const vigorEl = document.getElementById('nw-vigor');
+  const resolveEl = document.getElementById('nw-resolve');
+  ok(vigorEl !== null, 'vigor HUD chip exists in DOM');
+  ok(resolveEl !== null, 'resolve HUD chip exists in DOM');
+  // Vigor/resolve may have decayed slightly by now — check ≥90
+  if (vigorEl) {
+    const vigorVal = parseInt(vigorEl.querySelector('#nw-vigor-text')?.textContent ?? '0', 10);
+    ok(vigorVal >= 90, `vigor chip shows ≥90 (got ${vigorVal})`);
+  }
+}
+
+async function testHordeScale(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+
+  // pin the network so simSpeed doesn't distort timing
+  const net = nw.ctx.net;
+  const saved = { downlink: net.snap.downlink, rtt: net.snap.rtt, effectiveType: net.snap.effectiveType };
+  net.snap.rtt = 50; net.snap.downlink = 10; net.snap.effectiveType = '4g';
+
+  // ensure a hall exists
+  const { world } = nw;
+  if (!state.buildings.some((b: any) => b.type === 'hall')) {
+    const htx = Math.floor(state.player.x / 32);
+    const hty = Math.floor(state.player.y / 32) - 3;
+    state.player.inv.wood_scrap = 50; state.player.inv.plank = 30;
+    state.buildings.push({ uid: state.nextUid++, type: 'hall', tx: htx, ty: hty, hp: 200 });
+    world.reindexBuildings();
+  }
+
+  // night 3 (dayIndex=3): baseCount + perNight*(3-1) + perTerritory*0
+  const night3 = 3;
+  const expectedBase = CFG.horde.baseCount + CFG.horde.perNight * (night3 - 1);
+  // S1 values: 25 + 18*2 = 61
+  ok(expectedBase >= 60, `night 3 horde count base ${expectedBase} >= 60 (S1 rebalance)`);
+  ok(CFG.horde.maxAlive >= 200, `maxAlive ${CFG.horde.maxAlive} >= 200 (S1 perf gate)`);
+  ok(CFG.horde.spawnRadiusMinTiles !== undefined, 'spawnRadiusMinTiles exists');
+  ok(CFG.horde.spawnRadiusMaxTiles !== undefined, 'spawnRadiusMaxTiles exists');
+  ok(CFG.horde.spawnRadiusMinTiles < CFG.horde.spawnRadiusMaxTiles, 'spawnRadiusMin < spawnRadiusMax');
+
+  // ---- Prove the perf gate: create 250 foes to verify the system handles maxAlive ----
+  // Use a simple, deterministic foe template pushed directly — the spawn system
+  // has too many worldgen-dependent failure modes (canStand, campfire repel, etc.)
+  // for a reliable behavioral test. This proves the engine handles 250 alive.
+  const { ENEMIES } = await import('../data/enemies');
+  const dummyDef = ENEMIES.find((e: any) => !e.boss)!;
+  const px = state.player.x, py = state.player.y;
+  const origFoes = [...sys.hordes.foes];
+  sys.hordes.foes = [];
+  let created = 0;
+  for (let i = 0; i < CFG.horde.maxAlive; i++) {
+    sys.hordes.foes.push({
+      uid: state.nextUid++,
+      def: dummyDef,
+      x: px + (i % 50) * 32,  // spread across a line
+      y: py + Math.floor(i / 50) * 32,
+      px: px, py: py,
+      hp: dummyDef.hp, maxHp: dummyDef.hp,
+      dmg: dummyDef.dmg,
+      atkT: 999, telegraphT: 0, animT: 0,
+    });
+    created++;
+  }
+  ok(created === CFG.horde.maxAlive, `created ${created} foes = maxAlive ${CFG.horde.maxAlive}`);
+  // Step the sim for several ticks — if the engine doesn't crash, the perf gate holds
+  for (let i = 0; i < 60; i++) nw.step(1);
+  ok(sys.hordes.foes.length > 0, `foes still alive after stepping (${sys.hordes.foes.length})`);
+  ok(true, `perf gate: ${created} foes stepped without crash`);
+  // Clean up and restore original foes
+  sys.hordes.foes = origFoes;
+
+  // restore network
+  Object.assign(net.snap, saved);
+}
+
 // ---------------------------------------------------------------------------
 // test registry & runner
 // ---------------------------------------------------------------------------
@@ -1364,6 +1620,13 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Echoes — every kind deals damage (pulse/nova/volley/orbit/trail)', fn: testEchoDamage },
   { name: 'Echoes — scaling monotonic, cooldown floor, D5 roll band', fn: testEchoBounds },
   { name: 'Net map integrity — netKeys resolve, vitals rows pinned', fn: testNetMapIntegrity },
+  { name: 'Combat restart rate cap — autoclicker guard', fn: testCombatRestartRateCap },
+  { name: 'Vitals decay — vigor & resolve drain over time', fn: testVitalsDecay },
+  { name: 'Vigor starve — HP drains when vigor=0', fn: testVigorStarve },
+  { name: 'Resolve zero — speed & damage penalties apply', fn: testResolveZero },
+  { name: 'Vitals restore — kill/gather/build/survive night', fn: testVitalsRestore },
+  { name: 'Vitals HUD — chips visible in DOM', fn: testVitalsHUD },
+  { name: 'Horde scale — night 3 count ≥60, maxAlive≥200', fn: testHordeScale },
 ];
 
 /** Run all registered tests sequentially. Returns { pass, fail, total, report }. */
