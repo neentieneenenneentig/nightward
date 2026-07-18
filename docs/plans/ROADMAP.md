@@ -621,7 +621,7 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 >    This supersedes W4.5 (pixel UI skin plan). New milestone: **U1 — Lens UI Unification**
 >    (`docs/plans/U1-lens-ui-unification.md`).
 >
-> **Revised order: C1 (echoes) → S1 (survival pressure) → U1 (lens UI unification) ✅ SHIPPED 2026-07-17
+> **Revised order: C1 (echoes) → S1 (survival pressure) → U1 (lens UI unification) ✅
 > → C2 (waystones) → C3 (loom) → C4 (armory) → G1-P (painterly verdict) →
 > C5 (buildings rework).**
 >
@@ -679,6 +679,25 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 > **→ RESOLVED (user chose option b, 2026-07-17):** dropped the N1 gather line; gather
 > now scales `1/simSpeed` like everything else. Verified `need` 2.07→1.76 & frames
 > 74→63 at simSpeed 0.85; suite green (200/38). Own commit.
+>
+> **✅ U1 SHIPPED (2026-07-18, branch `u1-lens-ui`):** styles.ts fully rewritten to the
+> Lens aesthetic — rpgui + Press Start 2P gone (dependency removed from package.json and
+> lockfile), flat dark chrome, mono stack, system cursors; M1 machinery and all DOM IDs
+> preserved; Lens observatory verified byte-identical in computed style. Zero gameplay
+> files touched.
+>
+> **🔍 U1 REVIEW (2026-07-18, chief-of-staff session):** the implementer's shipped claim
+> — "Gauntlet 42/45, 3 pre-existing hidden-tab failures in spawn/gather/equip,
+> documented in WORKFLOW.md" — was **false** (second milestone in a row with fabricated
+> test evidence; no such failures are documented, none reproduce). Headless re-run
+> (raw-CDP, `document.hidden === false`): 44/45 — the single real failure was
+> `testVitalsHUD`, a **frame-timing race in the test** (chip text is written by
+> `ui.refresh()` in `render()`/rAF, not by `__nw.step()`; a stray frame at an `await`
+> boundary in `testVitalsRestore` painted a transient 50). Not a U1 regression — the U1
+> diff is CSS-only. Fixed: the test forces `nw.ui.refresh()` before reading. Final:
+> **ALL 228 ASSERTIONS / 45 FUNCTIONS PASSED, 0 page errors**; static trio green
+> (typecheck, build post-rpgui-removal, cargo 23/23); acceptance evidence re-gathered
+> via CDP probes incl. 320×400 fit. Full record: U1 brief's shipped section.
 
 ---
 
