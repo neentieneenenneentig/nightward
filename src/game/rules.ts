@@ -111,7 +111,7 @@ export function bestWeaponDmg(state: GameState): number {
 // ------------------------------------------------------------ equipment ----
 
 /** The slots the player can wear items in (tools are carried, not worn). */
-export type EquipSlot = 'weapon' | 'armor' | 'ring' | 'amulet' | 'charm';
+export type EquipSlot = 'weapon' | 'armor' | 'ring' | 'amulet' | 'charm' | 'relic';
 
 /** Which equip slot an item belongs to, or null if it isn't gear. Trinkets
  * declare theirs explicitly (their stat fields overlap weapons/armor). */
@@ -119,6 +119,7 @@ export function slotOf(id: string): EquipSlot | null {
   const d = ITEMS[id];
   if (!d) return null;
   if (d.trinket) return d.trinket;
+  if (d.relic) return 'relic' as EquipSlot;
   if (d.weaponDmg != null) return 'weapon';
   if (d.armor != null) return 'armor';
   return null;
@@ -126,8 +127,13 @@ export function slotOf(id: string): EquipSlot | null {
 
 /** Soul-leveled stat of a worn slot, or 0 if empty / item no longer owned. */
 function wornStat(state: GameState, slot: EquipSlot): number {
+  // C4: relics are flat stats (no soul-leveling for relics)
+  if (slot === 'relic') {
+    const id = state.player.relic;
+    return id && invCount(state, id) > 0 ? (ITEMS[id]?.weaponDmg ?? ITEMS[id]?.armor ?? ITEMS[id]?.regen ?? 0) : 0;
+  }
   const id = state.player.equip?.[slot];
-  return id && invCount(state, id) > 0 ? soulStat(state, slot) : 0;
+  return id && invCount(state, id) > 0 ? soulStat(state, slot as SoulSlot) : 0;
 }
 
 /** Total damage bonus from worn gear (weapon + ring) — soul-leveled. */
@@ -149,10 +155,16 @@ export function charmRegen(state: GameState): number {
 export function toggleEquip(state: GameState, id: string): EquipSlot | null {
   const slot = slotOf(id);
   if (!slot) return null;
+  // C4: relics use a separate field (player.relic), not the equip object
+  if (slot === 'relic') {
+    const wasWorn = state.player.relic === id;
+    state.player.relic = wasWorn ? undefined : id;
+    return slot;
+  }
   state.player.equip ??= {};
   const wasWorn = state.player.equip[slot] === id;
   state.player.equip[slot] = wasWorn ? undefined : id;
-  if (!wasWorn) bindSoulItem(state, slot, id); // the soul tool takes the shape of whatever you just put on
+  if (!wasWorn) bindSoulItem(state, slot, id);
   return slot;
 }
 
@@ -160,10 +172,15 @@ export function toggleEquip(state: GameState, id: string): EquipSlot | null {
 export function autoEquip(state: GameState, id: string) {
   const slot = slotOf(id);
   if (!slot) return;
+  // C4: relics use separate field
+  if (slot === 'relic') {
+    if (!state.player.relic) state.player.relic = id;
+    return;
+  }
   state.player.equip ??= {};
   const cur = state.player.equip[slot];
   // upgrade to the better item, or fill an empty slot
-  const stat = (x?: string) => (x ? baseStatFor(slot, x) : 0);
+  const stat = (x?: string) => (x ? baseStatFor(slot as SoulSlot, x) : 0);
   if (!cur || stat(id) > stat(cur)) state.player.equip[slot] = id;
 }
 
@@ -173,7 +190,8 @@ export function autoEquip(state: GameState, id: string) {
 export function acquireGear(state: GameState, id: string) {
   autoEquip(state, id);
   const slot = slotOf(id);
-  if (slot && state.player.equip?.[slot] === id) bindSoulItem(state, slot, id);
+  // C4: relics don't use soul binding
+  if (slot && slot !== 'relic' && state.player.equip?.[slot] === id) bindSoulItem(state, slot, id);
   const cls = ITEMS[id]?.toolClass;
   if (cls) {
     const toolSlot: SoulSlot = cls === 'axe' ? 'tool_axe' : 'tool_pick';

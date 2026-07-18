@@ -40,11 +40,14 @@ export class CombatSystem {
     this.updatePhase(dt);
   }
 
-  /** Windup/active/recovery durations, sped up by the weapon's soul level (floored). */
+  /** Windup/active/recovery durations, sped up by the weapon's soul level (floored)
+   *  and the Loom's swingSpeedPct. */
   private envelope() {
     const lvl = this.ctx.state.player.soulItems?.weapon?.level ?? 1;
     const { attackSpeedPerSoulLevel: k, attackSpeedFloor: floor } = CFG.combat;
-    const mult = Math.max(floor, 1 / (1 + lvl * k));
+    const loomMods = this.ctx.loom?.ensureMods?.();
+    const loomMul = loomMods ? (1 + (loomMods.swingSpeedPct ?? 0) / 100) : 1;
+    const mult = Math.max(floor, 1 / ((1 + lvl * k) * loomMul));
     return {
       windup: CFG.combat.windupSec * mult,
       active: CFG.combat.activeSec * mult,
@@ -156,14 +159,30 @@ export class CombatSystem {
     this.swingAngle = fa;
 
     // Damage = base × sync pulse multiplier × resonance crit (if any)
-    const dmgMul = this.ctx.net?.lastSwingDmgMul ?? 1.0;
+    let dmgMul = this.ctx.net?.lastSwingDmgMul ?? 1.0;
     const resonance = this.ctx.net?.consumeResonance?.() ?? null;
     const critMul = resonance ? resonance.multiplier : 1.0;
+
+    // C3: Loom D5 roll transforms (dmgRollFloor + Glass Echo keystone)
+    const loomMods = this.ctx.loom?.ensureMods?.();
+    if (loomMods) {
+      const floorAdd = loomMods.dmgRollFloor ?? 0;
+      if (loomMods.glassEcho) {
+        // Glass Echo: remap roll from [0.3, 1.5] to [0.9, 1.5]
+        dmgMul = 0.90 + (dmgMul - 0.30) * (0.60 / 1.20);
+      }
+      // dmgRollFloor: shift the floor up (additive to D5 band minimum)
+      dmgMul = Math.max(0.30, Math.min(1.50, dmgMul + floorAdd));
+    }
+
     const totalMul = dmgMul * critMul;
 
     const baseDmg = CFG.player.baseDmg + equippedWeaponDmg(state) + Math.floor(skillLevel(state, 'combat') / CFG.combat.dmgBonusPerLevel);
-    const dmg = Math.round(baseDmg * totalMul);
-    const arc = (CFG.combat.arcDeg * Math.PI) / 180;
+    // C3: Loom melee damage modifier and arc width
+    const loomDmgMul = loomMods ? (1 + (loomMods.meleeDmgPct ?? 0) / 100) : 1;
+    const dmg = Math.round(baseDmg * totalMul * loomDmgMul);
+    const loomArcMul = loomMods ? (1 + (loomMods.arcWidthPct ?? 0) / 100) : 1;
+    const arc = (CFG.combat.arcDeg * Math.PI * loomArcMul) / 180;
     // hit math anchors at the feet — same anchor as foe positions, so point-blank
     // angles don't flip; the slash draws at body height for looks only
     const cx = state.player.x, cy = state.player.y;
@@ -229,6 +248,8 @@ export class CombatSystem {
         const rl = awardSoulXp(state, 'ring', CFG.soulgear.ringXpPerSwing);
         if (rl) { this.ctx.toast(`Your ring tightens — soul level ${rl}!`, 'good'); this.ctx.log?.push('level', `Ring reached soul level ${rl}`, state.clock); }
       }
+      // G2: screen shake on hit (stronger on crits)
+      this.ctx.cam.shake?.(resonance ? 5 : 3);
     } else {
       this.ctx.log?.push('combat', 'Swung and missed', state.clock);
     }
@@ -238,6 +259,20 @@ export class CombatSystem {
     const { state, hordes, views, worldbosses } = this.ctx;
     const bosses: WorldBoss[] = worldbosses ? worldbosses.alive() : [];
     if (!hordes.foes.length && !bosses.length) return;
+
+    // C5: compute aura bonuses from Warbanner-type towers
+    let auraDmgMul = 1.0;
+    let auraRangeAdd = 0;
+    for (const b of state.buildings) {
+      const def = BUILDINGS.find((d) => d.id === b.type);
+      if (!def?.aura) continue;
+      const ax = (b.tx + 0.5) * TILE, ay = (b.ty + 0.5) * TILE;
+      const aRange = def.aura.radiusTiles * TILE;
+      // Check if any other tower is within aura range (simplified: global aura)
+      auraDmgMul = Math.max(auraDmgMul, def.aura.dmgMul ?? 1);
+      auraRangeAdd = Math.max(auraRangeAdd, def.aura.rangeAdd ?? 0);
+    }
+
     for (const b of state.buildings) {
       const def = BUILDINGS.find((d) => d.id === b.type);
       if (!def?.tower) continue;
@@ -245,7 +280,36 @@ export class CombatSystem {
       if (t > 0) { this.towerT.set(b.uid, t); continue; }
 
       const bx = (b.tx + 0.5) * TILE, by = (b.ty + 0.2) * TILE;
-      const range = def.tower.rangeTiles * TILE;
+      const range = (def.tower.rangeTiles + auraRangeAdd) * TILE;
+      const dmg = Math.round(def.tower.dmg * auraDmgMul);
+
+      // C5: sniper towers prefer highest-HP target (execute priority)
+      if (def.towerRole === 'sniper') {
+        let bestFoe: Foe | null = null, bestBoss: WorldBoss | null = null, bestHp = -Infinity;
+        for (const f of hordes.foes as Foe[]) {
+          const d = Math.hypot(f.x - bx, f.y - by);
+          if (d < range && f.hp > bestHp) { bestFoe = f; bestBoss = null; bestHp = f.hp; }
+        }
+        for (const wb of bosses) {
+          const d = Math.hypot(wb.x - bx, wb.y - by);
+          if (d < range && wb.hp > bestHp) { bestBoss = wb; bestFoe = null; bestHp = wb.hp; }
+        }
+        if (bestFoe) {
+          this.towerT.set(b.uid, def.tower.cooldown);
+          views.addShot(bx, by, bestFoe.x, bestFoe.y - bestFoe.def.art.size / 2);
+          // C5: Deadeye execute — insta-kill below 30% HP
+          const execDmg = def.id === 'tower_deadeye' && bestFoe.hp / bestFoe.maxHp < 0.3
+            ? bestFoe.hp : dmg;
+          hordes.hurt(bestFoe, execDmg, false);
+        } else if (bestBoss) {
+          this.towerT.set(b.uid, def.tower.cooldown);
+          views.addShot(bx, by, bestBoss.x, bestBoss.y);
+          worldbosses.hurt(bestBoss, dmg, false);
+        }
+        continue;
+      }
+
+      // Default: closest target
       let bestFoe: Foe | null = null, bestBoss: WorldBoss | null = null, bestD = Infinity;
       for (const f of hordes.foes as Foe[]) {
         const d = Math.hypot(f.x - bx, f.y - by);
@@ -255,16 +319,36 @@ export class CombatSystem {
         const d = Math.hypot(wb.x - bx, wb.y - by);
         if (d < range && d < bestD) { bestBoss = wb; bestFoe = null; bestD = d; }
       }
+
       if (bestFoe) {
         this.towerT.set(b.uid, def.tower.cooldown);
         views.addShot(bx, by, bestFoe.x, bestFoe.y - bestFoe.def.art.size / 2);
-        this.ctx.log?.push('combat', `${def.name} shoots ${bestFoe.def.name} for ${def.tower.dmg} (${Math.max(0, bestFoe.hp - def.tower.dmg)}/${bestFoe.maxHp} hp left)`, state.clock);
-        hordes.hurt(bestFoe, def.tower.dmg, false); // towers don't train your combat
+        hordes.hurt(bestFoe, dmg, false);
+
+        // C5: Splash — damage nearby foes too
+        if (def.towerRole === 'splash') {
+          const splashRadius = 2 * TILE;
+          const splashDmg = Math.round(dmg * 0.5);
+          for (const f2 of hordes.foes as Foe[]) {
+            if (f2.uid === bestFoe.uid) continue;
+            if (Math.hypot(f2.x - bestFoe.x, f2.y - bestFoe.y) < splashRadius) {
+              hordes.hurt(f2, splashDmg, false);
+            }
+          }
+          // Also ignite the ground for fire-based splash towers
+          if (def.id === 'tower_inferno' || def.id === 'tower_forge') {
+            this.ctx.worldCore?.ignite?.(bestFoe.x / TILE | 0, bestFoe.y / TILE | 0);
+          }
+        }
+
+        // C5: Slow — apply slow debuff
+        if (def.towerRole === 'slow') {
+          (bestFoe as any)._slowedUntil = this.ctx.state.clock + 2.0; // 2s slow
+        }
       } else if (bestBoss) {
         this.towerT.set(b.uid, def.tower.cooldown);
         views.addShot(bx, by, bestBoss.x, bestBoss.y);
-        this.ctx.log?.push('combat', `${def.name} shoots ${bestBoss.name} for ${def.tower.dmg} (${Math.max(0, bestBoss.hp - def.tower.dmg)}/${bestBoss.maxHp} hp left)`, state.clock);
-        worldbosses.hurt(bestBoss, def.tower.dmg, false);
+        worldbosses.hurt(bestBoss, dmg, false);
       } else {
         this.towerT.set(b.uid, 0);
       }

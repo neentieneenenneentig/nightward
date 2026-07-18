@@ -28,6 +28,8 @@ import { FireSystem } from './game/systems/fire';
 import { EchoSystem } from './game/systems/echoes';
 import { NetworkSystem } from './game/systems/network';
 import { VitalsSystem } from './game/systems/vitals';
+import { LoomSystem } from './game/systems/loom';
+import { ScoreboardSystem } from './game/systems/scoreboard';
 import { craft } from './game/systems/crafting';
 import { toggleEquip, invAdd } from './game/rules';
 import { BUILDINGS } from './game/data/buildings';
@@ -144,6 +146,14 @@ async function boot() {
   const vitals = new VitalsSystem(ctx);
   ctx.vitals = vitals;
 
+  // C3: The Loom — per-run passive tree, points from nights survived
+  const loom = new LoomSystem(ctx);
+  ctx.loom = loom;
+
+  // W6: Scoreboards — connection uptime, death scorecard, leaderboard
+  const scoreboard = new ScoreboardSystem(ctx);
+  ctx.scoreboard = scoreboard;
+
   // resonance system — polls browser APIs, feeds game systems
   const net = new NetworkSystem();
   ctx.net = net;
@@ -164,6 +174,7 @@ async function boot() {
     setTimeout(() => flash.remove(), 600);
     const px = state.player.x, py = state.player.y;
     particles.spawn('rift', px, py, 80);
+    scoreboard.onRift();  // W6: count rifts survived
   });
 
   // N2a: The Lens — raw observatory panel (O key). 8 sections:
@@ -313,7 +324,9 @@ async function boot() {
     state.gameOver = true;
     hordes.onDawn(); // clear the field
     log.push('death', 'The hall has fallen. The racket is finished.', state.clock);
-    ui.showGameOver(() => { location.reload(); });
+    // W6: save scorecard and show death screen
+    const card = scoreboard.saveToLeaderboard();
+    ui.showGameOver(() => { location.reload(); }, card);
   }
 
   // --- canvas pointer: build placement, and click-to-attack on desktop ---
@@ -399,6 +412,7 @@ async function boot() {
   stage.app.ticker.add((tk) => {
     frames++;
     const frameMs = Math.min(tk.deltaMS, 250); // clamp after tab-sleep
+    scoreboard.updateReal(performance.now());  // W6: track connection uptime
     acc = Math.min(acc + tk.deltaMS, 250);
     while (acc >= STEP) {
       sim(STEP / 1000);
@@ -420,6 +434,7 @@ async function boot() {
       hordes.onDawn();
       net.computeNightRttStability();
       vitals.onSurviveNight();
+      loom.onNightSurvived();  // C3: nights survived = Loom points
       Sound.play('dawn');
       // Action-gated beacon echo — surviving the night pings the southern beacons
       net.probeAction('survive_night');
@@ -436,7 +451,10 @@ async function boot() {
     const moveSpeedMul = net.getGameValue('moveSpeed');
     // S1: resolve-zero speed penalty
     const resolveSpeedMul = vitals.getSpeedMult();
-    const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y), feetSpeed * moveSpeedMul * resolveSpeedMul);
+    // C3: Loom move speed modifier
+    const loomSpeedMul = 1 + (loom.ensureMods().moveSpeedPct / 100);
+    const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y),
+      feetSpeed * moveSpeedMul * resolveSpeedMul * loomSpeedMul);
     state.player.x = player.x;
     state.player.y = player.y;
 
@@ -454,6 +472,17 @@ async function boot() {
     fire.update(effectiveDt);
     echoes.update(effectiveDt);
     vitals.update(effectiveDt);
+    build.updateDecay(effectiveDt);  // C2: disconnect decay
+
+    // N3: re-push fire params with network-driven modifiers every 2s
+    if (Math.floor(state.clock / 2) !== Math.floor((state.clock - effectiveDt) / 2)) {
+      const jitter = net.snap?.echoJitter ?? 5;
+      const spreadMul = 1 + jitter / 50;  // high jitter → more spread
+      const realmName = net.currentBiome?.name ?? '';
+      const windMul = realmName === 'Cellular Chaos' ? 2.0
+        : realmName === 'WiFi Wilds' ? 1.2 : 1.0;
+      worldCore.pushFireParams({ spreadMul: Math.min(3, spreadMul), windMul });
+    }
   }
 
   function enterRegion(ptx: number, pty: number, rk: string) {

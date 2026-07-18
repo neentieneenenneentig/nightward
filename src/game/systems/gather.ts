@@ -83,6 +83,10 @@ export class GatherSystem {
     const gatherSpeedMul = Math.max(0.85, Math.min(1.25, 0.85 + dl * 0.04));
     speed *= gatherSpeedMul;
 
+    // C3: Loom gather speed modifier
+    const loomMods = this.ctx.loom?.ensureMods?.();
+    if (loomMods) speed *= (1 + (loomMods.gatherSpeedPct ?? 0) / 100);
+
     // M3.5: Action-gated beacon echo — gathers ping resource-region beacons
     this.ctx.net?.probeAction?.('gather');
     // M3.6: Passive bandwidth snapshot — no HTTP request, just reads navigator.connection
@@ -109,6 +113,14 @@ export class GatherSystem {
   private finish(a: GatherTarget) {
     const { state, world, chunks, toast } = this.ctx;
     const drops = rollLoot(a.def.loot);
+
+    // C3: Loom double yield chance
+    const loomMods = this.ctx.loom?.ensureMods?.();
+    const doubleChance = loomMods ? (loomMods.doubleYieldChance ?? 0) / 100 : 0;
+    if (doubleChance > 0 && Math.random() < doubleChance) {
+      const extra = rollLoot(a.def.loot);
+      for (const d of extra) { drops.push(d); }
+    }
     for (const d of drops) { invAdd(state, d.id, d.n); acquireGear(state, d.id); }
     const newLevel = addXp(state, a.def.skill, a.def.xp);
 

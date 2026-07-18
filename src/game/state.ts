@@ -44,11 +44,15 @@ export interface GameState {
     inv: Record<string, number>;      // itemId → count
     xp: Record<string, number>;       // skillId → total xp
     equip: Equip;                     // gear worn in each slot
+    relic?: string;                   // C4: boss relic (6th equip slot)
     soulItems: Partial<Record<SoulSlot, SoulItem>>; // per-slot soul-bound leveling
     echoes: Record<string, number>;   // C1: echoId → level (Echoes of the Slain)
     vigor: number;                    // S1: survival vital (0-100)
     resolve: number;                  // S1: survival vital (0-100)
     lastActionT: number;              // S1: clock time of last non-idle action
+    loomPoints: number;               // C3: unspent passive points
+    loomNodes: Record<string, number>;// C3: nodeId → allocated rank
+    _longThreadPoints?: number;       // C3: internal tracker for Long Thread keystone
   };
   /** tileKey "tx,ty" → clock time when the node respawns */
   depleted: Record<string, number>;
@@ -99,7 +103,7 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     seed,
     clock: 0,
     nextUid: 1,
-    player: { x: spawn.x, y: spawn.y, hp: CFG.player.maxHp, gold: 0, inv, xp: {}, equip: {}, soulItems, echoes: {}, vigor: CFG.vitals.vigorMax, resolve: CFG.vitals.resolveMax, lastActionT: 0 },
+    player: { x: spawn.x, y: spawn.y, hp: CFG.player.maxHp, gold: 0, inv, xp: {}, equip: {}, soulItems, echoes: {}, vigor: CFG.vitals.vigorMax, resolve: CFG.vitals.resolveMax, lastActionT: 0, loomPoints: 0, loomNodes: {} },
     depleted: {},
     buildings: [],
     worldBosses: [],

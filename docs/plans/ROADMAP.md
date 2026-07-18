@@ -622,8 +622,12 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 >    (`docs/plans/U1-lens-ui-unification.md`).
 >
 > **Revised order: C1 (echoes) ✅ → S1 (survival pressure) ✅ → U1 (lens UI
-> unification) ✅ → U2 (grimdark chrome) ✅ → C2 (waystones) → C3 (loom) → C4 (armory)
-> → G1-P (painterly verdict) → C5 (buildings rework).**
+> unification) ✅ → U2 (grimdark chrome) ✅ → C2 (waystones) ✅ → C3 (loom) ✅
+> → C4 (armory) ✅ → G1-P (particles/post-proc/juice) ✅ → C5 (buildings rework) ✅
+> → W6 (scoreboards) ✅ → N3 (living network) ✅**
+>
+> **ALL MILESTONES SHIPPED (2026-07-18, bulk session).** Testing/debugging loop
+> deferred to subsequent session per user request ("SPEED AND POWER").
 >
 > **Rationale for U1 before C2:** S1 adds vital chips to the HUD — they should debut in
 > the new style. C2–C5 all add new panels (Loom tree, Armory slots, Buildings upgrade UI)
@@ -729,6 +733,94 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 > gloss line, `.res-abbr`→`.net-abbr` dead-selector fix. Static trio green
 > (typecheck/build/cargo 23/23). Gauntlet: **ALL 228 TESTS PASSED (4089ms).**
 > All 15 acceptance items verified via DOM probes. Awaiting user audit + merge.
+
+---
+
+## 🚀 BULK IMPLEMENTATION — "SPEED AND POWER" (2026-07-18)
+
+User requested full-speed implementation of all remaining milestones in one session.
+All systems built spec-first, data-driven, with zero testing (per user instruction:
+"don't bother testing, just build the specs"). Testing/debugging loop deferred to
+a subsequent session.
+
+### C2 — Waystones ✅
+- New `waystone` building (400 HP, iron/stone/copper cost, 8 territory)
+- Placement validation: within range of hall OR any waystone (chain)
+- Disconnect decay: destroying a waystone cascades — disconnected buildings lose 8 HP/s
+- New waystone reconnects decaying buildings in range
+- `World.inRangeOfAnchor()`, `World.findDisconnected()`
+- `BuildSystem.updateDecay()`, `BuildSystem.markDisconnected()`
+- Files: `buildings.ts`, `build.ts`, `world.ts`, `hordes.ts`, `main.ts`
+
+### C3 — The Loom ✅
+- 36 small nodes × 3 branches (War/Field/Ward) + 4 keystones
+- `data/loom.ts`: `LoomNode[]`, `LoomModifiers`, `computeModifiers()`
+- `systems/loom.ts`: `LoomSystem` — allocate, canAllocate, ensureMods
+- Keystones: Glass Echo (top-half D5, half HP), Deep Roots (+50% building HP, -12% speed),
+  Night Market (+40% gold, halved boss wake gold), Long Thread (+1 pt/4 total levels, skills cap 80)
+- Points from nights survived (1/night) + Long Thread bonus
+- Modifiers applied to: combat (dmg/arc/swing speed), economy (territory income),
+  gather (speed/double yield), move speed, D5 roll floor
+- Files: `data/loom.ts`, `systems/loom.ts`, `state.ts`, `main.ts`, `combat.ts`,
+  `economy.ts`, `gather.ts`, `rules.ts`
+
+### C4 — The Armory ✅
+- `ItemDef.effects: string[]` — data-driven behavior hooks
+- `systems/effects.ts` — `EffectFn` registry: thorns_reflect, fire_aura, chill_aura,
+  regen_boost, move_burst_on_kill, see_foe_hp, resonance_boost
+- 5 boss relics (1 per lord, 100% drop): Bramble Heart, Ember Core, Frost Shard,
+  Ebb Pendant, Hollow Eye
+- New `player.relic` 6th equip slot (separate from Equip object)
+- 3 new mobs: Spitter (night 4), Burrower (night 6), Tower-Hunter (night 8)
+- Silver & Star-Metal tiers: 2 new ores, bars, weapons, armor, trinkets (12 new items)
+- 12 new crafting recipes (silver/star tiers, smithing 20–35)
+- Files: `items.ts`, `effects.ts`, `enemies.ts`, `recipes.ts`, `rules.ts`, `state.ts`
+
+### G1/G2 — Visual Upgrade & Juice ✅ (extended)
+- Screen shake: `Camera.shake()` already existed; now called on player hits (3px) and
+  resonance crits (5px)
+- Particles: `ParticleSystem` with 9 particle kinds (poof, ember, slash, spark, wisp,
+  rift, death, heal, crit) — spawned from combat, gather, build, fire, rifts
+- Post-processing: `BloomPass` (additive glow from fire/torches/beacons),
+  color grading via biome + time-of-day tint overlay, vignette via `Fog`
+- Tower roles handled in combat (splash/slow/sniper/aura targeting and effects)
+- Files: `camera.ts`, `combat.ts`, `particles.ts`, `postprocess.ts`, `fog.ts`
+
+### W6 — Scoreboards ✅
+- `ScoreboardSystem`: tracks connection uptime, realm tally, peak RTT, lowest downlink,
+  kills, buildings, rifts
+- `RunScorecard` snapshot on death with 13 fields
+- Death screen enhanced: shows connection age, nights, kills, buildings, gold, realm,
+  rifts, peak RTT, lowest bandwidth, loom points
+- `localStorage` leaderboard: top 50 runs by connection age
+- `formatAge()` helper for human-readable uptime
+- Files: `systems/scoreboard.ts`, `ui.ts`, `main.ts`
+
+### C5 — Buildings Rework ✅
+- 10 new tower types with LTD2-style upgrade paths (Watchtower → A/B → ultimate)
+- Tower roles: splash (Emberkiln→Inferno/Forge), slow (Frostspire→Glacier/Hail),
+  sniper (Longeye→Eagle/Deadeye), aura (Warbanner)
+- Splash: 50% AoE damage in 2-tile radius; fire towers ignite ground
+- Slow: 40% move speed debuff for 2s
+- Sniper: targets highest-HP foe; Deadeye executes below 30% HP
+- Aura: +20% damage, +1 range to nearby towers
+- Files: `buildings.ts`, `combat.ts`, `hordes.ts`
+
+### N3 — Living Network ✅
+- Jitter → fire spread: `spreadMul = 1 + jitter/50` (clamped 3× max)
+- Realm → wind: Cellular Chaos 2×, WiFi Wilds 1.2×, Ethernet/other 1×
+- Fire params re-pushed every 2 sim-seconds with network multipliers
+- `WorldCore.pushFireParams()` now accepts optional `{spreadMul, windMul}`
+- Files: `core.ts`, `main.ts`, `config.ts`
+
+### Files touched (total): 20+
+`buildings.ts`, `build.ts`, `world.ts`, `hordes.ts`, `combat.ts`, `main.ts`,
+`state.ts`, `config.ts`, `items.ts`, `enemies.ts`, `recipes.ts`, `rules.ts`,
+`styles.ts`, `ui.ts`, `camera.ts`, `core.ts`, `data/loom.ts` (NEW),
+`systems/loom.ts` (NEW), `systems/effects.ts` (NEW), `systems/scoreboard.ts` (NEW),
+`data/echoes.ts`, `systems/echoes.ts`, `systems/vitals.ts`,
+`systems/network.ts`, `systems/economy.ts`, `systems/gather.ts`,
+`engine/particles.ts`, `engine/postprocess.ts`
 
 ---
 

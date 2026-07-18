@@ -145,9 +145,10 @@ export class BuildSystem {
     if (!mat.passable || !mat.buildable) return `Can't build on ${cap(mat.name)}`;
     const h = state.buildings.find((b: any) => b.type === 'hall');
     if (m.def.id !== 'hall') {
-      if (!h) return 'Build the Racket Hall first — everything roots to it';
-      const d = Math.max(Math.abs(m.tx - h.tx), Math.abs(m.ty - h.ty));
-      if (d > CFG.build.maxDistFromHall) return `Too far from the Hall (max ${CFG.build.maxDistFromHall} tiles)`;
+      if (!h) return 'Build the Hearthstone first — everything roots to it';
+      // C2: check both hall and waystone chain
+      if (!world.inRangeOfAnchor(m.tx, m.ty, CFG.build.maxDistFromHall))
+        return `Too far from a Hearthstone or Waystone (max ${CFG.build.maxDistFromHall} tiles)`;
     }
     return "Can't build there";
   }
@@ -184,6 +185,14 @@ export class BuildSystem {
     this.ctx.vitals?.markAction?.();
     this.ctx.vitals?.onBuild?.();
 
+    // W6: track buildings placed
+    this.ctx.scoreboard?.onBuild?.();
+
+    // C2: new waystone reconnects any decaying buildings in range
+    if (m.def.id === 'waystone') {
+      this.reconnectDecaying(b.tx, b.ty);
+    }
+
     // M3.5: Action-gated beacon echo — building pings fortress beacons
     this.ctx.net?.probeAction?.('build');
     // M3.6: Passive Performance API snapshot — DNS/TCP/TLS timing at build time
@@ -192,5 +201,67 @@ export class BuildSystem {
     // keep placing (walls!) while materials last; otherwise drop out of mode
     if (!m.def.unique && invHasAll(state, m.def.cost)) { this.validate(); this.updateBanner(); }
     else this.cancel();
+  }
+
+  // ---- C2: Disconnect Decay -------------------------------------------------
+
+  /** C2: mark a list of building UIDs as disconnected — they start decaying. */
+  markDisconnected(uids: number[]) {
+    const { state } = this.ctx;
+    for (const uid of uids) {
+      const b = state.buildings.find((x: any) => x.uid === uid);
+      if (b) (b as any)._decaying = true;
+    }
+  }
+
+  /** C2: check if any decaying buildings are now in range of a new anchor. */
+  private reconnectDecaying(ax: number, ay: number) {
+    const { state, world } = this.ctx;
+    const maxDist = CFG.build.maxDistFromHall;
+    for (const b of state.buildings) {
+      if (!(b as any)._decaying) continue;
+      const d = Math.max(Math.abs(b.tx - ax), Math.abs(b.ty - ay));
+      if (d <= maxDist) {
+        (b as any)._decaying = false;
+        this.ctx.toast?.(`${BUILDINGS.find((d) => d.id === b.type)?.name ?? 'Building'} reconnected!`, 'good');
+      }
+    }
+  }
+
+  /** C2: called every sim tick — decaying buildings lose HP. */
+  updateDecay(dt: number) {
+    const { state, world, views, toast } = this.ctx;
+    const decayRate = 8; // HP per second — a waystone dies in ~50s, walls in ~32s
+    const toRemove: number[] = [];
+    for (const b of state.buildings) {
+      if (!(b as any)._decaying) continue;
+      b.hp -= decayRate * dt;
+      if (b.hp <= 0) {
+        toRemove.push(b.uid);
+      }
+    }
+    for (const uid of toRemove) {
+      const b = state.buildings.find((x: any) => x.uid === uid);
+      if (!b) continue;
+      const def = BUILDINGS.find((d) => d.id === b.type);
+      state.buildings = state.buildings.filter((x: any) => x.uid !== uid);
+      world.reindexBuildings();
+      views.removeBuilding(uid);
+      this.ctx.fire?.onBuildingRemoved(b);
+      if (b.type === 'wall') views.refreshWallsAround(b.tx, b.ty);
+      if (def) {
+        toast(`${def.name} crumbled — disconnected too long`, 'bad');
+        this.ctx.log?.push('build', `${def.name} crumbled from disconnection at (${b.tx},${b.ty})`, state.clock);
+      }
+      // cascading: if this was a waystone, check for further disconnects
+      if (b.type === 'waystone') {
+        const disco = world.findDisconnected([b]);
+        if (disco.length > 0) {
+          this.markDisconnected(disco);
+          toast(`${disco.length} more buildings cut off!`, 'bad');
+        }
+      }
+      if (b.type === 'hall') this.ctx.onHallDestroyed?.();
+    }
   }
 }

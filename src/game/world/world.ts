@@ -83,7 +83,9 @@ export class World {
     this.state.depleted[tileKey(tx, ty)] = this.state.clock + respawnSec;
   }
 
-  /** Building placement rule (see config.build). Also prevents placing on the player. */
+  /** Building placement rule (see config.build). Also prevents placing on the player.
+   *  C2: buildings can be placed within maxDistFromHall of the hall OR any waystone.
+   *  Waystones themselves must be within range of the hall or another waystone. */
   canPlaceAt(tx: number, ty: number, isHall: boolean): boolean {
     if (!this.passable(tx, ty)) return false;
     if (!MATERIALS[this.materialAt(tx, ty)].buildable) return false;
@@ -94,7 +96,56 @@ export class World {
     const h = this.state.buildings.find((b) => b.type === 'hall');
     if (isHall) return true;         // the first hall roots wherever you like
     if (!h) return false;            // everything else needs a hall first
-    const d = Math.max(Math.abs(tx - h.tx), Math.abs(ty - h.ty));
-    return d <= CFG.build.maxDistFromHall;
+
+    // C2: check distance to hall OR any waystone (including other waystones for new waystones)
+    const maxDist = CFG.build.maxDistFromHall;
+    if (this.inRangeOfAnchor(tx, ty, maxDist)) return true;
+    return false;
+  }
+
+  /** C2: true if (tx,ty) is within `range` tiles of the hall or any waystone. */
+  inRangeOfAnchor(tx: number, ty: number, range: number): boolean {
+    for (const b of this.state.buildings) {
+      if (b.type !== 'hall' && b.type !== 'waystone') continue;
+      // C2: decaying waystones don't count as anchors
+      if ((b as any)._decaying) continue;
+      const d = Math.max(Math.abs(tx - b.tx), Math.abs(ty - b.ty));
+      if (d <= range) return true;
+    }
+    return false;
+  }
+
+  /** C2: find all buildings that lose anchor connectivity when a set of anchors
+   *  is removed. Returns the UIDs of disconnected buildings. */
+  findDisconnected(removedAnchors: Building[]): number[] {
+    const remaining = this.state.buildings.filter(
+      (b) => !removedAnchors.some((r) => r.uid === b.uid),
+    );
+    // BFS from all remaining anchors (hall + non-decaying waystones)
+    const connected = new Set<number>();
+    const queue: Building[] = [];
+    for (const b of remaining) {
+      if (b.type === 'hall' || (b.type === 'waystone' && !(b as any)._decaying)) {
+        connected.add(b.uid);
+        queue.push(b);
+      }
+    }
+    const maxDist = CFG.build.maxDistFromHall;
+    while (queue.length > 0) {
+      const a = queue.shift()!;
+      for (const b of remaining) {
+        if (connected.has(b.uid)) continue;
+        const d = Math.max(Math.abs(b.tx - a.tx), Math.abs(b.ty - a.ty));
+        if (d <= maxDist) {
+          connected.add(b.uid);
+          queue.push(b);
+        }
+      }
+    }
+    const disconnected: number[] = [];
+    for (const b of remaining) {
+      if (!connected.has(b.uid)) disconnected.push(b.uid);
+    }
+    return disconnected;
   }
 }

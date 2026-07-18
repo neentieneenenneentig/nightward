@@ -48,4 +48,18 @@ export const RECIPES: Recipe[] = [
   R('charm_moon',   'alchemy', 10, 90, s('charm_moon'), s('moonbell', 2), s('fine_log', 1)),
   // firemaking
   R('torch',        'crafting', 1, 15, s('torch'), s('log', 1), s('stone', 1)),
+
+  // ---- C4: Silver & Star-Metal tiers ----------------------------------------
+  R('silver_bar',  'smithing', 20, 100, s('silver_bar'), s('silver_ore', 2)),
+  R('sword_silver','smithing', 22, 160, s('sword_silver'), s('silver_bar', 2), s('plank', 1)),
+  R('armor_silver','smithing', 24, 200, s('armor_silver'), s('silver_bar', 3), s('plank', 2)),
+  R('ring_silver',  'smithing', 21, 140, s('ring_silver'), s('silver_bar', 1)),
+  R('amulet_silver','smithing', 23, 150, s('amulet_silver'), s('silver_bar', 1), s('moonbell', 1)),
+  R('charm_silver', 'alchemy', 20, 180, s('charm_silver'), s('silver_bar', 1), s('sunleaf', 3)),
+  R('star_bar',    'smithing', 30, 150, s('star_bar'), s('star_ore', 2)),
+  R('sword_star',  'smithing', 33, 250, s('sword_star'), s('star_bar', 2), s('plank', 2)),
+  R('armor_star',  'smithing', 35, 300, s('armor_star'), s('star_bar', 3), s('plank', 3)),
+  R('ring_star',   'smithing', 32, 220, s('ring_star'), s('star_bar', 1)),
+  R('amulet_star', 'smithing', 34, 240, s('amulet_star'), s('star_bar', 1), s('moonbell', 2)),
+  R('charm_star',  'alchemy', 30, 280, s('charm_star'), s('star_bar', 1), s('berry', 5)),
 ];

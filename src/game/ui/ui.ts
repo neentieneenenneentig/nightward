@@ -463,15 +463,19 @@ export class UI {
 
   /** One equipment slot: shows the worn item + its soul level (click to unequip), or an empty placeholder. */
   private slotCell(slot: EquipSlot, label: string, glyph: string): HTMLElement {
-    const id = this.state.player.equip?.[slot];
+    const id = slot === 'relic' ? this.state.player.relic : this.state.player.equip?.[slot];
     const cell = el('div', 'nw-slot' + (id ? ' filled' : ''));
     if (id) {
       const def = ITEMS[id];
+      const isRelic = slot === 'relic';
       const unit = slot === 'weapon' || slot === 'ring' ? 'dmg'
         : slot === 'charm' ? 'hp/s (day)' : 'armor';
-      const stat = `+${soulStat(this.state, slot).toFixed(1)} ${unit}`;
+      const statVal = isRelic
+        ? ((def.weaponDmg ?? def.armor ?? def.regen ?? 0).toFixed(1))
+        : soulStat(this.state, slot as SoulSlot).toFixed(1);
+      const stat = `+${statVal} ${unit}`;
       cell.innerHTML =
-        `<img src="${icon(id)}" alt=""><div class="meta"><b>${label}</b><span>${def.name}</span>${this.soulBarHtml(slot)}<span class="stat">${stat}</span></div>`;
+        `<img src="${icon(id)}" alt=""><div class="meta"><b>${label}</b><span>${def.name}</span>${isRelic ? '' : this.soulBarHtml(slot as SoulSlot)}<span class="stat">${stat}</span></div>`;
       cell.tabIndex = 0; cell.setAttribute('role', 'button');
       cell.setAttribute('aria-label', `Unequip ${def.name}`);
       cell.title = 'Enter/Space to unequip';
@@ -609,11 +613,30 @@ export class UI {
 
   private interactTarget() { return this.hooks.gatherView() != null; }
 
-  showGameOver(onRestart: () => void) {
+  showGameOver(onRestart: () => void, card?: any) {
     const over = el('div', 'nw-gameover');
+    let cardHtml = '';
+    if (card) {
+      const ageStr = card.connectionAge >= 3600
+        ? `${Math.floor(card.connectionAge / 3600)}h ${Math.floor((card.connectionAge % 3600) / 60)}m`
+        : `${Math.floor(card.connectionAge / 60)}m ${card.connectionAge % 60}s`;
+      cardHtml = `
+        <div style="font-size:11px;color:var(--ink-dim);margin-top:12px;line-height:1.6;text-align:left;max-width:300px;">
+          <div><span style="color:var(--metal-hi)">Connection age:</span> ${ageStr}</div>
+          <div><span style="color:var(--metal-hi)">Nights survived:</span> ${card.nightsSurvived}</div>
+          <div><span style="color:var(--metal-hi)">Enemies killed:</span> ${card.enemiesKilled} (${card.bossesSlain} bosses)</div>
+          <div><span style="color:var(--metal-hi)">Buildings:</span> ${card.buildingsBuilt}</div>
+          <div><span style="color:var(--metal-hi)">Gold hoarded:</span> ${card.goldHoarded}</div>
+          <div><span style="color:var(--metal-hi)">Dominant realm:</span> ${card.dominantRealm}</div>
+          <div><span style="color:var(--metal-hi)">Rifts survived:</span> ${card.riftsSurvived}</div>
+          <div><span style="color:var(--metal-hi)">Peak RTT:</span> ${card.peakRtt}ms · <span style="color:var(--metal-hi)">Lowest BW:</span> ${card.lowestDownlink}Mbps</div>
+          <div><span style="color:var(--metal-hi)">Loom points:</span> ${card.loomPointsEarned}</div>
+        </div>`;
+    }
     over.innerHTML = `<h1>THE THREAD IS CUT</h1>
       <div style="color:var(--ink-dim);max-width:340px">Your Hearthstone lies in ruin and the dark takes the rest.
-      You survived ${this.state.nightsSurvived} night${this.state.nightsSurvived === 1 ? '' : 's'}.</div>`;
+      You survived ${this.state.nightsSurvived} night${this.state.nightsSurvived === 1 ? '' : 's'}.</div>
+      ${cardHtml}`;
     const btn = el('div', 'nw-btn primary'); btn.textContent = 'Try again';
     btn.style.pointerEvents = 'auto';
     btn.addEventListener('click', onRestart);

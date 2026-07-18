@@ -288,7 +288,9 @@ export class HordeSystem {
     // C1: Rime Nova chill — the echo system stamps chillUntil/chillMult on struck foes
     const ef2 = f as any;
     const chill = ef2.chillUntil > state.clock ? (ef2.chillMult ?? 1) : 1;
-    const step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain * fear * chill;
+    // C5: tower slow debuff (Frostspire etc.) — 40% speed reduction
+    const towerSlow = ef2._slowedUntil > state.clock ? 0.6 : 1;
+    const step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain * fear * chill * towerSlow;
     let blocked: Building | null = null;
     const nx = f.x + ux * step, ny = f.y + uy * step;
     if (world.canStand(nx, f.y, 5)) f.x = nx;
@@ -321,6 +323,7 @@ export class HordeSystem {
     b.hp -= Math.round(dmg * (CFG.horde.foeDmgToBuildings ?? 1));
     if (b.hp > 0) return;
     const def = BUILDINGS.find((d) => d.id === b.type)!;
+    const wasAnchor = b.type === 'hall' || b.type === 'waystone';
     state.buildings = state.buildings.filter((x: Building) => x.uid !== b.uid);
     world.reindexBuildings();
     views.removeBuilding(b.uid);
@@ -329,6 +332,18 @@ export class HordeSystem {
     toast(`${def.name} destroyed!`, 'bad');
     this.ctx.log?.push('build', `${def.name} destroyed at (${b.tx},${b.ty})`, state.clock);
     if (b.type === 'hall') this.ctx.onHallDestroyed();
+
+    // C2: waystone/hall destruction triggers disconnect decay cascade
+    if (wasAnchor) {
+      const disco = world.findDisconnected([b]);
+      if (disco.length > 0) {
+        this.ctx.build?.markDisconnected?.(disco);
+        toast(`${disco.length} building(s) cut off — decaying!`, 'bad');
+        this.ctx.log?.push('build',
+          `${disco.length} buildings disconnected by ${def.name} destruction — decaying`,
+          state.clock);
+      }
+    }
   }
 
   /** Distance (px) to the nearest campfire, or Infinity if none stand. Used for the spawn-avoid
@@ -399,6 +414,8 @@ export class HordeSystem {
     if (feedVitals) {
       this.ctx.vitals?.onKill?.(!!f.def.boss);
     }
+    // W6: track kills for scoreboard
+    this.ctx.scoreboard?.onKill?.(!!f.def.boss);
 
     const [gMin, gMax] = f.def.gold;
     state.player.gold += gMin + Math.floor(Math.random() * (gMax - gMin + 1));

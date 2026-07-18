@@ -124,8 +124,16 @@ export class WorldCore {
   addCampfire(tx: number, ty: number) { this.core.add_campfire(tx, ty); }
   removeCampfire(tx: number, ty: number) { this.core.remove_campfire(tx, ty); }
 
-  /** Re-pack CFG.fire's sim-tuning subset and re-upload — live console tinkering. */
-  pushFireParams() { this.core.set_fire_params(packFireParams()); }
+  /** Re-pack CFG.fire's sim-tuning subset and re-upload — live console tinkering.
+   *  N3: accepts optional network-driven multipliers (jitter→spread, realm→wind). */
+  pushFireParams(netMul?: { spreadMul?: number; windMul?: number }) {
+    const base = packFireParams();
+    if (netMul) {
+      if (netMul.spreadMul !== undefined) base[1] *= netMul.spreadMul;
+      if (netMul.windMul !== undefined) base[2] *= netMul.windMul;
+    }
+    this.core.set_fire_params(base);
+  }
 
   // ---- N1: network ----
 
