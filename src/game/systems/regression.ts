@@ -137,11 +137,17 @@ async function testGathering(nw: any) {
   sys.gather.tryStart();
   ok(sys.gather.active !== null, 'gather active after tryStart()');
 
+  // Gather progress advances by effectiveDt (dt × simSpeed), NOT raw dt, and `need`
+  // already folds simSpeed into its own speed term — so real frames-to-complete scale
+  // ~need·30/simSpeed. The old fixed budget ceil(need·30)+10 assumed dt=1/30 and fell
+  // exactly one frame short whenever the live network pushed simSpeed below ~0.86
+  // (rtt > ~97ms → simSpeed 0.85). Step until it clears, capped generously by `need`
+  // (simSpeed is clamped ≥0.85, so need·45 is a comfortable ceiling).
   const need = sys.gather.active ? sys.gather.active.need : 3;
-  const steps = Math.ceil(need / (1 / 30)) + 10;
-  for (let i = 0; i < steps; i++) nw.step(1);
-
-  ok(sys.gather.active === null, 'gather completed (active cleared)');
+  const cap = Math.ceil(need * 45) + 120;
+  let stepped = 0;
+  while (sys.gather.active !== null && stepped < cap) { nw.step(1); stepped++; }
+  ok(sys.gather.active === null, `gather completed (active cleared after ${stepped} steps, cap ${cap})`);
 }
 
 async function testCrafting(nw: any) {
@@ -640,6 +646,13 @@ async function testMobBirthStats(nw: any) {
     nw.step(2);
   }
 
+  // Pin the realm profile: the special-skill branch reads LIVE variance
+  // (Blinker wins at variance ≥ 8000), so on a jittery first-contact network
+  // the cold fixture nondeterministically birthed a Blinker instead of a
+  // Shelled. The fixture must own every input the birth path reads.
+  const origProfile = net.computeRealmProfile;
+  net.computeRealmProfile = () => ({ median: 180, variance: 0 });
+
   // ---- Cold fixture: paid DNS+TLS route → Shelled, Pale prefix ----
   const beforeCold = sys.hordes.foes.length;
   net.lastEcho = {
@@ -720,6 +733,7 @@ async function testMobBirthStats(nw: any) {
   sys.hordes.foes = [];
   sys.hordes.toSpawn = 0;
   net.lastEcho = null;
+  net.computeRealmProfile = origProfile;
 }
 
 async function testDamageRollBounds(nw: any) {
@@ -1064,6 +1078,249 @@ async function testSurvivalPlaythrough(nw: any) {
 }
 
 // ---------------------------------------------------------------------------
+// C1: Echoes of the Slain
+// ---------------------------------------------------------------------------
+
+/** Synthetic slain-able lord. MUST carry `level` — worldbosses.hurt() pays
+ * `b.level * 20` gold on death (testBossFight's fake omits it and transiently
+ * NaNs the gold; pre-existing, masked by a later test overwriting gold). */
+function makeTestBoss(nw: any, defId: string) {
+  const { state } = nw;
+  return {
+    uid: state.nextUid++, defId, lordId: 'test', name: 'Test Lord',
+    x: state.player.x + 60, y: state.player.y, px: 0, py: 0,
+    hp: 10, maxHp: 10, dmg: 0, level: 1,
+    atkT: 0, telegraphT: 0, animT: 0, hunting: false, provokedUntil: 0,
+    reviveAt: 0, homeGx: 0, homeGy: 0,
+  };
+}
+
+/** Dummy foe for echo damage checks: tanky, harmless, non-boss — and FROZEN
+ * in place (telegraphT ≫ 0 = the engine's committed-mid-swing state, which
+ * skips all AI movement) so every geometry assertion is deterministic: the
+ * orbit target stays ON the ring, the trail target stays ON its patch tile. */
+function makeDummyFoe(nw: any, def: any, dx: number, dy: number, hp = 500) {
+  const { state } = nw;
+  const x = state.player.x + dx, y = state.player.y + dy;
+  return {
+    uid: state.nextUid++, def,
+    x, y, px: x, py: y, hp, maxHp: hp,
+    dmg: 0, atkT: 9999, telegraphT: 9999, animT: 0,
+  };
+}
+
+async function testEchoGrantAndLevel(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+  state.gameOver = false; // an earlier test (game over) leaves the flag set
+  state.player.echoes = {};
+
+  // first kill grants the lord's signature echo at level 1
+  let b: any = makeTestBoss(nw, 'thornwarden');
+  state.worldBosses.push(b);
+  sys.worldbosses.hurt(b, 9999);
+  eq(state.player.echoes['thornring'], 1, 'first Thornwarden kill grants Thornring L1');
+  ok(nw.log.entries.some((e: any) => e.msg.includes('echo clings')), 'Chronicle logs the grant in fiction voice');
+
+  // re-kill deepens it
+  b = makeTestBoss(nw, 'thornwarden');
+  state.worldBosses.push(b);
+  sys.worldbosses.hurt(b, 9999);
+  eq(state.player.echoes['thornring'], 2, 're-kill levels Thornring to 2');
+  ok(nw.log.entries.some((e: any) => e.msg.includes('echo deepens')), 'Chronicle logs the level-up');
+
+  // every lord maps to a distinct echo
+  const { ECHOES, echoForBoss } = await import('../data/echoes');
+  eq(ECHOES.length, 5, 'five echoes defined');
+  for (const bossId of ['thornwarden', 'cindermaw', 'rimewraith', 'tideculler', 'nullmaw']) {
+    ok(echoForBoss(bossId) !== undefined, `${bossId} grants an echo`);
+  }
+
+  // grant past the cap deepens nothing
+  state.player.echoes['thornring'] = CFG.echoes.maxLevel;
+  b = makeTestBoss(nw, 'thornwarden');
+  state.worldBosses.push(b);
+  sys.worldbosses.hurt(b, 9999);
+  eq(state.player.echoes['thornring'], CFG.echoes.maxLevel, `echo level capped at ${CFG.echoes.maxLevel}`);
+
+  // cleanup: drop the synthetic reviving bosses and the granted echoes
+  state.worldBosses = state.worldBosses.filter((x: any) => x.lordId !== 'test');
+  state.player.echoes = {};
+}
+
+async function testEchoDamage(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+  const { ENEMIES } = await import('../data/enemies');
+  const dummyDef = ENEMIES.find((e: any) => !e.boss)!;
+  state.gameOver = false;
+  state.god = true; state.player.hp = 100; // stray patch/foe contact must not end the run mid-test
+  const es: any = sys.echoes;
+
+  const holdOnly = (id: string, lvl = 1) => {
+    state.player.echoes = { [id]: lvl };
+    es.cooldowns = {}; es.patches = []; es.orbHitAt?.clear?.();
+  };
+  const withDummy = (dx: number, dy: number) => {
+    const foe: any = makeDummyFoe(nw, dummyDef, dx, dy);
+    sys.hordes.foes.push(foe);
+    return foe;
+  };
+  const dropFoe = (foe: any) => { sys.hordes.foes = sys.hordes.foes.filter((f: any) => f.uid !== foe.uid); };
+
+  // -- pulse: Thornring hits an adjacent foe within one cadence
+  holdOnly('thornring');
+  let foe = withDummy(30, 0);
+  nw.step(15); // 0.5 s ≫ first fire (cooldown starts spent)
+  ok(foe.hp < foe.maxHp, `Thornring pulse damaged adjacent foe (${foe.maxHp - foe.hp} dmg)`);
+  dropFoe(foe);
+
+  // -- nova: Rime Nova damages AND chills
+  holdOnly('rime_nova');
+  foe = withDummy(30, 0);
+  nw.step(15);
+  ok(foe.hp < foe.maxHp, `Rime Nova damaged adjacent foe (${foe.maxHp - foe.hp} dmg)`);
+  ok(foe.chillUntil > state.clock - 0.1, 'Rime Nova stamped chillUntil');
+  ok(foe.chillMult < 1, `chillMult slows the march (${foe.chillMult})`);
+  dropFoe(foe);
+
+  // -- volley: Tide Lash reaches out to range
+  holdOnly('tide_lash');
+  foe = withDummy(120, 0);
+  nw.step(15);
+  ok(foe.hp < foe.maxHp, `Tide Lash damaged ranged foe (${foe.maxHp - foe.hp} dmg)`);
+  dropFoe(foe);
+
+  // -- orbit: Null Orb contact over one sweep
+  holdOnly('null_orb');
+  foe = withDummy(Math.round(1.8 * 32), 0);
+  nw.step(180); // 6 s ≫ full orbit at CFG.echoes.orbitRadPerSec
+  ok(foe.hp < foe.maxHp, `Null Orb contact damaged foe (${foe.maxHp - foe.hp} dmg)`);
+  dropFoe(foe);
+
+  // -- trail: patch drops on the tile you LEAVE; the patch burns foes standing in it.
+  // Real-CA ignition is disabled for determinism (wild fire spreading through the rest
+  // of the suite); the flag itself is pinned by testEchoBounds and witnessed live.
+  const igniteWas = CFG.echoes.cinderIgnitesCA;
+  CFG.echoes.cinderIgnitesCA = false;
+  try {
+    holdOnly('cinder_trail');
+    nw.step(2); // let the trail tracker settle on the current tile
+    const fromTx = Math.floor(state.player.x / 32), fromTy = Math.floor(state.player.y / 32);
+    nw.player.teleport(state.player.x + 40, state.player.y); // one tile over — a step, not a jump
+    nw.step(3);
+    ok(es.patches.length >= 1, 'leaving a tile drops a cinder patch');
+    ok(es.patches.some((p: any) => p.tx === fromTx && p.ty === fromTy), 'patch sits on the EXITED tile');
+    foe = withDummy(0, 0); // park the dummy wherever the patch is
+    foe.x = (fromTx + 0.5) * 32; foe.y = (fromTy + 0.5) * 32;
+    const hpBefore = foe.hp;
+    nw.step(30); // 1 s — two patch ticks
+    ok(foe.hp < hpBefore, `cinder patch burned the foe standing in it (${hpBefore - foe.hp} dmg)`);
+    dropFoe(foe);
+  } finally {
+    CFG.echoes.cinderIgnitesCA = igniteWas;
+  }
+
+  state.player.echoes = {};
+  es.patches = [];
+  state.god = false;
+}
+
+async function testEchoBounds(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+  const { ECHOES, statsFor } = await import('../data/echoes');
+  state.gameOver = false;
+
+  // T5 verdict pinned: the real-fire flag SHIPS true (tests toggle it locally only)
+  eq(CFG.echoes.cinderIgnitesCA, true, 'T5 verdict: cinderIgnitesCA ships TRUE');
+
+  // scaling is monotonic and floored
+  for (const def of ECHOES) {
+    const lo = statsFor(def, 1), hi = statsFor(def, CFG.echoes.maxLevel);
+    ok(hi.dmg > lo.dmg, `${def.id}: dmg scales up with level`);
+    ok(hi.cooldown <= lo.cooldown, `${def.id}: cooldown never grows with level`);
+    ok(statsFor(def, 99).cooldown >= CFG.echoes.minCooldownSec, `${def.id}: cooldown floored at ${CFG.echoes.minCooldownSec}s`);
+    ok(hi.projectiles >= 1 && hi.orbCount >= 1, `${def.id}: counts stay ≥ 1`);
+  }
+
+  // rolled echo damage stays inside the D5 band: base × [dmgRow.min, dmgRow.max]
+  const { NET_GAME_MAP } = await import('../data/network');
+  const dmgRow = NET_GAME_MAP.find((m: any) => m.target === 'damage')!;
+  const thorn = ECHOES.find((e) => e.id === 'thornring')!;
+  const base = statsFor(thorn, 1).dmg;
+  const minDmg = Math.max(1, Math.round(base * dmgRow.min)) - 1; // rounding slack
+  const maxDmg = Math.round(base * dmgRow.max) + 1;
+  const { ENEMIES } = await import('../data/enemies');
+  const dummyDef = ENEMIES.find((e: any) => !e.boss)!;
+  state.god = true; state.player.hp = 100;
+  state.player.echoes = { thornring: 1 };
+  const es: any = sys.echoes;
+  for (let i = 0; i < 10; i++) {
+    const foe: any = makeDummyFoe(nw, dummyDef, 30, 0);
+    sys.hordes.foes.push(foe);
+    es.cooldowns = {}; // force an immediate fire
+    nw.step(3);
+    const dealt = foe.maxHp - foe.hp;
+    ok(dealt >= minDmg && dealt <= maxDmg, `echo roll ${i + 1} within D5 band: ${dealt} ∈ [${minDmg}, ${maxDmg}]`);
+    sys.hordes.foes = sys.hordes.foes.filter((f: any) => f.uid !== foe.uid);
+  }
+  state.player.echoes = {};
+  state.god = false;
+}
+
+async function testNetMapIntegrity(nw: any) {
+  const { NET_GAME_MAP, NET_METRICS } = await import('../data/network');
+  const net = nw.ctx.net;
+  if (!net) { ok(true, 'no network system — skipping net-map integrity test'); return; }
+
+  // Every game-mapping netKey must resolve to a real metric. A typo'd key makes
+  // get() return 0 and the row silently computes garbage (caught live 2026-07-17:
+  // the S1 stub rows 'echoJitter' and 'hardwareConcurrency' were dead on arrival).
+  const metricKeys = new Set(NET_METRICS.map((m: any) => m.key));
+  for (const gm of NET_GAME_MAP) {
+    ok(metricKeys.has(gm.netKey), `${gm.label}: netKey '${gm.netKey}' exists in NET_METRICS`);
+  }
+  // Targets must be unique — getGameValue() resolves by find(); a duplicate shadows.
+  const targets = NET_GAME_MAP.map((m: any) => m.target);
+  eq(new Set(targets).size, targets.length, 'NET_GAME_MAP targets are unique');
+
+  // Pin the S1 vitals rows on the neutral snapshot CFG.vitals bases assume
+  // (10 Mbps, 50 ms RTT, 4g, 5 ms echo jitter, 4 cores, 4 GB) + band spot-checks.
+  const s = net.snap;
+  const saved = {
+    rtt: s.rtt, downlink: s.downlink, echoJitter: s.echoJitter,
+    effectiveType: s.effectiveType, cpuCores: s.cpuCores,
+    deviceMemory: s.deviceMemory, endpointLatency: s.endpointLatency,
+    timeOfDay: s.timeOfDay,
+  };
+  try {
+    s.rtt = 50; s.downlink = 10; s.echoJitter = 5; s.effectiveType = '4g';
+    s.cpuCores = 4; s.deviceMemory = 4; s.endpointLatency = 30; s.timeOfDay = 12 / 24;
+    eq(net.getGameValue('vigorDecay'), 0.8, 'neutral: vigorDecay 0.8× (10 Mbps = plenty)');
+    eq(net.getGameValue('vigorPerKill'), 1.0, 'neutral: vigorPerKill 1.0×');
+    eq(net.getGameValue('vigorPerGather'), 1.0, 'neutral: vigorPerGather 1.0×');
+    eq(net.getGameValue('vigorPerCampfire'), 1.0, 'neutral: vigorPerCampfire 1.0×');
+    eq(net.getGameValue('resolveDecay'), 1.0, 'neutral: resolveDecay 1.0× on 4g (tier encoding 4g=1)');
+    eq(net.getGameValue('resolvePerKill'), 1.0, 'neutral: resolvePerKill 1.0×');
+    eq(net.getGameValue('resolvePerBuild'), 1.0, 'neutral: resolvePerBuild 1.0×');
+    eq(net.getGameValue('resolveNearHall'), 1.0, 'neutral: resolveNearHall 1.0×');
+    eq(net.getGameValue('resolveNightMult'), 0.8, 'noon: resolveNightMult 0.8×');
+    // Tier bands (encoding: 4g=1, 3g=2, 2g=3, slow-2g=4 — the off-by-one this pins)
+    s.effectiveType = '3g'; eq(net.getGameValue('resolveDecay'), 1.5, '3g: resolveDecay 1.5×');
+    s.effectiveType = '2g'; eq(net.getGameValue('resolveDecay'), 2.5, '2g: resolveDecay 2.5×');
+    s.effectiveType = 'slow-2g'; eq(net.getGameValue('resolveDecay'), 4.0, 'slow-2g: resolveDecay 4.0×');
+    s.cpuCores = 8; eq(net.getGameValue('resolvePerBuild'), 1.5, '8 cores: resolvePerBuild 1.5×');
+    s.echoJitter = 70;
+    eq(net.getGameValue('resolvePerKill'), 0.3, 'stormy echoes: resolvePerKill 0.3×');
+    eq(net.getGameValue('moveSpeed'), 0.92, 'stormy echoes: moveSpeed clamps at 0.92×');
+    s.timeOfDay = 3 / 24; eq(net.getGameValue('resolveNightMult'), 2.5, '3am: resolveNightMult 2.5× (witching hours)');
+  } finally {
+    Object.assign(s, saved);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // test registry & runner
 // ---------------------------------------------------------------------------
 
@@ -1103,6 +1360,10 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Damage roll bounds — calm vs stormy variance', fn: testDamageRollBounds },
   { name: 'Network fallbacks — offline, all modifiers', fn: testNetworkFallbacks },
   { name: 'UI smoke — panels, Lens, inspect box', fn: testUISmoke },
+  { name: 'Echoes — grant on boss kill, re-kill levels, cap', fn: testEchoGrantAndLevel },
+  { name: 'Echoes — every kind deals damage (pulse/nova/volley/orbit/trail)', fn: testEchoDamage },
+  { name: 'Echoes — scaling monotonic, cooldown floor, D5 roll band', fn: testEchoBounds },
+  { name: 'Net map integrity — netKeys resolve, vitals rows pinned', fn: testNetMapIntegrity },
 ];
 
 /** Run all registered tests sequentially. Returns { pass, fail, total, report }. */

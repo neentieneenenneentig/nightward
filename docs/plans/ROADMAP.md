@@ -580,10 +580,100 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 > **Queue now: Batch C "The Character" — taste verdicts IN (quiz 2026-07-16, see
 > `C-batch-quiz.md`): fixed signature echoes · Loom points from nights survived ·
 > all 4 keystones v1 · waystone loss = full collapse-decay · Cinder Trail ignites the
-> REAL fire CA day one · C1 first. Order: C1 echoes (brief `C1-echoes.md`, built
-> overnight on branch `c1-echoes`, awaiting user sign-off before merge) → C2 waystones
-> → C3 loom → C4 armory → G1-P painterly prototype verdict → C5 buildings rework.
+> REAL fire CA day one · C1 first. Order: C1 echoes → C2 waystones → C3 loom →
+> C4 armory → G1-P painterly prototype verdict → C5 buildings rework.
 > N2b/G1-remainder slot in where they fit.**
+>
+> **❗ C1 PLAYTEST VERDICT (2026-07-17):** C1 echoes built + verified on branch `c1-echoes`
+> (37/37 Gauntlet, 165 assertions, static trio green). Live playtest revealed a PRE-EXISTING
+> crash (resonance crit floater referenced `ctx.camera` instead of `ctx.cam` — fixed,
+> `ca60e70`). More critically, the playtest exposed a missing design pillar: **survival
+> pressure.** The user walled in their hall with 7 walls (260 HP each), survived 3 nights
+> with zero threats, and had no reason to fight, hunt, or expand. The game has no teeth.
+>
+> **NEW PRIORITY — S1 "Survival Pressure" inserted BEFORE C2:**
+> The C-batch builds progression systems (echoes, passives, gear, buildings) — but
+> progression needs a PROBLEM to solve. S1 creates that problem: two survival stats
+> (Vigor + Resolve) that decay and must be restored by hunting, killing, building, and
+> surviving nights; a 10× horde rebalance making nights genuinely dangerous; walls that
+> actually break. Brief: `docs/plans/S1-survival-pressure.md`.
+>
+> **Revised order: C1 (echoes) → S1 (survival pressure) → C2 (waystones) → C3 (loom)
+> → C4 (armory) → G1-P (painterly verdict) → C5 (buildings rework).**
+>
+> **🔍 C1 PLAYTEST — LENS VERDICT & UI DIRECTION (2026-07-17, same session):**
+> The user loves the Lens (observatory, O key): "i love the lens. it is AWESOME!"
+> Two UI directives from this:
+>
+> 1. **The popup info menu goes offscreen** — the RPGUI-styled panels (Bag/Craft/Skills/Log)
+>    have no viewport clamping and overflow on small/narrow viewports. The Lens handles
+>    this correctly (centered, scrollable, viewport-unit-bounded). Fix: apply the same
+>    clamping to all panels.
+> 2. **Replace RPGUI with Lens aesthetic** — "the lens' ui is pretty good, we could
+>    probably start the ui update by just replacing the rest of the rpgui stuff with the
+>    lens' ui." The dark, clean, technical Lens style (monospace fonts, subtle 1px borders,
+>    dark translucent backgrounds, no pixel-art chrome) becomes the universal UI skin.
+>    This supersedes W4.5 (pixel UI skin plan). New milestone: **U1 — Lens UI Unification**
+>    (`docs/plans/U1-lens-ui-unification.md`).
+>
+> **Revised order: C1 (echoes) → S1 (survival pressure) → U1 (lens UI unification)
+> → C2 (waystones) → C3 (loom) → C4 (armory) → G1-P (painterly verdict) →
+> C5 (buildings rework).**
+>
+> **Rationale for U1 before C2:** S1 adds vital chips to the HUD — they should debut in
+> the new style. C2–C5 all add new panels (Loom tree, Armory slots, Buildings upgrade UI)
+> — they should be authored against the final look. U1 is small (~1 session) and won't
+> delay the content batch.
+>
+> **🪓 ANIMATIONS / MINING / LUMBERJACKING (2026-07-17):** User asked if animations,
+> mining, and lumberjacking are planned. Status:
+> - The W1 360° parametric character rig was SHIPPED THEN REVERTED (user disliked the
+>   look). Current baseline is 4-direction baked frames.
+> - Combat has windup→active→recovery phase visuals (W3: tint/scale/slash/desaturate on
+>   the existing sprite). Spin attack deferred.
+> - Mining, Woodcutting, Foraging (renamed in N2a from network jargon) all use the generic
+>   gather progress bar — no per-skill animation exists.
+> - **Action-specific animations (mining swing, lumberjack chop, foraging kneel, etc.)
+>   are a future "Action Feel" milestone** — not in the current batch. They should land
+>   AFTER the UI is unified (U1) and combat feel is solid (S1 horde rebalance), and
+>   probably after G1 (particles can enhance them). Candidate slot: between C4 and G1-P,
+>   or as part of G2 (Juice Pass). Not scheduled yet — needs user priority call.
+>
+> **🧰 EVENING REVIEW (2026-07-17, chief-of-staff session, on `c1-echoes`):** the day's
+> commits reviewed and repaired. (1) The crash fix `ca60e70` is correct and complete —
+> no other `ctx.camera` references exist. (2) **Three of the six S1 stub mapping rows
+> were dead or wrong** (effectiveType tier off-by-one → 4g players got ×1.5 resolve
+> decay; `echoJitter` and `hardwareConcurrency` aren't metric keys → rows frozen at
+> ×1.4/×0.7): fixed, `echoJitter` promoted to a real NET_METRICS row (`Echo Flux`),
+> three more vitals rows added (gather/campfire/night), all nine tagged `dormant` and
+> rendered dimmed in the Lens THREADS until S1 wires them. New Gauntlet test #38
+> (`testNetMapIntegrity`) pins all of it. (3) The user's "popup goes offscreen" repro
+> traced to the **Lens inspect box**, not the RPGUI panels — fixed with real-size
+> viewport clamping; U1 brief corrected. Full record: S1/U1 briefs' review sections.
+>
+> **🔁 VERIFICATION PASS (2026-07-17, later same session):** the above batch was re-run
+> headlessly (raw-CDP Chrome + vite, `?gl&seed=1234&test`) and ground-truthed. All the
+> S1/inspect-box/crash claims hold; `testNetMapIntegrity` passes. **(4) One pre-existing
+> Gauntlet failure surfaced — NOT caused by this batch** (confirmed by stashing the
+> working tree: it also fails on committed HEAD): `testGathering`'s step budget
+> `ceil(need·30)+10` assumed gather progress advances at raw `dt`, but it advances at
+> `effectiveDt = dt·simSpeed`, and `need` already folds `simSpeed` in — so real
+> frames-to-complete scale ~`need·30/simSpeed`. Under live `rtt≈100ms → simSpeed 0.85`
+> the budget fell exactly **one frame short** (need 2.07 → budget 73, actual 74). The
+> overnight run passed only because its live `rtt` gave `simSpeed≈1`. Fixed: the test now
+> steps-until-clear with a `need`-scaled cap (robust to any clamped `simSpeed`). Suite is
+> green again: **200 assertions / 38 functions, 0 page errors, deterministic**.
+> **(5) FLAG FOR USER (balance, not fixed):** that bug exposed that `simSpeed` is applied
+> to **gather twice** — once in `need` (gather.ts `speed *= getGameValue('simSpeed')`,
+> the N1 line) and again via the universal `effectiveDt`. Gather is the *only* gameplay
+> system that double-applies it (combat/hordes/fire/echoes each apply `effectiveDt`
+> only), so gather time is uniquely ~`1/simSpeed²` sensitive to lag. Likely an
+> unintended overlap from threading `effectiveDt` through `gather.update` after N1 added
+> the gather-specific term — but removing N1's line changes gather feel, so it's the
+> user's call (see `docs/plans/S1-survival-pressure.md` review record for options).
+> **→ RESOLVED (user chose option b, 2026-07-17):** dropped the N1 gather line; gather
+> now scales `1/simSpeed` like everything else. Verified `need` 2.07→1.76 & frames
+> 74→63 at simSpeed 0.85; suite green (200/38). Own commit.
 
 ---
 

@@ -118,3 +118,31 @@ tests themselves own).
 4. With Cinder Trail held, walk through grass → patches + REAL ignition, CA spread,
    embers; walk through your base → it burns. (Verdict witnessed.)
 5. `?seed=1234&test` → 37/37 green.
+
+## Verification record (2026-07-17, overnight build session)
+
+Run headlessly (system Chrome via raw CDP — scratchpad `gauntlet-cdp.mjs`, vite on
+:5199, `?gl`) because the playtest agent spawned without browser tools this session.
+
+- **Gauntlet `?seed=1234&test`: ✅ ALL 37 test functions / 165 assertions PASSED
+  (1396ms), zero page errors.** All 21 new echo assertions green (grant L1→L2→cap 8,
+  every kind dealt damage: pulse 7, nova 10 + chill 0.55, volley 5, orbit 24, patch 10;
+  10/10 rolled pulse hits inside the D5 band [1,10] for base 6).
+- **First headless run caught P1's `testMobBirthStats` being NONDETERMINISTIC**
+  (36/37): the Shelled-vs-Blinker branch reads live `computeRealmProfile().variance`,
+  and jittery first-contact probes birthed a Blinker. Fixed by pinning the profile in
+  the fixture (`20c6996`); echo dummies also frozen via telegraphT so orbit/trail
+  geometry can't pass by luck. Lesson recorded: a behavioral test must pin EVERY input
+  the exercised path reads.
+- **Live probe (`?seed=1234&gl`, no `&test`)**: `cinderIgnitesCA === true` live;
+  grant → thornring L1 with "echo clings" Chronicle line → L2 with "deepens"; HUD chip
+  visible (`🌿2` with Veil-clean tooltip); Thornring dealt 10 dmg to an adjacent foe
+  with zero input; Cinder Trail walking 5 tiles dropped 5 patches on the exited tiles
+  and **all 5 grass tiles were genuinely burning in the fire CA** (`core.isBurning`
+  true ×5). Zero page errors.
+- Static: `tsc --noEmit` clean, `vite build` green. Rust untouched (cargo 23/23 stands
+  from P1).
+- Branch `c1-echoes` pushed (commits `bb42c01` feat, `20c6996` test fix). **NOT merged,
+  NOT tagged — awaiting the user's sign-off per WORKFLOW.** Visual feel (pulse rings,
+  orb orbit, patch flicker) is untested by eye — headless session; feel gates are
+  relaxed this era, but look for yourself before sign-off.

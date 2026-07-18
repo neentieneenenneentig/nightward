@@ -337,6 +337,32 @@ export class Views {
     this.animate(g, 0.12, (t) => { g.alpha = 1 - t; });
   }
 
+  /** C1: an expanding ring — echo pulses and novas (color carries the element). */
+  addPulseRing(x: number, y: number, radius: number, color: number) {
+    const g = new Graphics();
+    g.position.set(x, y - 6);
+    this.fx.addChild(g);
+    this.animate(g, 0.35, (t) => {
+      g.clear();
+      g.circle(0, 0, radius * (0.25 + t * 0.75))
+        .fill({ color, alpha: (1 - t) * 0.12 })
+        .stroke({ width: 2.5, color, alpha: (1 - t) * 0.9 });
+    });
+  }
+
+  /** C1: a smouldering ground patch (Cinder Trail) — glows, gutters, fades. */
+  addBurnPatch(x: number, y: number, sec: number) {
+    const g = new Graphics();
+    g.position.set(x, y);
+    this.fx.addChild(g);
+    this.animate(g, sec, (t) => {
+      g.clear();
+      const flicker = 0.85 + Math.sin(t * 40) * 0.15;
+      g.ellipse(0, 0, 11 * flicker, 6 * flicker).fill({ color: 0xc85a2e, alpha: (1 - t) * 0.45 });
+      g.ellipse(0, 0, 6 * flicker, 3.5 * flicker).fill({ color: 0xffb347, alpha: (1 - t) * 0.6 });
+    });
+  }
+
   private animate(obj: Container, dur: number, step: (t: number) => void) {
     const start = performance.now();
     const tick = () => {

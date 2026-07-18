@@ -823,9 +823,13 @@ export class NetworkSystem {
    * "Lightning bands" — damage is rolled, not stepped. Wide and wild per D5.
    *
    * @param rng Seeded rng function returning [0,1). MUST be the game rng for determinism.
+   * @param opts C1: non-swing damage sources (echoes) share the one damage law but
+   *   pass `stash: false` so they never overwrite the pending swing's stashed roll,
+   *   `label` for their Lens line, and `quiet: true` for high-frequency rolls
+   *   (Cinder Trail patches) that would drown the feed.
    * @returns The damage multiplier and roll debug info.
    */
-  rollDamageMul(rng: () => number): { mul: number; center: number; half: number; bestEchoMs: number } {
+  rollDamageMul(rng: () => number, opts?: { label?: string; stash?: boolean; quiet?: boolean }): { mul: number; center: number; half: number; bestEchoMs: number } {
     const bestEchoMs = this.bestRecentEcho();
     const echoJit = this.snap.echoJitter;
 
@@ -841,15 +845,19 @@ export class NetworkSystem {
     // roll: center ± half, clamped to damage band from data row
     const roll = Math.max(dmgMin, Math.min(dmgMax, center + (rng() * 2 - 1) * half));
 
-    this.lastSwingRtt = bestEchoMs > 0 ? bestEchoMs : this.snap.rtt;
-    this.lastSwingDmgMul = roll;
-    this.lastSwingCenter = center;
-    this.lastSwingHalf = half;
-    this.lastSwingBestEchoMs = bestEchoMs;
+    if (opts?.stash !== false) {
+      this.lastSwingRtt = bestEchoMs > 0 ? bestEchoMs : this.snap.rtt;
+      this.lastSwingDmgMul = roll;
+      this.lastSwingCenter = center;
+      this.lastSwingHalf = half;
+      this.lastSwingBestEchoMs = bestEchoMs;
+    }
 
-    // Lens feed: technical line for every swing
-    this.netLog('resonance',
-      `swing roll ${roll.toFixed(2)}× ← echo ${bestEchoMs > 0 ? bestEchoMs.toFixed(0) : '—'} ms, center ${center.toFixed(2)} ± ${half.toFixed(2)}`);
+    // Lens feed: technical line for every roll (quiet suppresses high-frequency sources)
+    if (!opts?.quiet) {
+      this.netLog('resonance',
+        `${opts?.label ?? 'swing'} roll ${roll.toFixed(2)}× ← echo ${bestEchoMs > 0 ? bestEchoMs.toFixed(0) : '—'} ms, center ${center.toFixed(2)} ± ${half.toFixed(2)}`);
+    }
 
     return { mul: roll, center, half, bestEchoMs };
   }
