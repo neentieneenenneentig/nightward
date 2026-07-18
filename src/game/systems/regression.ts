@@ -1505,7 +1505,11 @@ async function testVitalsHUD(nw: any) {
   const resolveEl = document.getElementById('nw-resolve');
   ok(vigorEl !== null, 'vigor HUD chip exists in DOM');
   ok(resolveEl !== null, 'resolve HUD chip exists in DOM');
-  // Vigor/resolve may have decayed slightly by now — check ≥90
+  // The chip text is written by ui.refresh(), which runs in render() (rAF) — not
+  // in __nw.step(). A stray frame can interleave at an await boundary mid-restore
+  // test and paint a transient value; force one refresh so the read is
+  // deterministic and actually exercises the state→chip wiring.
+  nw.ui.refresh();
   if (vigorEl) {
     const vigorVal = parseInt(vigorEl.querySelector('#nw-vigor-text')?.textContent ?? '0', 10);
     ok(vigorVal >= 90, `vigor chip shows ≥90 (got ${vigorVal})`);
