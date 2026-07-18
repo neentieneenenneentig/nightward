@@ -184,12 +184,14 @@ export class UI {
     const btn = (id: string, icon: string, label: string, key: string, cls = '') => {
       const b = el('div', 'nw-btn ' + cls);
       b.id = id;
+      b.title = label;
+      b.setAttribute('aria-label', label);
       b.innerHTML = `<span class="nw-btn-icon">${icon}</span><span class="nw-btn-label">${label}</span><span class="k">${key}</span>`;
       bar.appendChild(b);
       return b;
     };
     this.interactBtn = btn('nw-interact', '&#128074;', 'Interact', 'E', 'primary');
-    const attack = btn('nw-attack', '&#9876;', 'Attack', 'Space');
+    const attack = btn('nw-attack', '&#9876;', 'Attack', 'Spc');
     const ignite = btn('nw-ignite', '&#128293;', 'Ignite', 'F');
     const build = btn('nw-build', '&#9874;', 'Build', 'B');
     const bag = btn('nw-bag', '&#127890;', 'Bag', 'I');
