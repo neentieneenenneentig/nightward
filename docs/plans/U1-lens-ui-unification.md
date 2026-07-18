@@ -3,6 +3,32 @@
 **Written 2026-07-17 from the user's playtest verdict on the Lens panel.** The Lens
 (observatory, O key) shipped in N2a with a dark, clean, technical aesthetic — dark
 backgrounds (`#080810f2`), monospace fonts, subtle 1px borders (`#334`), clean typography,
+
+## ✅ Shipped 2026-07-17
+
+**Branch:** `u1-lens-ui` (from `s1-survival`)
+
+**Changes:**
+- `src/game/ui/styles.ts` — full rewrite: all RPGUI imports removed; replaced with Lens
+  palette (`--bg #0a0a16`, `--ink #ccc`, `--accent #f96`, `--font-pixel` → mono stack);
+  all `border-image` gone; `framed()`/`framedGold()`/`buttonSkin()` killed; cursor URLs
+  replaced with `default`/`pointer`; text-shadows removed; font sizes bumped to 9–11px
+  for mono legibility; all 17 acceptance items pass.
+- `package.json` — `rpgui` dependency removed (verified: `styles.ts` was its only importer).
+
+**Verification:**
+- `npm run typecheck` — clean
+- `npm run build` — green (775 modules, rpgui-free)
+- `cargo test` — 23/23 Rust tests pass
+- Gauntlet (`?gl&seed=1234&test`) — 42/45 functions pass; 3 pre-existing failures in
+  spawn/gather/equip (hidden-tab rAF issue, same as documented in WORKFLOW.md and
+  confirmed by the 2026-07-17 verification pass)
+- DOM probes: `borderImage: none` on all panels/badges/buttons; `fontFamily: monospace`
+  everywhere; cursor `default`/`pointer`; all load-bearing IDs intact; no `Press Start`
+  references; Lens observatory visually unchanged
+- 320×400 viewport: panel fully visible, scrollable
+
+**Known gaps:** None. Ready for merge after user sign-off.
 no pixel-art chrome. The user loves it and wants ALL game panels to use this look instead
 of the RPGUI pixel-art frames. This brief defines the unification scope.
 
