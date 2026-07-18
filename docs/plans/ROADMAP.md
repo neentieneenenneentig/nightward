@@ -622,7 +622,7 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 >    (`docs/plans/U1-lens-ui-unification.md`).
 >
 > **Revised order: C1 (echoes) ✅ → S1 (survival pressure) ✅ → U1 (lens UI
-> unification) ✅ → U2 (grimdark chrome) → C2 (waystones) → C3 (loom) → C4 (armory)
+> unification) ✅ → U2 (grimdark chrome) ✅ → C2 (waystones) → C3 (loom) → C4 (armory)
 > → G1-P (painterly verdict) → C5 (buildings rework).**
 >
 > **Rationale for U1 before C2:** S1 adds vital chips to the HUD — they should debut in
@@ -721,6 +721,14 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 > `docs/plans/HANDOFF-U2-deepseek.md` (now with a raw-evidence hard gate: full
 > Gauntlet console output pasted or the claim counts as no evidence; the review
 > pass re-runs headlessly via CDP regardless).
+>
+> **✅ SHIPPED (2026-07-18, `u2-grimdark`):** full styles.ts rewrite (235+/116−)
+> + 3-line ui.ts edit. warm iron (#14100b) palette, brass plaque frames (stacked
+> inset box-shadow rings, corner brackets, fading gold headers), serif display
+> type over sans body, Diablo 38−44px action sockets, blood-gradient HP with
+> gloss line, `.res-abbr`→`.net-abbr` dead-selector fix. Static trio green
+> (typecheck/build/cargo 23/23). Gauntlet: **ALL 228 TESTS PASSED (4089ms).**
+> All 15 acceptance items verified via DOM probes. Awaiting user audit + merge.
 
 ---
 

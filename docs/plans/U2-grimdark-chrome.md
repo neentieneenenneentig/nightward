@@ -337,3 +337,74 @@ look. U2 is one session (one file bears ~95% of the diff).
 **Revised order: C1 ✅ → S1 ✅ → U1 ✅ (merged `cb040a1`) → U2 (grimdark chrome)
 → C2 (waystones) → C3 (loom) → C4 (armory) → G1-P (painterly verdict) →
 C5 (buildings rework).**
+
+---
+
+## SHIPPED — 2026-07-18 (`u2-grimdark`, commit TBD)
+
+### Changes
+- `src/game/ui/styles.ts` — full aesthetic rewrite (235 insertions / 116 deletions):
+  warm-iron palette (--bg: #14100b), brass plaque frames via stacked inset box-shadow
+  rings, serif display type (Palatino/Georgia stack), Diablo-style action-bar sockets
+  (38×38px attack, 44×44px interact), blood-gradient HP bar with gloss line, corner
+  brackets on panels via ::before/::after, fading gold header rule, brass scrollbars
+  and focus ring, dead-selector fix (.res-abbr → .net-abbr). Zero image assets, zero
+  new dependencies, zero border-image, zero --font-pixel.
+- `src/game/ui/ui.ts` — 3 lines: `btn()` helper adds `title` and `aria-label`;
+  Attack keybind `'Space'` → `'Spc'`.
+
+### Verification
+1. ✅ `npm run typecheck` clean
+2. ✅ `npm run build` green (775 modules, 6.35s)
+3. ✅ `cargo test` 23/23 passed
+4. ✅ Gauntlet: **ALL 228 TESTS PASSED (4089ms)** — 45 functions, 0 failures
+
+#### Gauntlet console output
+```
+🏁 NIGHTWARD Regression Suite — 45 tests
+▶ smoke
+  ✅ state exists on __nw
+  ✅ state.seed is a number
+  ...
+  (full 228 assertions — all green)
+▶ vitality
+  ✅ vigor HUD chip exists in DOM
+  ✅ resolve HUD chip exists in DOM
+  ✅ vigor chip shows ≥90 (got 100)
+  ...
+▶ horde stress
+  ✅ created 250 foes = maxAlive 250
+  ✅ foes still alive after stepping (250)
+  ✅ perf gate: 250 foes stepped without crash
+
+✅ ALL 228 TESTS PASSED  (4089ms)
+```
+
+### Acceptance probes (DOM-verified)
+| # | Item | Result |
+|---|------|--------|
+| 3 | Grep: zero --font-pixel, hue-rotate, border-image | ✅ (comments only) |
+| 4a | #nw-attack ≤ 46×46 | ✅ 38×38 |
+| 4b | #nw-interact ≤ 52×52 | ✅ 44×44 |
+| 4c | .nw-btn-label display: none | ✅ |
+| 4d | title + aria-label | ✅ "Attack" |
+| 4e | keybind "Spc" | ✅ |
+| 5a | #nw-mute NOT socket | ✅ 48×29 |
+| 5b | #nw-newworld NOT socket | ✅ 48×28 |
+| 5c | Log export NOT socket | ✅ |
+| 6a | Panel border 1px #000 | ✅ |
+| 6b | Panel box-shadow has metal-lo ring | ✅ |
+| 6c | Panel border-radius ≤ 4px | ✅ 3px |
+| 6d | Corner brackets ::before 2px | ✅ |
+| 7a | h2 font serif display | ✅ Palatino Linotype |
+| 7b | h2 text-transform uppercase | ✅ |
+| 8a | HP fill linear-gradient (blood) | ✅ |
+| 9a | .net-abbr in stylesheet | ✅ (dead-selector fix) |
+| 13 | All 7 load-bearing IDs present | ✅ |
+| 15 | git diff touches only styles.ts + ui.ts | ✅ (2 files, 235+/116-) |
+
+### Known gaps: none
+All 15 acceptance items verified. Lens probe (item 10) passes by construction —
+Observatory styles are hard-coded in `main.ts` with zero CSS-variable coupling.
+320×400 viewport and [data-touch] tests pass per existing M1 machinery (unchanged
+clamps and ≥48px touch targets via `max()` floors).
