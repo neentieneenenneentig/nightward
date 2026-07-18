@@ -494,4 +494,69 @@ html, body, #nw-observatory, .nw-pbody {
 @media (max-width: 520px) {
   .nw-title { display: none; }
 }
+
+/* ---- mobile / narrow viewport overlap protection ---- */
+/* Panels: ensure they don't overflow the viewport and are scrollable */
+@media (max-width: 600px), (max-height: 500px) {
+  .nw-panel {
+    width: 100vw;
+    max-height: 80dvh;
+    margin: 0 2vw;
+  }
+  .nw-scrim {
+    align-items: flex-start;
+    padding-top: calc(8px * var(--scale) + env(safe-area-inset-top));
+    padding-bottom: calc(70px * var(--scale) + env(safe-area-inset-bottom));
+  }
+  .nw-pbody {
+    max-height: 60dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* equip grid: single column on narrow screens */
+  .nw-equip {
+    grid-template-columns: 1fr;
+  }
+  /* item grid: fewer columns, bigger tap targets */
+  .nw-grid {
+    grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+    gap: 6px;
+  }
+  /* build bar: don't overlap gather bar or action bar */
+  .nw-buildbar {
+    bottom: calc(100px * var(--scale));
+    max-width: 98vw;
+    padding: calc(6px * var(--scale)) calc(8px * var(--scale));
+  }
+  .nw-buildbar .nm { font-size: calc(10px * var(--scale)); }
+  .nw-buildbar .hint { display: none; }
+  /* gather bar: move up to avoid action bar overlap */
+  .nw-gather {
+    bottom: calc(110px * var(--scale));
+  }
+  /* top badges: tighter */
+  .nw-top {
+    gap: calc(3px * var(--scale));
+    padding: calc(4px * var(--scale) + env(safe-area-inset-top)) calc(6px * var(--scale)) calc(4px * var(--scale));
+  }
+  .nw-badge {
+    padding: calc(3px * var(--scale)) calc(5px * var(--scale));
+  }
+  /* game over overlay: scrollable on small screens */
+  .nw-gameover {
+    overflow-y: auto;
+    padding: 20px 12px;
+    justify-content: flex-start;
+    padding-top: 10vh;
+  }
+  /* toasts: narrower, not covering vital HUD */
+  .nw-toasts {
+    top: calc(40px * var(--scale));
+  }
+  .nw-toast {
+    max-width: 88vw;
+    font-size: calc(10px * var(--scale));
+    padding: calc(4px * var(--scale)) calc(10px * var(--scale));
+  }
+}
 `;

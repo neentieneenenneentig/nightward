@@ -111,4 +111,29 @@ export const ITEMS: Record<string, ItemDef> = Object.fromEntries([
   I('amulet_star', 'Star Amulet', 'amulet', '#aaccff', '#c9a0dc', { trinket: 'amulet', armor: 5 }),
   I('charm_silver', 'Silver Charm', 'charm', '#d0d8e0', '#7fb8e6', { trinket: 'charm', regen: 1.5 }),
   I('charm_star', 'Star Charm', 'charm', '#aaccff', '#ffd27a', { trinket: 'charm', regen: 2.5 }),
+
+  // ---- X1: Elemental weapons (sidegrades, not linear upgrades) -------------
+  I('sword_fire', 'Fire Brand', 'sword', '#ff4422', '#ffaa00', { weaponDmg: 11, effects: ['fire_on_hit'] }),
+  I('sword_frost', 'Frost Edge', 'sword', '#4488ff', '#ccddff', { weaponDmg: 10, effects: ['chill_on_hit'] }),
+  I('sword_void', 'Void Blade', 'sword', '#8844cc', '#220044', { weaponDmg: 8, effects: ['lifesteal'] }),
+  I('sword_storm', 'Storm Caller', 'sword', '#ffcc00', '#4488ff', { weaponDmg: 9, effects: ['chain_on_kill'] }),
+
+  // ---- X1: New trinkets with unique effects --------------------------------
+  I('ring_fire', 'Ember Band', 'ring', '#ff4422', '#ffaa00', { trinket: 'ring', weaponDmg: 2, effects: ['fire_on_hit'] }),
+  I('ring_void', 'Void Band', 'ring', '#8844cc', '#220044', { trinket: 'ring', weaponDmg: 2, effects: ['lifesteal'] }),
+  I('amulet_ward', 'Warding Amulet', 'amulet', '#44cc88', '#ffffff', { trinket: 'amulet', armor: 2, effects: ['dodge'] }),
+  I('charm_gold', "Miser's Charm", 'charm', '#ffcc00', '#886600', { trinket: 'charm', regen: 0.5, effects: ['gold_find'] }),
+  I('charm_xp', "Sage's Charm", 'charm', '#44aaff', '#ffffff', { trinket: 'charm', regen: 0.5, effects: ['xp_boost'] }),
+  I('charm_night', 'Nightseer Charm', 'charm', '#222244', '#8888cc', { trinket: 'charm', regen: 0.3, effects: ['night_vision'] }),
+
+  // ---- X1: New materials ---------------------------------------------------
+  // (the plan's bomb/repair-kit/war-horn consumables were cut: the use-item
+  // path has no targeting/aoe hooks yet — items that do nothing are worse
+  // than no items. Revisit when a consumable system exists.)
+  I('void_shard', 'Void Shard', 'ore', '#442288', '#aa66ff'),
+  I('storm_crystal', 'Storm Crystal', 'ore', '#ffcc00', '#4488ff'),
+  I('scorchberry', 'Scorchberry', 'berry', '#ff4422', '#ff8800'),
+  I('wispflower', 'Wispflower', 'herb', '#6644cc', '#aaddff'),
+  I('ancient_oak', 'Ancient Oak', 'log', '#3a2a10', '#88aa44'),
+  I('echo_dust', 'Echo Dust', 'ore', '#aaaacc', '#ffffff'),
 ].map((d) => [d.id, d]));

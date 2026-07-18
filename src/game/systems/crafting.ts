@@ -2,6 +2,8 @@
 // toast callback. Station gating (needs a furnace, etc.) hooks in later.
 import { RECIPES } from '../data/recipes';
 import { ITEMS } from '../data/items';
+import { BUILDINGS } from '../data/buildings';
+import { TILE } from '../world/worldgen';
 import { acquireGear, addXp, invAdd, invHasAll, invTakeAll, skillLevel } from '../rules';
 import type { GameState } from '../state';
 import { Sound } from '../../engine/audio';
@@ -18,7 +20,16 @@ export function craft(state: GameState, recipeId: string, toast: (m: string, k?:
   invTakeAll(state, r.in);
   invAdd(state, r.out.id, r.out.n);
   acquireGear(state, r.out.id); // wear a freshly-forged weapon/armor if the slot is free; keep soul items bound
-  const lvl = addXp(state, r.skill, r.xp);
+  // X1: Workshop — crafting done within its radius grants bonus xp
+  let xpAmt = r.xp;
+  const wsDef = BUILDINGS.find((d) => d.id === 'workshop');
+  if (wsDef?.workshop) {
+    const px = state.player.x / TILE - 0.5, py = state.player.y / TILE - 0.5;
+    const near = state.buildings.some((b) =>
+      b.type === 'workshop' && Math.hypot(b.tx - px, b.ty - py) <= wsDef.workshop!.radiusTiles);
+    if (near) xpAmt = Math.round(xpAmt * wsDef.workshop.craftSpeedMul);
+  }
+  const lvl = addXp(state, r.skill, xpAmt);
   Sound.play('craft');
   toast(`Crafted ${ITEMS[r.out.id].name}${r.out.n > 1 ? ' ×' + r.out.n : ''} (+${r.xp}xp)`, 'good');
   log?.push('craft', `Crafted ${ITEMS[r.out.id].name}${r.out.n > 1 ? ' ×' + r.out.n : ''}`, state.clock);

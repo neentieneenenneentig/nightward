@@ -261,6 +261,23 @@ export interface NetworkSnapshot {
   /** Whether the user is behind Cloudflare WARP. */
   warp: boolean;
 
+  // ---- X1: New Lens parameters -------------------------------------------
+  // (geolocation was deliberately NOT added: it fires a browser permission
+  // prompt and the identity beacons already show IP-level geo — the Lens
+  // never asks for GPS.)
+  /** Battery level 0..1, or -1 if unavailable. */
+  batteryLevel: number;
+  /** Is the device charging? */
+  batteryCharging: boolean;
+  /** Browser locale (e.g. 'en-US'). */
+  locale: string;
+  /** IANA timezone (e.g. 'America/New_York'). */
+  timezone: string;
+  /** Used JS heap size in MB (Chrome-only). */
+  jsHeapUsedMB: number;
+  /** Total JS heap size in MB (Chrome-only). */
+  jsHeapTotalMB: number;
+
   /** S1: transient — night RTT stability % (computed at dawn). */
   _nightRttStability?: number;
 
@@ -404,6 +421,41 @@ export const NET_METRICS: NetMapping[] = [
     compute: (s) => s.pageTtfb,
     fallback: 50, unit: 'ms', intervalMs: 0,
     inspect: { api: 'PerformanceNavigationTiming.responseStart − requestStart. This origin only.', action: 'boot page load (captured once, static)', flowsInto: 'Vessel identity · ancestral memory stats' },
+  },
+
+  // ---- X1: New Lens parameters — browser sensors beyond networking --------
+  {
+    key: 'batteryLevel', label: 'Battery',
+    compute: (s) => s.batteryLevel,
+    fallback: 1, unit: 'frac', intervalMs: 30000,
+    inspect: { api: 'navigator.getBattery() — Battery Status API. Chrome/Edge; unavailable in Firefox/Safari.', action: 'always active (polled at ~0.03 Hz)', flowsInto: 'resource yield · regen rate (low battery = scarcity)' },
+  },
+  {
+    key: 'batteryCharging', label: 'Charging',
+    compute: (s) => s.batteryCharging ? 1 : 0,
+    fallback: 1, unit: '', intervalMs: 30000,
+    inspect: { api: 'navigator.getBattery().charging — Battery Status API. Chrome/Edge only.', action: 'always active (polled at ~0.03 Hz)', flowsInto: 'day health regen — plugged in heals 20% faster' },
+  },
+  {
+    key: 'locale', label: 'Locale',
+    compute: (s) => s.locale ? s.locale.charCodeAt(0) / 26 : 0,
+    fallback: 0, unit: '', intervalMs: 0,
+    inspect: { api: 'navigator.language — browser UI locale. Available everywhere.', action: 'boot page load (static)', flowsInto: 'nothing yet — surfaced for the Lens only' },
+  },
+  {
+    key: 'timezone', label: 'Timezone',
+    compute: (s) => {
+      // encode timezone offset as fraction of day
+      try { return new Date().getTimezoneOffset() / -1440 + 0.5; } catch { return 0.5; }
+    },
+    fallback: 0.5, unit: 'frac', intervalMs: 60000,
+    inspect: { api: 'Intl.DateTimeFormat().resolvedOptions().timeZone → Date.getTimezoneOffset(). Available everywhere.', action: 'always active (polled at ~0.017 Hz)', flowsInto: 'day/night offset · season flavor' },
+  },
+  {
+    key: 'jsHeapUsed', label: 'JS Heap',
+    compute: (s) => s.jsHeapUsedMB,
+    fallback: 50, unit: 'MB', intervalMs: 10000,
+    inspect: { api: 'performance.memory.usedJSHeapSize — Chrome-only. Fallback: 50 MB.', action: 'always active (polled at 0.1 Hz)', flowsInto: 'Veil Pressure — difficulty scalar (more memory pressure = harder)' },
   },
 ];
 
@@ -647,5 +699,37 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'resolvePerSurviveNight',
     min: 0.4,
     max: 1.5,
+  },
+
+  // ---- X1: New game mappings from Lens sensors ----------------------------
+  {
+    label: 'Veil Pressure',
+    netKey: 'jsHeapUsed',
+    // Memory pressure = the Veil presses harder. 20MB→0.9×, 200MB→1.4×.
+    transform: (mb: number) => Math.max(0.85, Math.min(1.5, 0.85 + mb * 0.003)),
+    target: 'veilPressure',
+    min: 0.85,
+    max: 1.5,
+  },
+  {
+    label: 'Battery Scarcity',
+    netKey: 'batteryLevel',
+    // Low battery = scarcity mode. Full→1.0×, 15%→0.7×, 5%→0.5×.
+    transform: (level: number) => {
+      if (level < 0) return 1.0; // unavailable
+      return Math.max(0.5, Math.min(1.0, level));
+    },
+    target: 'resourceYield',
+    min: 0.5,
+    max: 1.0,
+  },
+  {
+    label: 'Charging Bonus',
+    netKey: 'batteryCharging',
+    // Plugged in = the network flows freely. 1→1.2×, 0→1.0×.
+    transform: (v: number) => v > 0 ? 1.2 : 1.0,
+    target: 'regenRate',
+    min: 1.0,
+    max: 1.2,
   },
 ];

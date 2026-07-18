@@ -13,13 +13,28 @@ export interface BuildingDef {
   unique: boolean;
   tower?: { rangeTiles: number; dmg: number; cooldown: number };
   // C5: tower special role (affects targeting and projectile behavior)
-  towerRole?: 'splash' | 'slow' | 'sniper' | 'aura';
+  towerRole?: 'splash' | 'slow' | 'sniper' | 'aura' | 'chain' | 'poison' | 'stun';
   // C5: aura buff applied to nearby buildings/player when towerRole='aura'
   aura?: { radiusTiles: number; dmgMul?: number; rangeAdd?: number; regenAdd?: number };
   // C5: upgrade path — clicking a placed tower shows A/B choices
   upgradesTo?: [string, string];
   dragPaint?: boolean; // hold + drag paints a line of these (walls)
-  art: 'hall' | 'hut' | 'wall' | 'tower' | 'campfire';
+  // X1: new building roles
+  trap?: { damage: number; slowMul?: number; radiusTiles: number; cooldownSec: number };
+  workshop?: { craftSpeedMul: number; radiusTiles: number };
+  granary?: { foodYieldMul: number };
+  shrine?: { radiusTiles: number; dmgAdd?: number; rangeAdd?: number; regenAdd?: number };
+  // X1: spiked walls reflect this much damage to melee attackers
+  thorns?: number;
+  // X1: chain-lightning towers — extra arcs after the first hit
+  chain?: { jumps: number; falloff: number };
+  // X1: poison towers — DoT as a fraction of the hit, per second
+  poisonFx?: { dpsFrac: number; durSec: number; maxStacks: number; spreadOnDeath?: boolean };
+  // X1: stun towers — target frozen for this long per hit
+  stunSec?: number;
+  // X1: buildings that extend the waystone chain (Signal Beacon), with this anchor range
+  anchorRange?: number;
+  art: 'hall' | 'hut' | 'wall' | 'tower' | 'campfire' | 'trap' | 'shrine';
 }
 
 const s = (id: string, n: number): Stack => ({ id, n });
@@ -165,5 +180,150 @@ export const BUILDINGS: BuildingDef[] = [
     desc: 'An anchor in the dark. Buildings may be placed within its reach — chain them to claim the wilds. If destroyed, everything beyond crumbles.',
     hp: 400, cost: [s('iron_bar', 4), s('stone', 8), s('copper_bar', 2)],
     pop: 0, territory: 8, unique: false, art: 'tower',
+  },
+
+  // ---- X1: Building expansion ----------------------------------------------
+
+  // Wall upgrades
+  {
+    id: 'wall_stone', name: 'Stone Rampart',
+    desc: 'Thrice the strength of wood. The night breaks against it.',
+    hp: 700, cost: [s('stone', 4), s('plank', 1)],
+    pop: 0, territory: 0, unique: false, dragPaint: true, art: 'wall',
+  },
+  {
+    id: 'wall_iron', name: 'Iron Bulwark',
+    desc: 'Spiked iron plates. Foes that strike it bleed.',
+    hp: 1200, cost: [s('iron_bar', 2), s('stone', 3)],
+    pop: 0, territory: 1, unique: false, dragPaint: true,
+    thorns: 6,
+    art: 'wall',
+  },
+
+  // Traps
+  {
+    id: 'trap_spike', name: 'Spike Trap',
+    desc: 'Foes that step on it take damage. Re-arms after a short delay.',
+    hp: 80, cost: [s('plank', 4), s('stone', 3), s('copper_bar', 1)],
+    pop: 0, territory: 0, unique: false,
+    trap: { damage: 25, radiusTiles: 0.5, cooldownSec: 3 },
+    art: 'trap',
+  },
+  {
+    id: 'trap_tar', name: 'Tar Pit',
+    desc: 'Slows enemies that cross it to a crawl. Does no damage by itself.',
+    hp: 100, cost: [s('log', 5), s('stone', 2), s('charcoal', 3)],
+    pop: 0, territory: 0, unique: false,
+    trap: { damage: 0, slowMul: 0.3, radiusTiles: 1.5, cooldownSec: 0.5 },
+    art: 'trap',
+  },
+  {
+    id: 'trap_flame', name: 'Flame Vent',
+    desc: 'Periodically erupts in fire. Burns all foes in its blast.',
+    hp: 120, cost: [s('iron_bar', 3), s('charcoal', 6), s('stone', 4)],
+    pop: 0, territory: 1, unique: false,
+    trap: { damage: 40, radiusTiles: 2, cooldownSec: 5 },
+    art: 'trap',
+  },
+
+  // Utility buildings
+  {
+    id: 'workshop', name: 'Workshop',
+    desc: 'Crafting within 6 tiles grants +30% craft XP.',
+    hp: 200, cost: [s('plank', 8), s('iron_bar', 2), s('stone', 4)],
+    pop: 0, territory: 3, unique: false,
+    workshop: { craftSpeedMul: 1.3, radiusTiles: 6 },
+    art: 'hut',
+  },
+  {
+    id: 'granary', name: 'Granary',
+    desc: 'Foraged food yields +40%. Berries, herbs, and tonics are more potent.',
+    hp: 180, cost: [s('plank', 6), s('stone', 4), s('sunleaf', 3)],
+    pop: 1, territory: 3, unique: false,
+    granary: { foodYieldMul: 1.4 },
+    art: 'hut',
+  },
+  {
+    id: 'shrine', name: 'Shrine',
+    desc: 'Towers within 7 tiles gain +1 range and +2 damage.',
+    hp: 250, cost: [s('stone', 10), s('iron_bar', 3), s('moonbell', 4)],
+    pop: 0, territory: 4, unique: false,
+    shrine: { radiusTiles: 7, dmgAdd: 2, rangeAdd: 1 },
+    art: 'shrine',
+  },
+  {
+    id: 'beacon', name: 'Signal Beacon',
+    desc: 'A lesser anchor — buildings may root within 3 tiles of it. Build deeper into the wilds.',
+    hp: 160, cost: [s('copper_bar', 4), s('stone', 6), s('fine_log', 2)],
+    pop: 0, territory: 5, unique: false, anchorRange: 3, art: 'tower',
+  },
+
+  // New towers
+  {
+    id: 'tower_bolt', name: 'Bolt Spire',
+    desc: 'Lightning arcs between nearby foes. Each jump deals 70% of the last.',
+    hp: 220, cost: [s('iron_bar', 4), s('copper_bar', 3), s('stone', 8)],
+    pop: 0, territory: 3, unique: false,
+    tower: { rangeTiles: 6, dmg: 12, cooldown: 1.0 },
+    towerRole: 'chain', chain: { jumps: 3, falloff: 0.7 },
+    upgradesTo: ['tower_storm', 'tower_arc'],
+    art: 'tower',
+  },
+  {
+    id: 'tower_venom', name: 'Venom Spire',
+    desc: 'Coats foes in poison — 20% of hit as damage per second for 3s.',
+    hp: 200, cost: [s('silver_bar', 2), s('iron_bar', 2), s('moonbell', 4)],
+    pop: 0, territory: 2, unique: false,
+    tower: { rangeTiles: 5.5, dmg: 8, cooldown: 0.7 },
+    towerRole: 'poison', poisonFx: { dpsFrac: 0.2, durSec: 3, maxStacks: 1 },
+    upgradesTo: ['tower_blight', 'tower_plague'],
+    art: 'tower',
+  },
+  {
+    id: 'tower_quake', name: 'Earthshaker',
+    desc: 'Each hit stuns the target for 0.8s. Slower but devastating.',
+    hp: 350, cost: [s('star_bar', 2), s('iron_bar', 5), s('stone', 15)],
+    pop: 0, territory: 5, unique: false,
+    tower: { rangeTiles: 5, dmg: 24, cooldown: 1.8 },
+    towerRole: 'stun', stunSec: 0.8,
+    art: 'tower',
+  },
+  // T3 bolt upgrades
+  {
+    id: 'tower_storm', name: 'Stormcaller Spire',
+    desc: 'Lightning jumps up to 5 times. Each jump deals 85% of the last.',
+    hp: 320, cost: [s('star_bar', 2), s('iron_bar', 5), s('copper_bar', 4)],
+    pop: 0, territory: 5, unique: false,
+    tower: { rangeTiles: 7, dmg: 18, cooldown: 0.9 },
+    towerRole: 'chain', chain: { jumps: 5, falloff: 0.85 },
+    art: 'tower',
+  },
+  {
+    id: 'tower_arc', name: 'Arc Lattice',
+    desc: 'Fast lightning that leaps between up to four foes.',
+    hp: 300, cost: [s('star_bar', 2), s('silver_bar', 3), s('copper_bar', 5)],
+    pop: 0, territory: 5, unique: false,
+    tower: { rangeTiles: 6, dmg: 14, cooldown: 0.75 },
+    towerRole: 'chain', chain: { jumps: 4, falloff: 0.7 },
+    art: 'tower',
+  },
+  // T3 venom upgrades
+  {
+    id: 'tower_blight', name: 'Blight Spire',
+    desc: 'Poison stacks up to 3 times. Each stack deals 25% of hit per second.',
+    hp: 310, cost: [s('star_bar', 2), s('silver_bar', 4), s('moonbell', 6)],
+    pop: 0, territory: 5, unique: false,
+    tower: { rangeTiles: 6, dmg: 10, cooldown: 0.55 },
+    towerRole: 'poison', poisonFx: { dpsFrac: 0.25, durSec: 3, maxStacks: 3 },
+    art: 'tower',
+  },
+  {
+    id: 'tower_plague', name: 'Plague Spire',
+    desc: 'Poisoned foes spread poison to nearby enemies on death.',
+    hp: 300, cost: [s('star_bar', 2), s('silver_bar', 4), s('stone', 12)],
+    pop: 0, territory: 5, unique: false,
+    tower: { rangeTiles: 6.5, dmg: 8, cooldown: 0.6 },
+    towerRole: 'poison', poisonFx: { dpsFrac: 0.2, durSec: 3, maxStacks: 1, spreadOnDeath: true },
+    art: 'tower',
   },
 ];

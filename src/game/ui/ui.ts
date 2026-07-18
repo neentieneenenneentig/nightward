@@ -706,7 +706,7 @@ export function styleNetworkMsg(msg: string): string {
 // build icons: reuse the tiny procgen building sprite as a data URL, cached
 const bCache = new Map<string, string>();
 import { makeBuilding } from '../../engine/procgen/sprites';
-function iconBuilding(art: 'hall' | 'hut' | 'wall' | 'tower'): string {
+function iconBuilding(art: 'hall' | 'hut' | 'wall' | 'tower' | 'campfire' | 'trap' | 'shrine'): string {
   let u = bCache.get(art);
   if (!u) { u = makeBuilding(art, 12345).toDataURL(); bCache.set(art, u); }
   return u;

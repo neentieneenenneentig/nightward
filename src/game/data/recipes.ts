@@ -62,4 +62,19 @@ export const RECIPES: Recipe[] = [
   R('ring_star',   'smithing', 32, 220, s('ring_star'), s('star_bar', 1)),
   R('amulet_star', 'smithing', 34, 240, s('amulet_star'), s('star_bar', 1), s('moonbell', 2)),
   R('charm_star',  'alchemy', 30, 280, s('charm_star'), s('star_bar', 1), s('berry', 5)),
+
+  // ---- X1: Elemental weapon recipes ----------------------------------------
+  R('sword_fire', 'smithing', 18, 140, s('sword_fire'), s('iron_bar', 1), s('charcoal', 3), s('charm_ember', 1)),
+  R('sword_frost', 'smithing', 18, 140, s('sword_frost'), s('iron_bar', 1), s('moonbell', 3), s('charm_moon', 1)),
+  R('sword_void', 'smithing', 22, 180, s('sword_void'), s('void_shard', 2), s('iron_bar', 2)),
+  R('sword_storm', 'smithing', 20, 160, s('sword_storm'), s('storm_crystal', 2), s('iron_bar', 1)),
+
+  // ---- X1: Trinket recipes -------------------------------------------------
+  R('ring_fire',  'smithing', 17, 130, s('ring_fire'), s('iron_bar', 1), s('charcoal', 2)),
+  R('ring_void',  'smithing', 21, 170, s('ring_void'), s('void_shard', 1), s('iron_bar', 1)),
+  R('amulet_ward', 'crafting', 16, 120, s('amulet_ward'), s('iron_bar', 1), s('sunleaf', 3), s('moonbell', 1)),
+  R('charm_gold', 'crafting', 14, 100, s('charm_gold'), s('copper_bar', 2), s('berry', 5)),
+  R('charm_xp', 'crafting', 14, 100, s('charm_xp'), s('stone', 4), s('moonbell', 2)),
+  R('charm_night', 'alchemy', 16, 130, s('charm_night'), s('moonbell', 3), s('void_shard', 1)),
+
 ];

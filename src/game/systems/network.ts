@@ -160,6 +160,7 @@ export class NetworkSystem {
   /** Called once per frame (render, not sim) — polls slow metrics on their interval. */
   update(nowMs: number) {
     this.pollConnection(nowMs);
+    this.pollSensors(nowMs);
     this.pollEndpoint(nowMs);
     this.computeJitter();
     this.snap.timeOfDay = this.realTimeOfDay();
@@ -339,6 +340,13 @@ export class NetworkSystem {
       warp: false,
       traceChain: [],
       endpointProbes: [],
+      // X1: new Lens fields (battery/heap refreshed by pollSensors)
+      batteryLevel: -1,
+      batteryCharging: false,
+      locale: navigator.language || 'en-US',
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      jsHeapUsedMB: (performance as any).memory?.usedJSHeapSize ? (performance as any).memory.usedJSHeapSize / 1e6 : 50,
+      jsHeapTotalMB: (performance as any).memory?.totalJSHeapSize ? (performance as any).memory.totalJSHeapSize / 1e6 : 100,
     };
   }
 
@@ -350,6 +358,29 @@ export class NetworkSystem {
   private realTimeOfDay(): number {
     const d = new Date();
     return (d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1000) / 86400;
+  }
+
+  /** X1: device sensors — battery (Chrome/Edge; no permission prompt) and JS
+   *  heap. The BatteryManager is fetched once and cached; reads are sync. */
+  private battery: any = null;
+  private batteryRequested = false;
+  private lastSensorMs = 0;
+  private pollSensors(nowMs: number) {
+    if (nowMs - this.lastSensorMs < 10000) return;
+    this.lastSensorMs = nowMs;
+    if (!this.batteryRequested) {
+      this.batteryRequested = true;
+      (navigator as any).getBattery?.()?.then((b: any) => { this.battery = b; }).catch(() => {});
+    }
+    if (this.battery) {
+      this.snap.batteryLevel = this.battery.level ?? -1;
+      this.snap.batteryCharging = !!this.battery.charging;
+    }
+    const mem = (performance as any).memory;
+    if (mem?.usedJSHeapSize) {
+      this.snap.jsHeapUsedMB = mem.usedJSHeapSize / 1e6;
+      this.snap.jsHeapTotalMB = (mem.totalJSHeapSize ?? mem.usedJSHeapSize) / 1e6;
+    }
   }
 
   private pollConnection(nowMs: number) {

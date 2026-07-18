@@ -5,8 +5,9 @@ import { ITEMS } from '../data/items';
 import { SKILLS } from '../data/skills';
 import type { FeatureDef } from '../data/features';
 import { acquireGear, addXp, awardSoulXp, bestTool, invAdd, rollLoot, skillLevel, soulStat } from '../rules';
+import { BUILDINGS } from '../data/buildings';
 import type { SoulSlot } from '../data/soulgear';
-import { TILE } from '../world/worldgen';
+import { TILE, type MegaCluster } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
 
 // a couple of alternates per skill so gathering doesn't sound identical every hit
@@ -28,7 +29,7 @@ const toolSlotFor = (cls: 'axe' | 'pick'): SoulSlot => (cls === 'axe' ? 'tool_ax
 
 export class GatherSystem {
   target: GatherTarget | null = null;
-  active: (GatherTarget & { progress: number; need: number }) | null = null;
+  active: (GatherTarget & { progress: number; need: number; megaScale: number; mega?: MegaCluster }) | null = null;
 
   constructor(private ctx: any) {}
 
@@ -92,7 +93,12 @@ export class GatherSystem {
     // M3.6: Passive bandwidth snapshot — no HTTP request, just reads navigator.connection
     this.ctx.net?.samplePassive?.('gather');
 
-    this.active = { ...t, progress: 0, need: t.def.gatherSec / speed };
+    // Mega-cluster harvest: time grows with the side (a 3×3 tree takes 3× as
+    // long), loot rolls with the AREA (9 rolls) — big nodes are jackpots.
+    const mega = this.ctx.world.megaClusterAt(t.tx, t.ty);
+    const megaScale = mega ? mega.size * mega.size : 1;
+
+    this.active = { ...t, progress: 0, need: t.def.gatherSec * (mega ? mega.size : 1) / speed, megaScale, mega: mega ?? undefined };
   }
 
   update(dt: number, moved: boolean) {
@@ -110,9 +116,14 @@ export class GatherSystem {
     }
   }
 
-  private finish(a: GatherTarget) {
+  private finish(a: GatherTarget & { megaScale: number; mega?: MegaCluster }) {
     const { state, world, chunks, toast } = this.ctx;
     const drops = rollLoot(a.def.loot);
+
+    // mega-cluster — one loot roll per tile of the square
+    for (let i = 1; i < a.megaScale; i++) {
+      for (const d of rollLoot(a.def.loot)) drops.push(d);
+    }
 
     // C3: Loom double yield chance
     const loomMods = this.ctx.loom?.ensureMods?.();
@@ -121,7 +132,23 @@ export class GatherSystem {
       const extra = rollLoot(a.def.loot);
       for (const d of extra) { drops.push(d); }
     }
-    for (const d of drops) { invAdd(state, d.id, d.n); acquireGear(state, d.id); }
+
+    // X1: Granary — foraged food yields more while one stands
+    if (a.def.skill === 'foraging') {
+      const gDef = BUILDINGS.find((b) => b.id === 'granary');
+      if (gDef?.granary && state.buildings.some((b: any) => b.type === 'granary')) {
+        for (const d of drops) d.n = Math.max(1, Math.round(d.n * gDef.granary.foodYieldMul));
+      }
+    }
+    // X1: 'Battery Scarcity' Lens mapping — a starving vessel gathers thinner
+    const yieldMul = this.ctx.net?.getGameValue?.('resourceYield') ?? 1;
+    if (yieldMul < 1) {
+      for (const d of drops) {
+        const scaled = d.n * yieldMul;
+        d.n = Math.max(0, Math.floor(scaled) + (Math.random() < scaled % 1 ? 1 : 0));
+      }
+    }
+    for (const d of drops) { if (d.n > 0) { invAdd(state, d.id, d.n); acquireGear(state, d.id); } }
     const newLevel = addXp(state, a.def.skill, a.def.xp);
 
     if (a.def.toolClass) {
@@ -136,13 +163,24 @@ export class GatherSystem {
     world.deplete(a.tx, a.ty, a.def.respawnSec);
     chunks.rebakeTile(a.tx, a.ty);
 
+    // mega-cluster — the whole square falls at once
+    if (a.mega) {
+      world.depleteMega(a.mega, a.def.respawnSec);
+      for (let dy = 0; dy < a.mega.size; dy++) {
+        for (let dx = 0; dx < a.mega.size; dx++) {
+          chunks.rebakeTile(a.mega.rootTx + dx, a.mega.rootTy + dy);
+        }
+      }
+      toast(`The great ${a.def.name.toLowerCase()} falls!`, 'good');
+    }
+
     // S1: gathering feeds vigor and marks non-idle action
     this.ctx.vitals?.markAction?.();
     this.ctx.vitals?.onGather?.();
 
     // G1: particle poof at gather location
     const px = (a.tx + 0.5) * TILE, py = (a.ty + 0.5) * TILE;
-    this.ctx.particles?.spawn?.('poof', px, py, 8);
+    this.ctx.particles?.spawn?.('poof', px, py, a.megaScale > 1 ? 20 : 8);
 
     Sound.play(pickSfx(GATHER_SFX[a.def.skill] ?? ['forage']));
     const got = drops.map((d) => `+${d.n} ${ITEMS[d.id].name}`).join('  ');

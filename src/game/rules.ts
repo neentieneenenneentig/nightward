@@ -2,6 +2,7 @@
 // lookups. No rendering, no DOM — everything here is unit-testable.
 import { CFG } from './data/config';
 import { ITEMS } from './data/items';
+import { activeEffects } from './systems/effects';
 import { SOULGEAR, baseStatFor, type SoulSlot } from './data/soulgear';
 import type { GameState } from './state';
 import type { LootTable, Stack } from './types';
@@ -64,7 +65,9 @@ export function addXp(state: GameState, skill: string, amount: number): number {
   const before = skillLevel(state, skill);
   // N2a: xp rate modifier from distinct regions probed — read from mapping (live-tweakable)
   const net = (window as any).NW?.NET;
-  const xpMul = net?.getGameValue?.('xpRate') ?? 1.0;
+  let xpMul = net?.getGameValue?.('xpRate') ?? 1.0;
+  // X1: Sage's Charm — all skill xp flows 20% richer
+  if (activeEffects(state).has('xp_boost')) xpMul *= 1.2;
   state.player.xp[skill] = (state.player.xp[skill] ?? 0) + Math.round(amount * xpMul);
   const after = skillLevel(state, skill);
   return after > before ? after : 0;

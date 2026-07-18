@@ -9,6 +9,7 @@ import { ENEMIES, type EnemyDef } from '../data/enemies';
 import { ITEMS } from '../data/items';
 import { SKILLS } from '../data/skills';
 import { acquireGear, addXp, awardSoulXp, hall, invAdd, rollLoot, territoryScore } from '../rules';
+import { activeEffects } from './effects';
 import type { Building } from '../state';
 import { TILE } from '../world/worldgen';
 import { BUILDINGS } from '../data/buildings';
@@ -24,6 +25,7 @@ export interface Foe {
   px: number; py: number;
   hp: number; maxHp: number;
   dmg: number;
+  baseDmg: number;    // dmg with all birth scaling (night/net/echo) — buffs restore to THIS, never def.dmg
   atkT: number;
   telegraphT: number; // >0 while committed to a telegraphed hit landing
   animT: number;
@@ -31,8 +33,20 @@ export interface Foe {
   homeX?: number; homeY?: number; // wander anchor (day mobs only)
 }
 
+/** X1: a ranged foe's shot in flight — advanced by the SIM tick (never
+ * wall-clock timers: the game may be paused, sped, or slowed). */
+interface Projectile {
+  x: number; y: number;
+  tx: number; ty: number; // aimed point (where the target was at fire time)
+  speed: number; dmg: number;
+  life: number;           // seconds of flight left
+  ang: number;
+  sparkT: number;         // visual: particle-trail accumulator
+}
+
 export class HordeSystem {
   foes: Foe[] = [];
+  private projectiles: Projectile[] = [];
   private toSpawn = 0;
   private spawnT = 0;
   private daySpawnT = 0;
@@ -87,7 +101,35 @@ export class HordeSystem {
         }
       }
     }
+    this.updateTraps(dt);
     for (const f of [...this.foes]) this.updateFoe(f, dt);
+    // X1: projectiles fly on the sim clock. They hit the player on contact, or
+    // land at their aimed point when flight time runs out (splash vs whatever
+    // stands there — player nearby, else a building on the tile).
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const p = this.projectiles[i];
+      const pNow = this.ctx.state.player;
+      p.life -= dt;
+      p.x += Math.cos(p.ang) * p.speed * dt;
+      p.y += Math.sin(p.ang) * p.speed * dt;
+      // faint spark trail so the shot is readable and dodgeable
+      p.sparkT -= dt;
+      if (p.sparkT <= 0) { p.sparkT = 0.06; this.ctx.particles?.spawn?.('spark', p.x, p.y, 1); }
+
+      if (Math.hypot(pNow.x - p.x, pNow.y - p.y) < 18) {
+        this.ctx.damagePlayer(p.dmg, 'a hurled bolt');
+        this.projectiles.splice(i, 1);
+      } else if (p.life <= 0) {
+        if (Math.hypot(pNow.x - p.tx, pNow.y - p.ty) < TILE * 1.2) {
+          this.ctx.damagePlayer(p.dmg, 'a hurled bolt');
+        } else {
+          const bt = this.ctx.world.buildingAt(Math.floor(p.tx / TILE), Math.floor(p.ty / TILE));
+          if (bt) this.damageBuilding(bt, p.dmg);
+        }
+        this.ctx.particles?.spawn?.('hit', p.tx, p.ty, 4);
+        this.projectiles.splice(i, 1);
+      }
+    }
   }
 
   private spawn() {
@@ -126,7 +168,9 @@ export class HordeSystem {
     const hpMul = Math.pow(CFG.horde.hpGrowth, n - 1);
     const dmgMul = Math.pow(CFG.horde.dmgGrowth, n - 1);
     // N1: network enemy scaling (worse connection = tougher enemies)
-    const netScale = this.ctx.net?.getGameValue?.('enemyScale') ?? 1.0;
+    // X1: 'Veil Pressure' — JS heap weight leans on foe hp too
+    const netScale = (this.ctx.net?.getGameValue?.('enemyScale') ?? 1.0)
+      * (this.ctx.net?.getGameValue?.('veilPressure') ?? 1.0);
 
     // N2a: echo-derived stats for night-wave mobs (C2)
     const echo = this.ctx.net?.lastEcho;
@@ -158,12 +202,13 @@ export class HordeSystem {
       epithetName = [prefix, def.name, suffix].filter(Boolean).join(' ');
     }
 
+    const scaledDmg = Math.round(def.dmg * dmgMul * netScale * echoDmgMul);
     const foe: any = {
       uid: state.nextUid++, def,
       x, y, px: x, py: y,
       hp: Math.round(def.hp * hpMul * netScale * echoHpMul),
       maxHp: Math.round(def.hp * hpMul * netScale * echoHpMul),
-      dmg: Math.round(def.dmg * dmgMul * netScale * echoDmgMul),
+      dmg: scaledDmg, baseDmg: scaledDmg,
       atkT: 0, telegraphT: 0, animT: Math.random(),
     };
     // N2a: attach echo-derived fields
@@ -176,6 +221,24 @@ export class HordeSystem {
     this.foes.push(foe);
     views.addFoe(foe);
     this.toSpawn--;
+    // X1: swarm enemies spawn in packs — extra copies in a cluster
+    if (def.behavior?.kind === 'swarm' && (def.behavior.swarmSize ?? 1) > 1) {
+      const extra = (def.behavior.swarmSize ?? 2) - 1;
+      for (let s = 0; s < extra && this.foes.length < CFG.horde.maxAlive; s++) {
+        const sx = x + (Math.random() - 0.5) * TILE * 2;
+        const sy = y + (Math.random() - 0.5) * TILE * 2;
+        if (!world.canStand(sx, sy, 5)) continue;
+        const swarmFoe: any = {
+          uid: state.nextUid++, def,
+          x: sx, y: sy, px: sx, py: sy,
+          hp: foe.maxHp, maxHp: foe.maxHp,
+          dmg: foe.baseDmg, baseDmg: foe.baseDmg, atkT: 0, telegraphT: 0, animT: Math.random() + s * 0.3,
+          echoSoak: 0, echoMoveMul: 1, specialSkill: null, epithetName: def.name, hitCount: 0, blinked: false,
+        };
+        this.foes.push(swarmFoe);
+        views.addFoe(swarmFoe);
+      }
+    }
     // N2a: Chronicle gets fiction voice, Lens feed gets technical
     if (echoFresh) {
       this.ctx.log?.push('spawn', `A ${epithetName} joins the night wave (${foe.hp} hp)`, state.clock);
@@ -207,11 +270,12 @@ export class HordeSystem {
 
     // N1: network enemy scaling applied to day mobs too
     const netScale = this.ctx.net?.getGameValue?.('enemyScale') ?? 1.0;
+    const dayDmg = Math.round(def.dmg * netScale);
     const foe: Foe = {
       uid: state.nextUid++, def,
       x, y, px: x, py: y,
       hp: Math.round(def.hp * netScale), maxHp: Math.round(def.hp * netScale),
-      dmg: Math.round(def.dmg * netScale),
+      dmg: dayDmg, baseDmg: dayDmg,
       atkT: 0, telegraphT: 0, animT: Math.random(),
       dayMob: true, homeX: x, homeY: y,
     };
@@ -226,6 +290,18 @@ export class HordeSystem {
     f.px = f.x; f.py = f.y;
     f.atkT -= dt;
     f.animT += dt;
+
+    // X1: poison DoT (Venom/Blight/Plague spires) — whole points, accumulated
+    const efp = f as any;
+    if (efp._poisonUntil > state.clock && efp._poisonDps > 0) {
+      efp._poisonAcc = (efp._poisonAcc ?? 0) + efp._poisonDps * dt;
+      const whole = Math.floor(efp._poisonAcc);
+      if (whole > 0) {
+        efp._poisonAcc -= whole;
+        this.hurt(f, whole, false); // tower rule: no xp/vitals
+        if (f.hp <= 0) return;
+      }
+    }
 
     const p = state.player;
 
@@ -248,6 +324,7 @@ export class HordeSystem {
       return;
     }
 
+    const beh = f.def.behavior;
     const h = hall(state);
     const dp = Math.hypot(p.x - f.x, (p.y - 10) - f.y);
     // day mobs are prey, not siege: aggro the player up close, otherwise wander home
@@ -260,8 +337,76 @@ export class HordeSystem {
     } else { tx = (h!.tx + 0.5) * TILE; ty = (h!.ty + 0.9) * TILE; }
     const dist = Math.hypot(tx - f.x, ty - f.y) || 1;
 
-    // in reach of the player → wind up a telegraphed bite (see block above)
-    if (targetPlayer && dp < 24) {
+    // ---- X1: Behavior-driven AI -------------------------------------------
+
+    // RANGED: fire projectiles from preferred range, kite away if too close
+    if (beh?.kind === 'ranged' && targetPlayer) {
+      const prefPx = (beh.preferredRangeTiles ?? 4) * TILE;
+      const projSpeed = beh.projectileSpeed ?? 180;
+      if (dp < prefPx * 1.1 && f.atkT <= 0 && this.hasLineOfSight(f.x, f.y, tx, ty)) {
+        f.atkT = f.def.atkCooldown;
+        // fire a projectile toward the player
+        this.spawnProjectile(f.x, f.y, tx, ty, projSpeed, f.dmg);
+        this.ctx.log?.push('combat', `${f.def.name} fires at you`, state.clock);
+      }
+      // kite: move away if too close
+      if (dp < prefPx * 0.6) {
+        const away = Math.atan2(f.y - ty, f.x - tx);
+        tx = f.x + Math.cos(away) * TILE * 5;
+        ty = f.y + Math.sin(away) * TILE * 5;
+      }
+    }
+
+    // SIEGE: target buildings preferentially, bonus structure damage
+    if (beh?.kind === 'siege') {
+      const nearestWall = this.nearestWallInRange(f.x, f.y, TILE * 8);
+      if (nearestWall) {
+        tx = (nearestWall.tx + 0.5) * TILE; ty = (nearestWall.ty + 0.5) * TILE;
+        const wdist = Math.hypot(tx - f.x, ty - f.y);
+        if (wdist < 48 && f.atkT <= 0) {
+          f.atkT = f.def.atkCooldown;
+          this.damageBuilding(nearestWall, Math.round(f.dmg * (beh.structureDmgMul ?? 2)), f);
+          return;
+        }
+      }
+    }
+
+    // EXPLODER: detonate on reaching melee range (suicide — no loot)
+    if (beh?.kind === 'exploder' && targetPlayer && dp < 36 && f.atkT <= 0) {
+      this.detonateFoe(f, beh.explodeRadiusTiles ?? 2, beh.explodeDmg ?? f.dmg * 2, true);
+      return;
+    }
+
+    // BUFFER / HEALER / SUMMONER: stay behind the front line
+    if (beh && (beh.kind === 'buffer' || beh.kind === 'healer' || beh.kind === 'summoner')) {
+      // Keep distance from player — hover behind other foes
+      const keepDist = TILE * 5;
+      if (dp < keepDist) {
+        const away = Math.atan2(f.y - ty, f.x - tx);
+        tx = f.x + Math.cos(away) * TILE * 3;
+        ty = f.y + Math.sin(away) * TILE * 3;
+      }
+      // BUFFER: pulse buff aura to nearby allies
+      if (beh.kind === 'buffer' && f.atkT <= 0) {
+        f.atkT = f.def.atkCooldown;
+        this.pulseBuff(f, beh.buffRadiusTiles ?? 4, beh.buffDmgMul ?? 1.3, beh.buffSpeedMul ?? 1.15);
+      }
+      // HEALER: pulse heal to nearby damaged allies
+      if (beh.kind === 'healer' && f.atkT <= 0) {
+        f.atkT = beh.healCooldownSec ?? 4;
+        this.pulseHeal(f, beh.healRadiusTiles ?? 5, beh.healAmount ?? 10);
+      }
+      // SUMMONER: periodically spawn minions
+      if (beh.kind === 'summoner' && f.atkT <= 0) {
+        f.atkT = beh.summonCooldownSec ?? 12;
+        this.summonMinions(f, beh.summonId ?? 'gnawer', beh.summonCount ?? 2, beh.summonMax ?? 6);
+      }
+    }
+
+    // in reach of the player → wind up a telegraphed bite (see block above).
+    // Only ranged foes (they kite instead) and exploders (contact = detonate)
+    // skip this — everything else cornered by the player still fights back.
+    if (targetPlayer && dp < 24 && beh?.kind !== 'ranged' && beh?.kind !== 'exploder') {
       if (f.atkT <= 0) {
         f.atkT = f.def.atkCooldown;
         f.telegraphT = f.def.telegraphSec;
@@ -274,7 +419,7 @@ export class HordeSystem {
     if (!targetPlayer && !f.dayMob && dist < 42) {
       if (f.atkT <= 0) {
         f.atkT = f.def.atkCooldown;
-        this.damageBuilding(h!, f.dmg);
+        this.damageBuilding(h!, f.dmg * (beh?.structureDmgMul ?? 1), f);
       }
       return;
     }
@@ -290,7 +435,20 @@ export class HordeSystem {
     const chill = ef2.chillUntil > state.clock ? (ef2.chillMult ?? 1) : 1;
     // C5: tower slow debuff (Frostspire etc.) — 40% speed reduction
     const towerSlow = ef2._slowedUntil > state.clock ? 0.6 : 1;
-    const step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain * fear * chill * towerSlow;
+    // X1: buff aura — allies near a buffer get +speed and +dmg. Restore to
+    // baseDmg on expiry, NOT def.dmg — def.dmg would silently wipe the
+    // night/network/echo birth scaling off every foe.
+    const buffActive = ef2._buffUntil > state.clock;
+    const buffSpeedMul = buffActive ? (ef2._buffSpeedMul ?? 1) : 1;
+    const baseD = f.baseDmg ?? f.def.dmg;
+    f.dmg = buffActive ? Math.round(baseD * (ef2._buffDmgMul ?? 1)) : baseD;
+    // C5/X1: stunned foes (Earthshaker) stand frozen
+    const stunned = ef2._stunnedUntil > state.clock;
+    // X1: tar pits bog foes down
+    const tarSlow = ef2._tarUntil > state.clock ? (ef2._tarMul ?? 0.3) : 1;
+    let step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain * fear * chill * towerSlow * tarSlow;
+    step *= buffSpeedMul;
+    if (stunned) step = 0;
     let blocked: Building | null = null;
     const nx = f.x + ux * step, ny = f.y + uy * step;
     if (world.canStand(nx, f.y, 5)) f.x = nx;
@@ -302,7 +460,7 @@ export class HordeSystem {
       // something the racket built is in the way — eat it
       if (f.atkT <= 0) {
         f.atkT = f.def.atkCooldown;
-        this.damageBuilding(blocked, f.dmg);
+        this.damageBuilding(blocked, f.dmg, f);
       }
     } else if (f.x === f.px && f.y === f.py) {
       // stuck on terrain — sidestep randomly to slip around trees/rocks
@@ -318,9 +476,14 @@ export class HordeSystem {
     return this.ctx.world.buildingAt(tx, ty);
   }
 
-  private damageBuilding(b: Building, dmg: number) {
+  private damageBuilding(b: Building, dmg: number, attacker?: Foe) {
     const { state, world, views, toast } = this.ctx;
     b.hp -= Math.round(dmg * (CFG.horde.foeDmgToBuildings ?? 1));
+    // X1: spiked buildings (Iron Bulwark) bleed their attacker
+    const bdef = BUILDINGS.find((d) => d.id === b.type);
+    if (attacker && bdef?.thorns && attacker.hp > 0) {
+      this.hurt(attacker, bdef.thorns, false);
+    }
     if (b.hp > 0) return;
     const def = BUILDINGS.find((d) => d.id === b.type)!;
     const wasAnchor = b.type === 'hall' || b.type === 'waystone';
@@ -345,6 +508,167 @@ export class HordeSystem {
       }
     }
   }
+
+  /** X1: traps fire on foes in radius. Spike/Flame deal damage on a cooldown
+   *  (tower rule: no xp/vitals from trap kills); Tar stamps a slow debuff. */
+  private updateTraps(dt: number) {
+    const { state } = this.ctx;
+    if (!this.foes.length) return;
+    for (const b of state.buildings) {
+      const def = BUILDINGS.find((d) => d.id === b.type);
+      if (!def?.trap) continue;
+      const eb = b as any;
+      eb._trapT = (eb._trapT ?? 0) - dt;
+      if (eb._trapT > 0) continue;
+      const bx = (b.tx + 0.5) * TILE, by = (b.ty + 0.5) * TILE;
+      const r = def.trap.radiusTiles * TILE + 8;
+      let fired = false;
+      for (const f of [...this.foes]) {
+        if (Math.hypot(f.x - bx, f.y - by) > r) continue;
+        fired = true;
+        if (def.trap.slowMul != null) {
+          const ef = f as any;
+          ef._tarUntil = state.clock + 2.0;
+          ef._tarMul = def.trap.slowMul;
+        }
+        if (def.trap.damage > 0) this.hurt(f, def.trap.damage, false);
+      }
+      if (fired) {
+        eb._trapT = def.trap.cooldownSec;
+        if (def.trap.damage > 0) {
+          this.ctx.particles?.spawn?.('hit', bx, by, 6);
+          Sound.play('hit');
+          this.ctx.log?.push('combat', `${def.name} springs!`, state.clock);
+        }
+        // Flame Vent lights the real fire CA
+        if (b.type === 'trap_flame') this.ctx.worldCore?.ignite?.(b.tx, b.ty);
+      }
+    }
+  }
+
+  // ---- X1: Behavior helpers ------------------------------------------------
+
+  /** Simple Bresenham-ish line-of-sight check — no opaque tiles between a and b. */
+  private hasLineOfSight(ax: number, ay: number, bx: number, by: number): boolean {
+    const steps = Math.ceil(Math.hypot(bx - ax, by - ay) / (TILE / 2));
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const tx = Math.floor((ax + (bx - ax) * t) / TILE);
+      const ty = Math.floor((ay + (by - ay) * t) / TILE);
+      if (!this.ctx.world.canStand(tx * TILE + TILE / 2, ty * TILE + TILE / 2, 5)) return false;
+    }
+    return true;
+  }
+
+  /** Fire a projectile from (fx,fy) toward (tx,ty). Resolved by update(). */
+  private spawnProjectile(fx: number, fy: number, tx: number, ty: number, speed: number, dmg: number) {
+    const ang = Math.atan2(ty - fy, tx - fx);
+    const dist = Math.hypot(tx - fx, ty - fy);
+    this.projectiles.push({ x: fx, y: fy, tx, ty, speed, dmg, life: dist / speed, ang, sparkT: 0 });
+  }
+
+  /** Exploder detonates — AoE damage to player and nearby buildings.
+   *  `remove` only when the foe suicides (contact detonation); a KILLED
+   *  exploder detonates too but continues through hurt()'s normal death path
+   *  so it still pays out loot/xp/gold like any other kill. */
+  private detonateFoe(f: Foe, radiusTiles: number, dmg: number, remove: boolean) {
+    const { state } = this.ctx;
+    const radiusPx = radiusTiles * TILE;
+    if (Math.hypot(state.player.x - f.x, state.player.y - f.y) < radiusPx) {
+      this.ctx.damagePlayer(dmg, `${f.def.name} explosion`);
+    }
+    for (const b of [...state.buildings]) {
+      const bx = (b.tx + 0.5) * TILE, by = (b.ty + 0.5) * TILE;
+      if (Math.hypot(bx - f.x, by - f.y) < radiusPx) {
+        this.damageBuilding(b, Math.round(dmg * 0.6));
+      }
+    }
+    if (remove) {
+      this.foes = this.foes.filter((x) => x.uid !== f.uid);
+      this.ctx.views.removeFoe(f.uid);
+    }
+    this.ctx.particles?.spawn?.('death', f.x, f.y, 16);
+    Sound.play('hit');
+    this.ctx.log?.push('combat', `${f.def.name} detonates!`, state.clock);
+  }
+
+  /** Buffer pulses a buff aura — nearby allies get +dmg and +speed for a duration. */
+  private pulseBuff(f: Foe, radiusTiles: number, dmgMul: number, speedMul: number) {
+    const radiusPx = radiusTiles * TILE;
+    const dur = 5; // seconds
+    for (const ally of this.foes) {
+      if (ally.uid === f.uid) continue;
+      if (Math.hypot(ally.x - f.x, ally.y - f.y) > radiusPx) continue;
+      const ea = ally as any;
+      ea._buffUntil = this.ctx.state.clock + dur;
+      ea._buffDmgMul = dmgMul;
+      ea._buffSpeedMul = speedMul;
+    }
+    this.ctx.particles?.spawn?.('spark', f.x, f.y, 6);
+  }
+
+  /** Healer pulses — nearby damaged allies regain HP. */
+  private pulseHeal(f: Foe, radiusTiles: number, amount: number) {
+    const radiusPx = radiusTiles * TILE;
+    let healed = 0;
+    for (const ally of this.foes) {
+      if (ally.uid === f.uid) continue;
+      if (ally.hp >= ally.maxHp) continue;
+      if (Math.hypot(ally.x - f.x, ally.y - f.y) > radiusPx) continue;
+      const before = ally.hp;
+      ally.hp = Math.min(ally.maxHp, ally.hp + amount);
+      healed += ally.hp - before;
+    }
+    if (healed > 0) {
+      this.ctx.particles?.spawn?.('spark', f.x, f.y, 4);
+    }
+  }
+
+  /** Summoner spawns minions nearby. */
+  private summonMinions(f: Foe, summonId: string, count: number, maxAlive: number) {
+    const { state, world, views } = this.ctx;
+    // Count existing summons by this summoner
+    const existingSpawns = this.foes.filter((x) => (x as any)._summonedBy === f.uid).length;
+    if (existingSpawns >= maxAlive) return;
+    const toSpawn = Math.min(count, maxAlive - existingSpawns);
+    const def = ENEMIES.find((e) => e.id === summonId);
+    if (!def) return;
+    for (let i = 0; i < toSpawn; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = TILE * (1.5 + Math.random());
+      const sx = f.x + Math.cos(ang) * dist;
+      const sy = f.y + Math.sin(ang) * dist;
+      if (!world.canStand(sx, sy, 5)) continue;
+      // minions inherit the summoner's birth scaling (night/net/echo),
+      // read off its hp ratio — a night-20 broodmother births night-20 gnawers
+      const parentMul = f.def.hp > 0 ? f.maxHp / f.def.hp : 1;
+      const mini: any = {
+        uid: state.nextUid++, def,
+        x: sx, y: sy, px: sx, py: sy,
+        hp: Math.round(def.hp * parentMul), maxHp: Math.round(def.hp * parentMul),
+        dmg: Math.round(def.dmg * parentMul), baseDmg: Math.round(def.dmg * parentMul),
+        atkT: 0, telegraphT: 0, animT: Math.random(),
+        _summonedBy: f.uid,
+      };
+      this.foes.push(mini);
+      views.addFoe(mini);
+    }
+    this.ctx.particles?.spawn?.('spark', f.x, f.y, 5);
+  }
+
+  /** Find the nearest wall or building within range (for siege enemies). */
+  private nearestWallInRange(fx: number, fy: number, rangePx: number): Building | null {
+    let best: Building | null = null;
+    let bestDist = rangePx;
+    for (const b of this.ctx.state.buildings) {
+      const bx = (b.tx + 0.5) * TILE, by = (b.ty + 0.5) * TILE;
+      const d = Math.hypot(bx - fx, by - fy);
+      if (d < bestDist) { bestDist = d; best = b; }
+    }
+    return best;
+  }
+
+  // ---- End X1 behavior helpers ---------------------------------------------
 
   /** Distance (px) to the nearest campfire, or Infinity if none stand. Used for the spawn-avoid
    * radius and the march-speed hesitation penalty — no pathfinding, just proximity. */
@@ -405,10 +729,27 @@ export class HordeSystem {
     }
     f.hp -= dmg;
     if (f.hp > 0) return;
+    // X1: exploders blow up when killed too — AoE first, then the NORMAL death
+    // path below still runs, so the kill pays out loot/xp/gold like any other
+    if (f.def.behavior?.kind === 'exploder' && f.def.behavior.explodeOnDeath) {
+      this.detonateFoe(f, f.def.behavior.explodeRadiusTiles ?? 2, f.def.behavior.explodeDmg ?? f.def.dmg * 2, false);
+    }
+    // X1: Plague Spire — a poisoned foe's death passes the rot to its packmates
+    if (ef._poisonSpread && ef._poisonUntil > this.ctx.state.clock) {
+      for (const g of this.foes) {
+        if (g.uid === f.uid || Math.hypot(g.x - f.x, g.y - f.y) > 2 * TILE) continue;
+        const eg = g as any;
+        eg._poisonDps = ef._poisonDps;
+        eg._poisonUntil = this.ctx.state.clock + 3;
+        // no _poisonSpread on the secondary — one hop, not a chain reaction
+      }
+    }
     const { state, views, toast } = this.ctx;
     this.foes = this.foes.filter((x) => x.uid !== f.uid);
     views.removeFoe(f.uid);
     Sound.play('enemyDie');
+    // X2: death whistle — soul-escape overlay, ~30% chance for variety
+    if (Math.random() < 0.3) Sound.play('deathWhistle');
 
     // S1: only player-swing & echo kills feed vitals — tower kills do NOT
     if (feedVitals) {
@@ -418,7 +759,10 @@ export class HordeSystem {
     this.ctx.scoreboard?.onKill?.(!!f.def.boss);
 
     const [gMin, gMax] = f.def.gold;
-    state.player.gold += gMin + Math.floor(Math.random() * (gMax - gMin + 1));
+    let goldWon = gMin + Math.floor(Math.random() * (gMax - gMin + 1));
+    // X1: Miser's Charm — player kills pay out more gold
+    if (awardXp && activeEffects(state).has('gold_find')) goldWon = Math.round(goldWon * 1.25);
+    state.player.gold += goldWon;
     for (const d of rollLoot(f.def.loot)) {
       invAdd(state, d.id, d.n);
       acquireGear(state, d.id);

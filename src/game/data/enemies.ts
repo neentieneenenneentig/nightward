@@ -3,6 +3,35 @@
 import { type RGB, ramp } from '../../engine/procgen/palette';
 import type { LootTable } from '../types';
 
+/** X1: Enemy behavior — data-driven AI, no engine changes per enemy. */
+export interface EnemyBehavior {
+  kind: 'charge' | 'ranged' | 'siege' | 'exploder' | 'buffer' | 'healer' | 'summoner' | 'swarm';
+  // ranged / siege
+  projectileSpeed?: number;       // px/s (default 180)
+  preferredRangeTiles?: number;   // tries to keep this distance (default 4)
+  // siege — targets buildings over player
+  structureDmgMul?: number;       // × damage vs buildings (default 2)
+  // exploder — detonates on death or reaching melee range
+  explodeRadiusTiles?: number;
+  explodeDmg?: number;            // dealt to all in radius (player + buildings)
+  explodeOnDeath?: boolean;       // also explode when killed
+  // buffer — aura that buffs nearby allies
+  buffRadiusTiles?: number;
+  buffDmgMul?: number;            // × ally damage
+  buffSpeedMul?: number;          // × ally speed
+  // healer — pulses heal to nearby damaged allies
+  healRadiusTiles?: number;
+  healAmount?: number;
+  healCooldownSec?: number;
+  // summoner — periodically spawns minor minions
+  summonId?: string;              // enemy id to spawn
+  summonCount?: number;           // per burst
+  summonCooldownSec?: number;
+  summonMax?: number;             // max alive at once
+  // swarm — tiny, ignores collision with each other, clumps together
+  swarmSize?: number;             // extra spawns per wave slot
+}
+
 export interface EnemyDef {
   id: string;
   name: string;
@@ -18,6 +47,8 @@ export interface EnemyDef {
   weight: number;
   boss?: boolean;      // world bosses: never spawn in the ordinary horde
   daytime?: boolean;   // also roams by day around the player (prey, not siege)
+  /** X1: Data-driven behavior — if absent, defaults to 'charge'. */
+  behavior?: EnemyBehavior;
   art: { size: number; body: RGB[]; eye: RGB };
 }
 
@@ -67,6 +98,132 @@ export const ENEMIES: EnemyDef[] = [
     loot: [{ id: 'iron_bar', min: 1, max: 2, chance: 0.3 }, { id: 'silver_ore', min: 1, max: 3, chance: 0.3 }],
     fromNight: 8, weight: 2.5,
     art: { size: 26, body: ramp('#2a1020', '#4a2040', '#7a3060'), eye: ramp('#ff88cc')[0] },
+  },
+
+  // ---- X1: Bestiary expansion — tiered families with behaviors ------------
+
+  // Gnawer line (T2/T3)
+  {
+    id: 'gnawer_packleader', name: 'Gnawer Pack-Leader',
+    hp: 45, speed: 68, dmg: 9, atkCooldown: 0.85, telegraphSec: 0.3, xp: 34, gold: [4, 9],
+    loot: [{ id: 'berry', min: 2, max: 4, chance: 0.35 }, { id: 'sunleaf', min: 1, max: 2, chance: 0.2 }],
+    fromNight: 7, weight: 3, daytime: true,
+    behavior: { kind: 'buffer', buffRadiusTiles: 3.5, buffDmgMul: 1.25, buffSpeedMul: 1.15 },
+    art: { size: 20, body: ramp('#3a2030', '#6c3e52', '#9c5f72'), eye: ramp('#ffd9b0')[0] },
+  },
+  {
+    id: 'gnawer_broodmother', name: 'Gnawer Broodmother',
+    hp: 130, speed: 30, dmg: 7, atkCooldown: 1.6, telegraphSec: 0.5, xp: 85, gold: [14, 26],
+    loot: [{ id: 'berry', min: 3, max: 6, chance: 0.6 }, { id: 'charm_ember', min: 1, max: 1, chance: 0.1 }, { id: 'silver_ore', min: 1, max: 2, chance: 0.25 }, { id: 'void_shard', min: 1, max: 1, chance: 0.25 }],
+    fromNight: 14, weight: 2,
+    behavior: { kind: 'summoner', summonId: 'gnawer', summonCount: 3, summonCooldownSec: 12, summonMax: 9 },
+    art: { size: 30, body: ramp('#3a1020', '#7a2e4a', '#b04a6a'), eye: ramp('#ffb0b0')[0] },
+  },
+
+  // Brute line (T2: exploder, T3: buffer warlord)
+  {
+    id: 'brute_mauler', name: 'Brute Mauler',
+    hp: 120, speed: 35, dmg: 22, atkCooldown: 1.6, telegraphSec: 0.6, xp: 62, gold: [10, 18],
+    loot: [{ id: 'stone', min: 2, max: 4, chance: 0.5 }, { id: 'iron_ore', min: 1, max: 3, chance: 0.3 }],
+    fromNight: 9, weight: 2.5,
+    behavior: { kind: 'exploder', explodeRadiusTiles: 2, explodeDmg: 35, explodeOnDeath: true },
+    art: { size: 26, body: ramp('#3a2010', '#6a3a20', '#aa5a30'), eye: ramp('#ff6644')[0] },
+  },
+  {
+    id: 'brute_warlord', name: 'Brute Warlord',
+    hp: 260, speed: 30, dmg: 28, atkCooldown: 1.4, telegraphSec: 0.7, xp: 160, gold: [28, 50],
+    loot: [{ id: 'iron_bar', min: 1, max: 3, chance: 0.6 }, { id: 'sword_copper', min: 1, max: 1, chance: 0.12 }, { id: 'star_ore', min: 1, max: 2, chance: 0.2 }, { id: 'void_shard', min: 1, max: 1, chance: 0.3 }],
+    fromNight: 18, weight: 1.5,
+    behavior: { kind: 'buffer', buffRadiusTiles: 5, buffDmgMul: 1.4, buffSpeedMul: 1.2 },
+    art: { size: 34, body: ramp('#4a1a0a', '#8a3a1a', '#ca5a2a'), eye: ramp('#ff8844')[0] },
+  },
+
+  // Wisp line (T2: ranged lasher, T3: healer)
+  {
+    id: 'wisp_lasher', name: 'Wisp Lasher',
+    hp: 28, speed: 55, dmg: 9, atkCooldown: 1.5, telegraphSec: 0.4, xp: 44, gold: [6, 12],
+    loot: [{ id: 'moonbell', min: 1, max: 3, chance: 0.3 }, { id: 'charm_moon', min: 1, max: 1, chance: 0.08 }],
+    fromNight: 10, weight: 3,
+    behavior: { kind: 'ranged', projectileSpeed: 200, preferredRangeTiles: 5 },
+    art: { size: 16, body: ramp('#3a3560', '#5b72c4', '#9bb8f6'), eye: ramp('#ffffff')[0] },
+  },
+  {
+    id: 'wisp_veilweaver', name: 'Wisp Veil-Weaver',
+    hp: 80, speed: 40, dmg: 5, atkCooldown: 1.0, telegraphSec: 0.35, xp: 70, gold: [14, 24],
+    loot: [{ id: 'moonbell', min: 2, max: 4, chance: 0.5 }, { id: 'tonic_major', min: 1, max: 1, chance: 0.3 }],
+    fromNight: 13, weight: 2,
+    behavior: { kind: 'healer', healRadiusTiles: 5, healAmount: 12, healCooldownSec: 4 },
+    art: { size: 20, body: ramp('#4a5590', '#7b9aee', '#bbccff'), eye: ramp('#ffffff')[0] },
+  },
+
+  // Shade line — stealthy fast flankers
+  {
+    id: 'shade', name: 'Shade',
+    hp: 18, speed: 88, dmg: 8, atkCooldown: 0.9, telegraphSec: 0.25, xp: 28, gold: [3, 7],
+    loot: [{ id: 'sunleaf', min: 1, max: 2, chance: 0.2 }, { id: 'moonbell', min: 1, max: 1, chance: 0.12 }],
+    fromNight: 5, weight: 4,
+    art: { size: 14, body: ramp('#1a1a2a', '#2a2a4a', '#3a3a6a'), eye: ramp('#ff44ff')[0] },
+  },
+  {
+    id: 'shade_reaper', name: 'Shade Reaper',
+    hp: 55, speed: 72, dmg: 18, atkCooldown: 0.7, telegraphSec: 0.3, xp: 70, gold: [12, 22],
+    loot: [{ id: 'silver_ore', min: 1, max: 3, chance: 0.35 }, { id: 'charm_ember', min: 1, max: 1, chance: 0.1 }],
+    fromNight: 12, weight: 2.5,
+    behavior: { kind: 'swarm', swarmSize: 2 },
+    art: { size: 18, body: ramp('#2a1a3a', '#4a2a7a', '#7a4aaa'), eye: ramp('#ff66ff')[0] },
+  },
+  {
+    id: 'shade_king', name: 'Shade King',
+    hp: 180, speed: 55, dmg: 24, atkCooldown: 1.0, telegraphSec: 0.4, xp: 180, gold: [30, 55],
+    loot: [{ id: 'star_ore', min: 1, max: 3, chance: 0.4 }, { id: 'void_shard', min: 1, max: 2, chance: 0.5 }, { id: 'ring_silver', min: 1, max: 1, chance: 0.08 }, { id: 'relic_rime', min: 1, max: 1, chance: 0.03 }],
+    fromNight: 20, weight: 1.2,
+    behavior: { kind: 'ranged', projectileSpeed: 250, preferredRangeTiles: 6 },
+    art: { size: 28, body: ramp('#3a1a5a', '#7a3aaa', '#aa6aea'), eye: ramp('#ff88ff')[0] },
+  },
+
+  // Craggin line — tanky siege breakers
+  {
+    id: 'craggin', name: 'Craggin',
+    hp: 90, speed: 28, dmg: 10, atkCooldown: 1.8, telegraphSec: 0.7, xp: 44, gold: [6, 10],
+    loot: [{ id: 'stone', min: 2, max: 5, chance: 0.6 }, { id: 'copper_ore', min: 1, max: 2, chance: 0.2 }],
+    fromNight: 6, weight: 2.5,
+    art: { size: 28, body: ramp('#4a4a4a', '#6a6a6a', '#9a9a9a'), eye: ramp('#ff4444')[0] },
+  },
+  {
+    id: 'craggin_bulwark', name: 'Craggin Bulwark',
+    hp: 240, speed: 20, dmg: 18, atkCooldown: 2.0, telegraphSec: 0.9, xp: 110, gold: [16, 28],
+    loot: [{ id: 'stone', min: 3, max: 6, chance: 0.7 }, { id: 'iron_ore', min: 2, max: 4, chance: 0.4 }, { id: 'vest_bark', min: 1, max: 1, chance: 0.15 }],
+    fromNight: 15, weight: 2,
+    behavior: { kind: 'siege', structureDmgMul: 3, projectileSpeed: 120, preferredRangeTiles: 3 },
+    art: { size: 34, body: ramp('#3a3a3a', '#5a5a5a', '#8a8a8a'), eye: ramp('#ff6644')[0] },
+  },
+  {
+    id: 'craggin_titan', name: 'Craggin Titan',
+    hp: 500, speed: 16, dmg: 32, atkCooldown: 2.2, telegraphSec: 1.1, xp: 280, gold: [40, 70],
+    loot: [{ id: 'stone', min: 5, max: 10, chance: 0.8 }, { id: 'iron_bar', min: 2, max: 4, chance: 0.5 }, { id: 'armor_copper', min: 1, max: 1, chance: 0.2 }, { id: 'star_bar', min: 1, max: 2, chance: 0.15 }, { id: 'void_shard', min: 1, max: 2, chance: 0.4 }],
+    fromNight: 25, weight: 1,
+    behavior: { kind: 'siege', structureDmgMul: 5, projectileSpeed: 80, preferredRangeTiles: 2 },
+    art: { size: 42, body: ramp('#2a2a2a', '#4a4a4a', '#7a7a7a'), eye: ramp('#ff8844')[0] },
+  },
+
+  // Mite swarm — tiny, fast, weak, spawns in packs
+  {
+    id: 'mite', name: 'Mite',
+    hp: 8, speed: 78, dmg: 3, atkCooldown: 0.5, telegraphSec: 0.15, xp: 6, gold: [0, 2],
+    loot: [{ id: 'berry', min: 1, max: 1, chance: 0.1 }],
+    fromNight: 3, weight: 6,
+    behavior: { kind: 'swarm', swarmSize: 4 },
+    art: { size: 10, body: ramp('#3a2a10', '#5a3a1a', '#8a5a2a'), eye: ramp('#ffaa44')[0] },
+  },
+
+  // Vile Spore — floating AoE exploder
+  {
+    id: 'vile_spore', name: 'Vile Spore',
+    hp: 16, speed: 50, dmg: 1, atkCooldown: 99, telegraphSec: 0, xp: 18, gold: [2, 5],
+    loot: [{ id: 'sunleaf', min: 1, max: 2, chance: 0.25 }, { id: 'moonbell', min: 1, max: 1, chance: 0.15 }],
+    fromNight: 8, weight: 3,
+    behavior: { kind: 'exploder', explodeRadiusTiles: 2.5, explodeDmg: 28, explodeOnDeath: true },
+    art: { size: 18, body: ramp('#3a4a1a', '#6a8a2a', '#aaca3a'), eye: ramp('#ffff44')[0] },
   },
 
   // ---- world bosses (domain lords) — hp/dmg are baselines; the world-boss

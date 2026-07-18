@@ -4,7 +4,7 @@
 import { Container, Sprite, Texture } from 'pixi.js';
 import { hash2 } from '../../engine/rng';
 import { darken, lighten, type RGB } from '../../engine/procgen/palette';
-import { TILE } from './worldgen';
+import { TILE, MEGA_SCAN, type MegaCluster } from './worldgen';
 import { M, MATERIALS } from '../data/materials';
 import { CFG } from '../data/config';
 import type { World } from './world';
@@ -337,11 +337,47 @@ export class ChunkMap {
       }
     }
 
-    // features — include one extra row south of the chunk, because tall
-    // sprites poke upward across the border; both chunks draw them identically
-    for (let ty = 0; ty <= CHUNK; ty++) {
+    // features — one per tile, plus mega-clusters drawn as ONE big chunky
+    // sprite each. Both kinds anchor their feet to a row's south edge, so a
+    // single top-to-bottom row walk keeps painter's-order depth: a thing
+    // standing further south draws over the canopy of the thing behind it.
+    // Mega roots can sit outside this chunk while the sprite pokes in, so
+    // rows/columns scan a margin all around; both chunks draw them
+    // identically, so there is no seam.
+    const MM = MEGA_SCAN + 2;
+    // collect every mega root whose sprite could touch this chunk
+    const megaRoots: MegaCluster[] = [];
+    for (let ty = -MM; ty <= CHUNK + MM; ty++) {
+      for (let tx = -MM; tx < CHUNK + MM; tx++) {
+        const gtx = cx * CHUNK + tx, gty = cy * CHUNK + ty;
+        const mega = this.world.megaClusterAt(gtx, gty);
+        if (mega && mega.rootTx === gtx && mega.rootTy === gty) megaRoots.push(mega);
+      }
+    }
+    for (let ty = -MM; ty <= CHUNK + MM; ty++) {
+      // mega clusters whose FEET land on this row (south edge = row bottom)
+      for (const mega of megaRoots) {
+        if (mega.rootTy + mega.size - 1 - cy * CHUNK !== ty) continue;
+
+        const depleted = this.world.isDepleted(mega.rootTx, mega.rootTy);
+        if (depleted && mega.def.depleted !== 'stump') continue;
+        const img = depleted
+          ? this.art.megaStump(mega.size)
+          : this.art.megaFeature(mega.def.id, mega.rootTx, mega.rootTy, mega.size);
+
+        const centerX = (mega.rootTx + mega.size / 2) * TILE - cx * CHUNK_PX;
+        const southY = (mega.rootTy + mega.size) * TILE - cy * CHUNK_PX;
+        const dx = Math.round(centerX - img.width / 2);
+        const dy = southY - img.height;
+        this.art.shadow(ctx, centerX, southY - 4, img.width * 0.42, img.width * 0.15, depleted ? 0.12 : 0.3);
+        ctx.drawImage(img, dx, dy);
+      }
+
+      // ordinary single-tile features in this row
+      if (ty < 0 || ty > CHUNK) continue;
       for (let tx = 0; tx < CHUNK; tx++) {
         const gtx = cx * CHUNK + tx, gty = cy * CHUNK + ty;
+        if (this.world.megaClusterAt(gtx, gty)) continue;
         const f = this.world.featureAt(gtx, gty);
         if (!f) continue;
 
@@ -517,10 +553,37 @@ export class ChunkMap {
       }
     }
 
-    // Features — render at the original TILE scale, centered in their sim tile
-    for (let ty = 0; ty <= CHUNK; ty++) {
+    // Features — same y-ordered walk as the main bake, scaled by the subpix
+    // factor. Mega clusters draw as one big sprite here too.
+    const MMs = MEGA_SCAN + 2;
+    const megaRootsS: MegaCluster[] = [];
+    for (let ty = -MMs; ty <= CHUNK + MMs; ty++) {
+      for (let tx = -MMs; tx < CHUNK + MMs; tx++) {
+        const gtx = cx * CHUNK + tx, gty = cy * CHUNK + ty;
+        const mega = this.world.megaClusterAt(gtx, gty);
+        if (mega && mega.rootTx === gtx && mega.rootTy === gty) megaRootsS.push(mega);
+      }
+    }
+    for (let ty = -MMs; ty <= CHUNK + MMs; ty++) {
+      for (const mega of megaRootsS) {
+        if (mega.rootTy + mega.size - 1 - cy * CHUNK !== ty) continue;
+        const depleted = this.world.isDepleted(mega.rootTx, mega.rootTy);
+        if (depleted && mega.def.depleted !== 'stump') continue;
+        const img = depleted
+          ? this.art.megaStump(mega.size)
+          : this.art.megaFeature(mega.def.id, mega.rootTx, mega.rootTy, mega.size);
+        const w = img.width * factor, h = img.height * factor;
+        const dx = ((mega.rootTx + mega.size / 2) * TILE - cx * CHUNK_PX) * factor - w / 2;
+        const dy = ((mega.rootTy + mega.size) * TILE - cy * CHUNK_PX) * factor - h;
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.fillRect(dx + 2, dy + 2, w, h);
+        ctx.drawImage(img, dx, dy, w, h);
+      }
+
+      if (ty < 0 || ty > CHUNK) continue;
       for (let tx = 0; tx < CHUNK; tx++) {
         const gtx = cx * CHUNK + tx, gty = cy * CHUNK + ty;
+        if (this.world.megaClusterAt(gtx, gty)) continue;
         const f = this.world.featureAt(gtx, gty);
         if (!f) continue;
         let img: HTMLCanvasElement;

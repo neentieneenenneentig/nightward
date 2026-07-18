@@ -78,6 +78,26 @@ registerEffect('resonance_boost', (ctx) => {
   return;
 });
 
+// ---- X1: elemental weapon / trinket effects --------------------------------
+// All flags — consumed at the named wire points.
+
+/** Fire on hit: 30% chance a struck foe's tile ignites (combat.resolveHit → worldCore.ignite). */
+registerEffect('fire_on_hit', () => {});
+/** Chill on hit: struck foes move at 0.65× for 2s (combat.resolveHit stamps chillUntil/chillMult). */
+registerEffect('chill_on_hit', () => {});
+/** Lifesteal: heal 12% of swing damage dealt (combat.resolveHit). */
+registerEffect('lifesteal', () => {});
+/** Chain on kill: killing blows arc 50% damage to the nearest foe within 3 tiles (combat.resolveHit). */
+registerEffect('chain_on_kill', () => {});
+/** Dodge: 12% chance to slip a hit entirely (combat.damagePlayer). */
+registerEffect('dodge', () => {});
+/** Gold find: +25% gold from player kills (hordes.hurt). */
+registerEffect('gold_find', () => {});
+/** XP boost: +20% to all skill xp (rules.addXp). */
+registerEffect('xp_boost', () => {});
+/** Night vision: the fog presses 35% less (main.ts fog update). */
+registerEffect('night_vision', () => {});
+
 // ---- Helpers --------------------------------------------------------------
 
 import { ITEMS } from '../data/items';

@@ -5,6 +5,7 @@ import { CFG } from '../data/config';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
 import { armorDef, awardSoulXp, charmRegen, equippedWeaponDmg, hall, skillLevel } from '../rules';
+import { activeEffects } from './effects';
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
 import type { Foe } from './hordes';
@@ -32,9 +33,10 @@ export class CombatSystem {
     this.swingT -= dt;
 
     const { state } = this.ctx;
-    // daylight heals; night doesn't
+    // daylight heals; night doesn't. X1: 'Charging Bonus' Lens mapping scales it.
     if (!this.ctx.isNight() && state.player.hp < CFG.player.maxHp) {
-      state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + (CFG.player.regenPerSec + charmRegen(state)) * dt);
+      const regenMul = this.ctx.net?.getGameValue?.('regenRate') ?? 1;
+      state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + (CFG.player.regenPerSec + charmRegen(state)) * regenMul * dt);
     }
     this.updateTowers(dt);
     this.updatePhase(dt);
@@ -203,6 +205,8 @@ export class CombatSystem {
     };
 
     let landed = false;
+    let dealtTotal = 0; // X1: lifesteal reads the swing's total damage dealt
+    const fx = activeEffects(state);
     const hitLines: string[] = [];
     for (const f of [...hordes.foes] as Foe[]) {
       const d = inArc(f.x, f.y, CFG.player.meleeRange + f.def.art.size / 2);
@@ -211,7 +215,30 @@ export class CombatSystem {
       const kx = f.x + (f.x - cx) / (d || 1) * 6, ky = f.y + (f.y - cy) / (d || 1) * 6;
       if (this.ctx.world.canStand(kx, ky, 5)) { f.x = kx; f.y = ky; }
       const hpBefore = f.hp;
+      // X1: on-hit item effects — chill slows, fire lights the real CA
+      if (fx.has('chill_on_hit')) {
+        const ef = f as any;
+        ef.chillUntil = state.clock + 2.0;
+        ef.chillMult = 0.65;
+      }
+      if (fx.has('fire_on_hit') && Math.random() < 0.3) {
+        this.ctx.worldCore?.ignite?.(Math.floor(f.x / TILE), Math.floor(f.y / TILE));
+      }
       hordes.hurt(f, dmg);
+      dealtTotal += Math.min(dmg, hpBefore);
+      // X1: chain_on_kill — the killing blow arcs to the nearest other foe
+      if (fx.has('chain_on_kill') && hpBefore > 0 && f.hp <= 0) {
+        let arcF: Foe | null = null, arcD = 3 * TILE;
+        for (const g of hordes.foes as Foe[]) {
+          if (g.uid === f.uid) continue;
+          const gd = Math.hypot(g.x - f.x, g.y - f.y);
+          if (gd < arcD) { arcF = g; arcD = gd; }
+        }
+        if (arcF) {
+          views.addShot(f.x, f.y - 8, arcF.x, arcF.y - 8);
+          hordes.hurt(arcF, Math.round(dmg * 0.5));
+        }
+      }
       views.addHitFlash(f.x, f.y);
       landed = true;
       hitLines.push(`${f.def.name} for ${Math.min(dmg, hpBefore)} (${Math.max(0, f.hp)}/${f.maxHp} hp left)`);
@@ -229,6 +256,10 @@ export class CombatSystem {
       hitLines.push(`${b.name} for ${Math.min(dmg, hpBefore)} (${Math.max(0, b.hp)}/${b.maxHp} hp left)`);
     }
     if (landed) {
+      // X1: lifesteal — Void gear drinks a share of the damage dealt
+      if (fx.has('lifesteal') && dealtTotal > 0 && state.player.hp < CFG.player.maxHp) {
+        state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + dealtTotal * 0.12);
+      }
       Sound.play('hit');
       const net = this.ctx.net;
       const mulInfo = totalMul !== 1.0
@@ -273,6 +304,18 @@ export class CombatSystem {
       auraRangeAdd = Math.max(auraRangeAdd, def.aura.rangeAdd ?? 0);
     }
 
+    // X1: Shrines buff towers standing within their radius
+    const shrines: { x: number; y: number; r: number; dmgAdd: number; rangeAdd: number }[] = [];
+    for (const b of state.buildings) {
+      const def = BUILDINGS.find((d) => d.id === b.type);
+      if (!def?.shrine) continue;
+      shrines.push({
+        x: (b.tx + 0.5) * TILE, y: (b.ty + 0.5) * TILE,
+        r: def.shrine.radiusTiles * TILE,
+        dmgAdd: def.shrine.dmgAdd ?? 0, rangeAdd: def.shrine.rangeAdd ?? 0,
+      });
+    }
+
     for (const b of state.buildings) {
       const def = BUILDINGS.find((d) => d.id === b.type);
       if (!def?.tower) continue;
@@ -280,8 +323,15 @@ export class CombatSystem {
       if (t > 0) { this.towerT.set(b.uid, t); continue; }
 
       const bx = (b.tx + 0.5) * TILE, by = (b.ty + 0.2) * TILE;
-      const range = (def.tower.rangeTiles + auraRangeAdd) * TILE;
-      const dmg = Math.round(def.tower.dmg * auraDmgMul);
+      let shrineDmg = 0, shrineRange = 0;
+      for (const s of shrines) {
+        if (Math.hypot(bx - s.x, by - s.y) <= s.r) {
+          shrineDmg = Math.max(shrineDmg, s.dmgAdd);
+          shrineRange = Math.max(shrineRange, s.rangeAdd);
+        }
+      }
+      const range = (def.tower.rangeTiles + auraRangeAdd + shrineRange) * TILE;
+      const dmg = Math.round(def.tower.dmg * auraDmgMul) + shrineDmg;
 
       // C5: sniper towers prefer highest-HP target (execute priority)
       if (def.towerRole === 'sniper') {
@@ -345,6 +395,42 @@ export class CombatSystem {
         if (def.towerRole === 'slow') {
           (bestFoe as any)._slowedUntil = this.ctx.state.clock + 2.0; // 2s slow
         }
+
+        // X1: Chain — lightning leaps to further foes, damage decaying per jump
+        if (def.towerRole === 'chain' && def.chain) {
+          const hit = new Set<number>([bestFoe.uid]);
+          let from = bestFoe, arcDmg = dmg;
+          for (let j = 0; j < def.chain.jumps; j++) {
+            arcDmg = Math.max(1, Math.round(arcDmg * def.chain.falloff));
+            let next: Foe | null = null, nd = 3.5 * TILE;
+            for (const g of hordes.foes as Foe[]) {
+              if (hit.has(g.uid)) continue;
+              const gd = Math.hypot(g.x - from.x, g.y - from.y);
+              if (gd < nd) { next = g; nd = gd; }
+            }
+            if (!next) break;
+            hit.add(next.uid);
+            views.addShot(from.x, from.y - 8, next.x, next.y - 8);
+            hordes.hurt(next, arcDmg, false);
+            from = next;
+          }
+        }
+
+        // X1: Poison — DoT stamped on the target; hordes.updateFoe ticks it
+        if (def.towerRole === 'poison' && def.poisonFx) {
+          const ef = bestFoe as any;
+          const clock = this.ctx.state.clock;
+          const stacks = Math.min(def.poisonFx.maxStacks, (ef._poisonUntil > clock ? (ef._poisonStacks ?? 1) : 0) + 1);
+          ef._poisonStacks = stacks;
+          ef._poisonDps = Math.max(1, Math.round(dmg * def.poisonFx.dpsFrac)) * stacks;
+          ef._poisonUntil = clock + def.poisonFx.durSec;
+          if (def.poisonFx.spreadOnDeath) ef._poisonSpread = true;
+        }
+
+        // X1: Stun — target frozen in place
+        if (def.towerRole === 'stun' && def.stunSec) {
+          (bestFoe as any)._stunnedUntil = this.ctx.state.clock + def.stunSec;
+        }
       } else if (bestBoss) {
         this.towerT.set(b.uid, def.tower.cooldown);
         views.addShot(bx, by, bestBoss.x, bestBoss.y);
@@ -360,6 +446,11 @@ export class CombatSystem {
     const { state, player, toast } = this.ctx;
     if (state.gameOver) return;
     if (state.god) { this.ctx.log?.push('combat', `${source ?? 'Something'} hits you for 0 (god mode)`, state.clock); return; }
+    // X1: dodge — Warding gear slips the hit entirely, sometimes
+    if (activeEffects(state).has('dodge') && Math.random() < 0.12) {
+      this.ctx.log?.push('combat', `${source ?? 'Something'} strikes — you slip aside`, state.clock);
+      return;
+    }
     let taken = Math.max(1, dmg - armorDef(state)); // armor softens, never fully negates
     // S1: resolve-zero = +50% damage taken
     taken = Math.round(taken * (this.ctx.vitals?.getDmgTakenMult?.() ?? 1.0));

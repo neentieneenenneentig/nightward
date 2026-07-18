@@ -410,7 +410,7 @@ function roof(p: Pix, apexX: number, apexY: number, baseY: number, x0: number, x
   }
 }
 
-export function makeBuilding(kind: 'hall' | 'hut' | 'wall' | 'tower' | 'campfire', seed: number): HTMLCanvasElement {
+export function makeBuilding(kind: 'hall' | 'hut' | 'wall' | 'tower' | 'campfire' | 'trap' | 'shrine', seed: number): HTMLCanvasElement {
   const rand = mulberry32(seed ^ 0xb1d);
   let p: Pix;
   switch (kind) {
@@ -514,6 +514,46 @@ export function makeBuilding(kind: 'hall' | 'hut' | 'wall' | 'tower' | 'campfire
       // ember core
       p.set(10, 9, [255, 160, 60]); p.set(11, 8, [255, 210, 130]); p.set(11, 10, [255, 100, 30]);
       p.set(9, 9, [200, 80, 20]);
+      break;
+    }
+    // X1: new building types
+    case 'trap': {
+      p = new Pix(28, 18);
+      // spiked metal grate on dark stone base
+      for (let y = 6; y <= 16; y++) {
+        for (let x = 5; x <= 22; x++) {
+          p.set(x, y, (x + y) % 3 === 0 ? [70, 70, 75] : [50, 50, 55]);
+        }
+      }
+      // spikes pointing up
+      for (let x = 7; x <= 20; x += 4) {
+        p.rect(x, 2, x + 1, 7, [180, 180, 185]);
+        p.set(x, 2, [220, 220, 225]);
+      }
+      // edge frame
+      p.rect(4, 5, 5, 17, STONE[1]);
+      p.rect(22, 5, 23, 17, STONE[1]);
+      p.rect(4, 16, 23, 17, STONE[0]);
+      break;
+    }
+    case 'shrine': {
+      p = new Pix(24, 38);
+      // stone pedestal
+      for (let y = 20; y <= 37; y++) {
+        for (let x = 5; x <= 18; x++) {
+          p.set(x, y, (x + y) % 4 < 2 ? STONE[2] : STONE[1]);
+        }
+      }
+      // ornate arch
+      p.rect(7, 8, 9, 20, STONE[3]);
+      p.rect(14, 8, 16, 20, STONE[3]);
+      p.rect(7, 7, 16, 8, STONE[2]);
+      // glowing orb at the center
+      p.rect(10, 12, 13, 15, [255, 220, 150]);
+      p.set(11, 13, [255, 255, 220]);
+      // pillar highlights
+      p.set(8, 10, STONE[3]);
+      p.set(15, 10, STONE[3]);
       break;
     }
   }

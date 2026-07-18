@@ -2,10 +2,11 @@
 // game-state overlays (depleted nodes, buildings). All walkability, movement
 // speed, and effective-material questions go through here.
 import { CFG } from '../data/config';
+import { BUILDINGS } from '../data/buildings';
 import type { FeatureDef } from '../data/features';
 import { MATERIALS } from '../data/materials';
 import { tileKey, type Building, type GameState } from '../state';
-import { TILE, WorldGen } from './worldgen';
+import { TILE, WorldGen, type MegaCluster } from './worldgen';
 import type { WorldCore } from './core';
 
 const CHUNK = 16; // keep in sync with chunkmap.ts / WorldCore
@@ -39,9 +40,12 @@ export class World {
   }
 
   /** A painted-over tile has lost its procgen feature — the world remembers your
-   * touch (paint DIRT on a tree tile → the tree is gone until you repaint base). */
+   * touch (paint DIRT on a tree tile → the tree is gone until you repaint base).
+   * Tiles inside a mega-cluster report the cluster's feature. */
   featureAt(tx: number, ty: number): FeatureDef | null {
     if (this.core.overrideAt(tx, ty) >= 0) return null;
+    const mega = this.megaClusterAt(tx, ty);
+    if (mega) return mega.def;
     return this.gen.featureAt(tx, ty);
   }
 
@@ -59,8 +63,12 @@ export class World {
   passable(tx: number, ty: number): boolean {
     if (!MATERIALS[this.materialAt(tx, ty)].passable) return false;
     if (this.buildingAt(tx, ty)) return false;
+    if (this.isDepleted(tx, ty)) return true; // gathered = clear ground
+    // mega features block every tile of their square, even bush-type ones —
+    // a four-tile bush is a solid mass, not shrubbery you stroll through
+    if (this.megaClusterAt(tx, ty)) return false;
     const f = this.featureAt(tx, ty);
-    return !(f && f.blocking && !this.isDepleted(tx, ty));
+    return !(f && f.blocking);
   }
 
   /** Movement multiplier for the material under a tile (1 = normal). */
@@ -78,9 +86,29 @@ export class World {
     return true;
   }
 
+  /** The mega-cluster covering a tile, or null. Painting the ROOT tile kills
+   * the whole cluster (the world remembers); painting a non-root tile only
+   * frees that tile — the big sprite still stands over it. */
+  megaClusterAt(tx: number, ty: number): MegaCluster | null {
+    if (this.core.overrideAt(tx, ty) >= 0) return null;
+    const mega = this.gen.megaClusterAt(tx, ty);
+    if (!mega) return null;
+    if (this.core.overrideAt(mega.rootTx, mega.rootTy) >= 0) return null;
+    return mega;
+  }
+
   /** Mark a node gathered; caller is responsible for the chunk rebake. */
   deplete(tx: number, ty: number, respawnSec: number) {
     this.state.depleted[tileKey(tx, ty)] = this.state.clock + respawnSec;
+  }
+
+  /** Deplete every tile of a mega-cluster at once (one harvest fells it all). */
+  depleteMega(cluster: MegaCluster, respawnSec: number) {
+    for (let dy = 0; dy < cluster.size; dy++) {
+      for (let dx = 0; dx < cluster.size; dx++) {
+        this.deplete(cluster.rootTx + dx, cluster.rootTy + dy, respawnSec);
+      }
+    }
   }
 
   /** Building placement rule (see config.build). Also prevents placing on the player.
@@ -103,14 +131,22 @@ export class World {
     return false;
   }
 
-  /** C2: true if (tx,ty) is within `range` tiles of the hall or any waystone. */
+  /** C2: true if (tx,ty) is within `range` tiles of the hall or any waystone.
+   *  X1: buildings with `anchorRange` (Signal Beacon) are lesser anchors with
+   *  their own, smaller radius. */
   inRangeOfAnchor(tx: number, ty: number, range: number): boolean {
     for (const b of this.state.buildings) {
-      if (b.type !== 'hall' && b.type !== 'waystone') continue;
-      // C2: decaying waystones don't count as anchors
+      // C2: decaying buildings don't count as anchors
       if ((b as any)._decaying) continue;
+      let r: number;
+      if (b.type === 'hall' || b.type === 'waystone') r = range;
+      else {
+        const ar = BUILDINGS.find((d) => d.id === b.type)?.anchorRange;
+        if (!ar) continue;
+        r = ar;
+      }
       const d = Math.max(Math.abs(tx - b.tx), Math.abs(ty - b.ty));
-      if (d <= range) return true;
+      if (d <= r) return true;
     }
     return false;
   }

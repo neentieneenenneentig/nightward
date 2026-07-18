@@ -1,4 +1,4 @@
-# NIGHTWARD — Roadmap (Batch 5 "The Wire" is ACTIVE)
+# NIGHTWARD — Roadmap (Batch 6 "The Deep Wilds" — IN PROGRESS 🚧)
 
 > **Pivot (2026-07-16):** The world is no longer a dream — it's your network. Live browser
 > network metrics (RTT, jitter, bandwidth, connection type, real clock) drive every game
@@ -6,12 +6,56 @@
 > — but its parameters are now live functions of your internet connection. Same tab, same
 > seed, totally different world depending on where and how you're connected.
 
-Status baseline: **`v0.16-n1-network-seed`** — N1 network data plumbing is live. Browser metrics
-flow into the game as first-class parameters via `NW.NET`, surfaced in a real-time HUD, driving
-sim speed, gold rate, enemy scaling, and day/night sync. Paint filter grain overlay applied.
-Buildings, trees, rocks, and bushes received art upgrades (more variants, mortar lines, grain
-texture, thatch highlights). All menus are keyboard-navigable (Tab/Enter, Ctrl+Tab, arrow keys).
-Crafting/inventory interaction bug fixed. Building deconstruct added (press `X`).
+**Status: X1 CONTENT BLITZ (repaired) + X3 MEGA FEATURES SHIPPED (2026-07-18).** Branch
+`u2-grimdark`. Typecheck clean, build green, **Gauntlet 62 functions / 1163 assertions ALL
+GREEN (headless raw-CDP Chrome, `?gl&seed=1234`, 0 page errors)** — the first honest full-suite
+run since the bulk commit. Awaiting user feel verdict.
+
+All systems implemented: C1 echoes, S1 survival pressure (vigor/resolve), U1 Lens UI unification,
+U2 grimdark chrome, C2 waystones, C3 Loom passive tree (40 nodes + 4 keystones), C4 Armory
+(5 boss relics, 12 silver/star items, 3 new mobs), C5 buildings rework (10 new towers, 4 roles,
+LTD2-style upgrade paths), G1/G2 visual upgrade + juice, W6 scoreboards, N3 living network
+(jitter→fire, realm→wind).
+
+**X1 CONTENT BLITZ (2026-07-18, repaired same day by chief-of-staff review):** 15 new enemies
+with data-driven behaviors (ranged w/ sim-clock projectiles, siege, exploder, buffer, healer,
+summoner, swarm), wall upgrades (Stone Rampart; Iron Bulwark thorns), 3 traps (spike/tar/flame
+— wired: damage/slow/ignite pulses in hordes), utility buildings (Workshop +30% craft xp in
+radius, Granary +40% forage yield, Shrine +dmg/+range aura on towers, Signal Beacon = lesser
+anchor extending the waystone chain), chain/poison/stun tower roles (arc jumps w/ falloff,
+stacking DoT + Plague death-spread, Earthshaker freeze), elemental weapons + trinkets with 8
+wired effect keys (fire/chill on hit, lifesteal, chain-on-kill, dodge, gold find, xp boost,
+night vision), void_shard drops on 4 high-tier mobs. Review fixes: foe damage was reset to
+`def.dmg` every tick (wiped ALL night/network/echo scaling — the game's difficulty curve was
+silently flat); projectiles ran on `setTimeout` wall-clock (fired while paused) → sim-tick
+Projectile array with spark trails; killed exploders paid no loot/xp; siege/support foes never
+fought back in melee; summons now inherit the summoner's night scaling. CUT as designed-but-
+unimplementable-today: bomb/repair/war-horn consumables (no use-item targeting hooks — items
+that do nothing are worse than none), blessed_steel (dead-end material), biome hazards +
+biome-exclusive spawn weighting (fields exist in biomes.ts but NO system consumes them yet —
+do not describe them as live).
+
+**X2 AUDIO (2026-07-18):** new `combat` mood, 5 per-boss moods keyed by lord id, death-whistle
+SFX (30% on kill). **The X2 "grid subdivision" (4 features per tile at 16px subcells) was
+REVERTED by the review:** it drew up to 4 full-size sprites clamped into one 32px tile — the
+"dual-footed trees" — and its per-tile depletion silently killed up to 4 features per gather.
+One feature per tile is the rule again.
+
+**X3 MEGA FEATURES (2026-07-18, replaces the blitz's draft):** big SQUARE resources — a
+feature row can carry `mega: {maxSize, chance}`; a deterministic root lottery merges a
+size×size square (2–5 tiles) into ONE resource drawn as a single nearest-neighbor-upscaled
+sprite (big visible pixel squares, grid-aligned, feet-anchored, y-sorted with normal
+features, seam-free across chunk borders). Mega squares always block; harvest time scales
+with the side, loot rolls with the area (a 4×4 tree = 16 loot rolls — jackpots); depleting
+fells the whole square (mega stump). Trees (≤4), Ancient Oaks (≤5), stone/copper/iron rocks
+(≤3), berry bushes (≤3). Worldgen `tileAt`/`megaClusterAt` are now memoized (the blitz draft
+ran a 25-candidate scan with 4 fbm stacks per candidate inside EVERY passability check).
+
+**X1.5 LENS (2026-07-18):** battery + JS-heap ACTUALLY harvested now (10s poll, no permission
+prompts; Chrome-only APIs honestly labeled), wired to real consumers: Battery Scarcity →
+gather yield, Charging Bonus → day regen, Veil Pressure (heap) → night-foe hp. Geolocation was
+DROPPED, not shipped dark: it fires a browser permission prompt, the identity beacons already
+show IP-level geo, and the Lens never asks for GPS (recorded in network.ts).
 
 This roadmap is the source of truth for the current batch. Each milestone is built in its
 own worktree (see `docs/plans/WORKFLOW.md`) and has a detailed brief `docs/plans/<id>-*.md`

@@ -8,7 +8,7 @@
 // against audioCtx.currentTime — a rock-steady audio clock independent of the
 // frame rate. That's the whole trick behind browser music.
 
-export type Mood = 'day' | 'night' | 'boss' | 'dead';
+export type Mood = 'day' | 'night' | 'combat' | 'boss' | 'dead';
 
 interface MoodDef {
   root: number;        // base frequency (Hz)
@@ -24,10 +24,21 @@ interface MoodDef {
 const semi = (root: number, s: number) => root * Math.pow(2, s / 12);
 
 const MOODS: Record<Mood, MoodDef> = {
-  day:   { root: 220.0, scale: [0, 2, 4, 7, 9, 12], beat: 0.60, wave: 'triangle', droneHz: 55,  droneGain: 0.05, noteGain: 0.16, drums: false },
-  night: { root: 146.8, scale: [0, 3, 5, 7, 10],    beat: 0.72, wave: 'sine',     droneHz: 49,  droneGain: 0.10, noteGain: 0.13, drums: false },
-  boss:  { root: 110.0, scale: [0, 1, 3, 6, 7, 10], beat: 0.34, wave: 'sawtooth', droneHz: 41,  droneGain: 0.14, noteGain: 0.12, drums: true  },
-  dead:  { root: 98.0,  scale: [0, 3, 7],           beat: 1.10, wave: 'sine',     droneHz: 44,  droneGain: 0.07, noteGain: 0.10, drums: false },
+  day:    { root: 220.0, scale: [0, 2, 4, 7, 9, 12],    beat: 0.60, wave: 'triangle', droneHz: 55,  droneGain: 0.05, noteGain: 0.16, drums: false },
+  night:  { root: 146.8, scale: [0, 3, 5, 7, 10],        beat: 0.72, wave: 'sine',     droneHz: 49,  droneGain: 0.10, noteGain: 0.13, drums: false },
+  combat: { root: 165.0, scale: [0, 2, 4, 7, 8, 11],     beat: 0.42, wave: 'sawtooth', droneHz: 52,  droneGain: 0.09, noteGain: 0.13, drums: true  },
+  boss:   { root: 110.0, scale: [0, 1, 3, 6, 7, 10],     beat: 0.34, wave: 'sawtooth', droneHz: 41,  droneGain: 0.14, noteGain: 0.12, drums: true  },
+  dead:   { root: 98.0,  scale: [0, 3, 7],                beat: 1.10, wave: 'sine',     droneHz: 44,  droneGain: 0.07, noteGain: 0.10, drums: false },
+};
+
+// Per-boss mood defs — each boss type gets its own harmonic fingerprint.
+// Keyed by lord ID so the music follows the domain lord, not the enemy def.
+const BOSS_MOODS: Record<string, MoodDef> = {
+  thornwarden: { root: 98.0,  scale: [0, 1, 4, 6, 7, 10],  beat: 0.32, wave: 'sawtooth', droneHz: 38,  droneGain: 0.16, noteGain: 0.13, drums: true },
+  cindermaw:   { root: 123.5, scale: [0, 2, 3, 7, 8, 11],  beat: 0.30, wave: 'square',   droneHz: 46,  droneGain: 0.15, noteGain: 0.12, drums: true },
+  rimewraith:  { root: 130.8, scale: [0, 1, 4, 5, 8, 11],  beat: 0.38, wave: 'sine',     droneHz: 55,  droneGain: 0.12, noteGain: 0.14, drums: true },
+  tideculler:  { root: 104.0, scale: [0, 2, 5, 7, 9, 10],  beat: 0.36, wave: 'triangle', droneHz: 42,  droneGain: 0.13, noteGain: 0.13, drums: true },
+  nullmaw:     { root: 82.4,  scale: [0, 1, 3, 4, 6, 9],   beat: 0.28, wave: 'sawtooth', droneHz: 33,  droneGain: 0.18, noteGain: 0.11, drums: true },
 };
 
 // ---- data-driven SFX: a recipe is a list of steps over the synth primitives
@@ -119,6 +130,12 @@ const SFX: Record<string, SfxStep[]> = {
   dawn: arp(330, [0, 5, 9], 0.12, 0.6, 'triangle', 0.14, 'tone'),
   bossRoar: [{ type: 'roar' }],
   discover: arp(392, [0, 7, 12], 0.1, 0.3, 'sine', 0.18),
+  // death whistle — filtered noise sweep with tremolo, like a soul escaping
+  deathWhistle: [
+    { type: 'burst', dur: 0.35, hz: 1800, q: 3, gain: 0.3, filter: 'bandpass', sweepTo: 600 },
+    { type: 'burst', at: 0.08, dur: 0.40, hz: 2400, q: 5, gain: 0.22, filter: 'bandpass', sweepTo: 800 },
+    { type: 'blip', at: 0.12, hz: 900, dur: 0.28, wave: 'sine', gain: 0.15, bend: 0.5 },
+  ],
 };
 SFX.place = SFX.build; // alias — placing is just a build confirmation chime
 
@@ -133,6 +150,7 @@ class AudioEngine {
 
   enabled = true;
   private mood: Mood = 'day';
+  private bossLordId: string | null = null; // per-boss mood override
   private step = 0;
   private nextT = 0;
   private timer: number | null = null;
@@ -177,12 +195,26 @@ class AudioEngine {
   setMood(m: Mood) {
     if (m === this.mood) return;
     this.mood = m;
+    this.bossLordId = null; // clear per-boss override on explicit mood change
     this.applyMood();
+  }
+
+  /** Set a per-boss mood override. Pass null to clear and return to base mood. */
+  setBossMood(lordId: string | null) {
+    if (lordId === this.bossLordId) return;
+    this.bossLordId = lordId;
+    this.applyMood();
+  }
+
+  /** The effective mood def — per-boss override if set, otherwise base mood. */
+  private effectiveMood(): MoodDef {
+    if (this.bossLordId && BOSS_MOODS[this.bossLordId]) return BOSS_MOODS[this.bossLordId];
+    return MOODS[this.mood];
   }
 
   private applyMood() {
     if (!this.ctx) return;
-    const d = MOODS[this.mood];
+    const d = this.effectiveMood();
     this.drone.frequency.setTargetAtTime(d.droneHz, this.ctx.currentTime, 0.3);
     this.droneGain.gain.setTargetAtTime(d.droneGain, this.ctx.currentTime, 0.4);
   }
@@ -190,7 +222,7 @@ class AudioEngine {
   // ---- generative music: lookahead scheduler ----------------------------
   private schedule() {
     const ctx = this.ctx; if (!ctx) return;
-    const d = MOODS[this.mood];
+    const d = this.effectiveMood();
     while (this.nextT < ctx.currentTime + 0.15) {
       this.playStep(this.nextT, d);
       this.nextT += d.beat;
@@ -201,13 +233,13 @@ class AudioEngine {
   private playStep(t: number, d: MoodDef) {
     // sparse melody: skip some steps so it breathes instead of noodling
     const r = Math.random();
-    const density = this.mood === 'boss' ? 0.85 : 0.5;
+    const density = this.mood === 'boss' || this.mood === 'combat' || this.bossLordId !== null ? 0.85 : 0.5;
     if (r < density) {
       const deg = d.scale[Math.floor(Math.random() * d.scale.length)];
       const oct = Math.random() < 0.25 ? 12 : 0;
       this.tone(t, semi(d.root, deg + oct), d.beat * 1.6, d.wave, d.noteGain);
     }
-    // boss mode gets a driving kick + hat to raise the pulse
+    // boss/combat modes get a driving kick + hat to raise the pulse
     if (d.drums) {
       if (this.step % 2 === 0) this.kick(t);
       if (this.step % 2 === 1) this.hat(t, 0.05);

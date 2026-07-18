@@ -43,6 +43,7 @@ export class WorldArt {
   private wallVariants = new Map<number, HTMLCanvasElement>();
   private foamSeed: number;
   private foamFrames: HTMLCanvasElement[];
+  private megaCache = new Map<string, HTMLCanvasElement>();
 
   constructor(seed: number) {
     this.wallSeed = seed ^ hashId('wall-variant');
@@ -76,6 +77,31 @@ export class WorldArt {
   feature(id: string, tx: number, ty: number): HTMLCanvasElement {
     const v = this.features.get(id)!;
     return v[(hash2(tx, ty, 0xf3a7) * v.length) | 0];
+  }
+
+  /** Mega feature sprite: the tile's base variant nearest-neighbor upscaled so
+   *  its width roughly covers a size×size-tile footprint. Integer scale keeps
+   *  the pixels as big crisp squares — that chunky look is the point. Cached
+   *  per (variant, scale) since bakes re-request the same sprites. */
+  megaFeature(id: string, tx: number, ty: number, sizeTiles: number): HTMLCanvasElement {
+    const variants = this.features.get(id)!;
+    const vi = (hash2(tx, ty, 0xf3a7) * variants.length) | 0;
+    const base = variants[vi];
+    const scale = Math.max(2, Math.round((sizeTiles * TILE) / base.width));
+    const key = `${id}:${vi}:${scale}`;
+    let c = this.megaCache.get(key);
+    if (!c) { c = scaleNearest(base, scale); this.megaCache.set(key, c); }
+    return c;
+  }
+
+  /** Mega stump — the ordinary stump scaled to sit where a felled mega feature
+   *  stood. Same integer nearest-neighbor treatment as megaFeature. */
+  megaStump(sizeTiles: number): HTMLCanvasElement {
+    const scale = Math.max(2, Math.round((sizeTiles * TILE * 0.5) / this.stump.width));
+    const key = `stump:${scale}`;
+    let c = this.megaCache.get(key);
+    if (!c) { c = scaleNearest(this.stump, scale); this.megaCache.set(key, c); }
+    return c;
   }
 
   /** Auto-connecting palisade art for a given N/E/S/W neighbor bitmask, cached. */
@@ -137,6 +163,17 @@ export class WorldArt {
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fill();
   }
+}
+
+/** Integer nearest-neighbor upscale — pixel squares stay square. */
+function scaleNearest(base: HTMLCanvasElement, scale: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = base.width * scale;
+  c.height = base.height * scale;
+  const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(base, 0, 0, c.width, c.height);
+  return c;
 }
 
 /** tiny string hash so per-kind seeds differ deterministically */

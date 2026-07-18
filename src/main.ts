@@ -31,6 +31,7 @@ import { VitalsSystem } from './game/systems/vitals';
 import { LoomSystem } from './game/systems/loom';
 import { ScoreboardSystem } from './game/systems/scoreboard';
 import { craft } from './game/systems/crafting';
+import { activeEffects } from './game/systems/effects';
 import { toggleEquip, invAdd } from './game/rules';
 import { BUILDINGS } from './game/data/buildings';
 import { NET_GAME_MAP, NET_METRICS, BEACON_INSPECT, LENS_SECTION_INSPECT, allBeacons, type NetInspect } from './game/data/network';
@@ -265,7 +266,13 @@ async function boot() {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
     if (e.key === 'o' || e.key === 'O') {
       e.preventDefault();
-      obsPanel.style.display = obsPanel.style.display === 'none' ? '' : 'none';
+      const closing = obsPanel.style.display !== 'none';
+      obsPanel.style.display = closing ? 'none' : '';
+      // when closing the Lens, dismiss any pinned inspect popup too
+      if (closing) {
+        inspectBox.style.display = 'none';
+        inspectBox.dataset.pinned = '';
+      }
     }
     // M3: G = Scatter Cache — spend gold to reduce horde size
     if (e.key === 'G') {
@@ -376,7 +383,7 @@ async function boot() {
   let frames = 0;
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
-    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals }, world, player, gen, chunks,
+    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals, loom, scoreboard }, world, player, gen, chunks,
     get log() { return log; },  // expose full GameLog (entries + export + download)
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
@@ -525,6 +532,13 @@ async function boot() {
     const ph = phase(state.clock);
     const threat = worldbosses.nearestThreatTiles();
     const bossNear = threat != null && threat < CFG.worldBoss.warnTiles;
+    const bossLordId = bossNear ? worldbosses.nearestThreatLordId() : null;
+
+    // Combat mood: enemies nearby but no boss → combat music; boss near → per-boss or generic boss
+    const foesNear = !bossNear && hordes.foes.some((f: any) => {
+      const d = Math.hypot(f.x - fx, f.y - fy) / TILE;
+      return d < 10; // within ~10 tiles
+    });
 
     // ambient tint = day/night light blended toward the current dream's mood
     const base = tintAt(state.clock);
@@ -541,9 +555,13 @@ async function boot() {
     // limited sight — darker at night, darker still with a lord near
     let fogI = ph.isNight ? CFG.fog.nightIntensity : CFG.fog.dayIntensity;
     if (bossNear) fogI += CFG.fog.bossExtra;
+    // X1: Nightseer Charm — the fog presses less
+    if (activeEffects(state).has('night_vision')) fogI *= 0.65;
     fog.update(fogI);
 
-    Sound.setMood(state.gameOver ? 'dead' : bossNear ? 'boss' : ph.isNight ? 'night' : 'day');
+    Sound.setMood(state.gameOver ? 'dead' : bossNear ? 'boss' : foesNear ? 'combat' : ph.isNight ? 'night' : 'day');
+    if (bossLordId) Sound.setBossMood(bossLordId);
+    else Sound.setBossMood(null);
     ui.refresh();
     floaters.update(performance.now() / 1000, cam);
 

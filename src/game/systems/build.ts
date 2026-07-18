@@ -140,7 +140,8 @@ export class BuildSystem {
     if (!invHasAll(state, m.def.cost)) return 'Not enough materials';
     if (world.buildingAt(m.tx, m.ty)) return "Something's already built there";
     const f = world.featureAt(m.tx, m.ty);
-    if (f && f.blocking && !world.isDepleted(m.tx, m.ty)) return `Blocked by ${f.name} — clear it first`;
+    const megaBlock = world.megaClusterAt(m.tx, m.ty); // mega squares always block
+    if (f && (f.blocking || megaBlock) && !world.isDepleted(m.tx, m.ty)) return `Blocked by ${f.name} — clear it first`;
     const mat = MATERIALS[world.materialAt(m.tx, m.ty)];
     if (!mat.passable || !mat.buildable) return `Can't build on ${cap(mat.name)}`;
     const h = state.buildings.find((b: any) => b.type === 'hall');

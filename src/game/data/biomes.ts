@@ -30,6 +30,12 @@ export interface BiomeDef {
   windMult: number;
   /** Resource density multiplier. */
   resourceMult: number;
+  /** X1: Feature IDs that ONLY spawn in this biome. */
+  exclusiveFeatures?: string[];
+  /** X1: Enemy IDs that have double weight in this biome's horde. */
+  exclusiveEnemies?: string[];
+  /** X1: Passive hazard applied while in this biome. */
+  hazard?: { desc: string; effect: 'none' | 'degen' | 'fog_penalty' | 'lightning' | 'shifting'; value: number };
 }
 
 /** The four biomes — one per connection type. */
@@ -47,6 +53,9 @@ export const BIOMES: BiomeDef[] = [
     ambientParticle: 'spark',
     windMult: 0.7,
     resourceMult: 1.0,
+    exclusiveFeatures: ['ancient_oak', 'sunbloom'],
+    exclusiveEnemies: ['craggin'],
+    hazard: { desc: 'None — the Vale is safe.', effect: 'none', value: 0 },
   },
   {
     id: 'wifi',
@@ -61,6 +70,9 @@ export const BIOMES: BiomeDef[] = [
     ambientParticle: 'wisp',
     windMult: 1.2,
     resourceMult: 1.3,
+    exclusiveFeatures: ['shifting_stone', 'wispflower_plant'],
+    exclusiveEnemies: ['wisp', 'shade'],
+    hazard: { desc: 'Shifting terrain — tiles change at night.', effect: 'shifting', value: 0.03 },
   },
   {
     id: 'cellular',
@@ -75,6 +87,9 @@ export const BIOMES: BiomeDef[] = [
     ambientParticle: 'glitch',
     windMult: 1.6,
     resourceMult: 1.6,
+    exclusiveFeatures: ['storm_crystal_node', 'scorchberry_bush'],
+    exclusiveEnemies: ['spitter', 'vile_spore'],
+    hazard: { desc: 'Lightning strikes during storms.', effect: 'lightning', value: 25 },
   },
   {
     id: 'loopback',
@@ -89,6 +104,9 @@ export const BIOMES: BiomeDef[] = [
     ambientParticle: 'none',
     windMult: 0.5,
     resourceMult: 0.8,
+    exclusiveFeatures: ['echo_dust_node'],
+    exclusiveEnemies: ['gnawer', 'shade'],
+    hazard: { desc: 'Buildings slowly degrade in the Hollow.', effect: 'degen', value: 0.5 },
   },
 ];
 
