@@ -621,7 +621,7 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 >    This supersedes W4.5 (pixel UI skin plan). New milestone: **U1 — Lens UI Unification**
 >    (`docs/plans/U1-lens-ui-unification.md`).
 >
-> **Revised order: C1 (echoes) → S1 (survival pressure) → U1 (lens UI unification)
+> **Revised order: C1 (echoes) → S1 (survival pressure) → U1 (lens UI unification) ✅ SHIPPED 2026-07-17
 > → C2 (waystones) → C3 (loom) → C4 (armory) → G1-P (painterly verdict) →
 > C5 (buildings rework).**
 >
