@@ -47,7 +47,13 @@ raw-CDP Chrome `--headless=new`, `document.hidden === false`):**
 - 320×400 viewport (CDP device metrics): bag panel 307×339 at (6,31) — fully on-screen,
   `.nw-pbody` `overflow-y: auto`.
 
-**Known gaps:** None. Ready for merge after user sign-off.
+**Known gaps:** None. **MERGED to `main` (`cb040a1`, 2026-07-18) after user sign-off.**
+
+**Post-merge verdict (2026-07-18):** the user finds the flat chrome bland now that
+the RPGUI skin no longer masks it — superseded aesthetically by **U2 — Grimdark
+Chrome** (`docs/plans/U2-grimdark-chrome.md`), which keeps U1's architecture (single
+stylesheet, CSS vars, no assets, M1 machinery) and replaces the flat look with a
+PoE/Diablo frame treatment. The Lens remains the exempt reference instrument.
 
 ## The verdict (user, 2026-07-17)
 

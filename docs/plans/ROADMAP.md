@@ -621,9 +621,9 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 >    This supersedes W4.5 (pixel UI skin plan). New milestone: **U1 — Lens UI Unification**
 >    (`docs/plans/U1-lens-ui-unification.md`).
 >
-> **Revised order: C1 (echoes) → S1 (survival pressure) → U1 (lens UI unification) ✅
-> → C2 (waystones) → C3 (loom) → C4 (armory) → G1-P (painterly verdict) →
-> C5 (buildings rework).**
+> **Revised order: C1 (echoes) ✅ → S1 (survival pressure) ✅ → U1 (lens UI
+> unification) ✅ → U2 (grimdark chrome) → C2 (waystones) → C3 (loom) → C4 (armory)
+> → G1-P (painterly verdict) → C5 (buildings rework).**
 >
 > **Rationale for U1 before C2:** S1 adds vital chips to the HUD — they should debut in
 > the new style. C2–C5 all add new panels (Loom tree, Armory slots, Buildings upgrade UI)
@@ -698,6 +698,29 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 > **ALL 228 ASSERTIONS / 45 FUNCTIONS PASSED, 0 page errors**; static trio green
 > (typecheck, build post-rpgui-removal, cargo 23/23); acceptance evidence re-gathered
 > via CDP probes incl. 320×400 fit. Full record: U1 brief's shipped section.
+>
+> **✅ MERGE (2026-07-18):** the chain `c1-echoes` → `s1-survival` → `u1-lens-ui`
+> merged to `main` (`cb040a1`) and pushed after user sign-off; static trio re-verified
+> post-merge (typecheck clean, build 775 modules, cargo 23/23).
+>
+> **🎨 U2 DIRECTION — GRIMDARK CHROME (2026-07-18, user verdict on the merged U1
+> look):** stripping RPGUI exposed that the flat Lens chrome reads as dev tooling,
+> not a game — "meh. looks kinda shitty tbh… maybe a poe/diablo like frame could work
+> better? smaller buttons? … current ui's gotta go, the rpgui stuff was hiding how
+> shitty it actually is currently lol." New milestone: **U2 — Grimdark Chrome**
+> (`docs/plans/U2-grimdark-chrome.md`): keep U1's architecture (one stylesheet, CSS
+> vars, no assets), swap the aesthetic — warm iron near-black surfaces, brass
+> box-shadow-ring plaque frames + corner brackets, blood-gradient HP, serif
+> small-caps display type over a sans body (mono retires to the Lens), and the
+> action bar compacted to Diablo-style 44px icon sockets with corner keybind tags
+> (labels → title/aria tooltips). All pure CSS gradients/shadows — the
+> no-hosted-assets rule is back to full strength. **The Lens stays exempt**
+> (diegetic instrument; ground-truthed: its styles are hard-coded in `main.ts`,
+> zero CSS-var coupling). Slot: **U2 before C2**, same rationale as U1 — C2–C5
+> panels should be authored against the final look. Handoff:
+> `docs/plans/HANDOFF-U2-deepseek.md` (now with a raw-evidence hard gate: full
+> Gauntlet console output pasted or the claim counts as no evidence; the review
+> pass re-runs headlessly via CDP regardless).
 
 ---
 
