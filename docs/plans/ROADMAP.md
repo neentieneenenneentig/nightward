@@ -1,4 +1,4 @@
-# NIGHTWARD — Roadmap (Batch 6 "The Deep Wilds" — VERIFIED ✅ 2026-07-18)
+# NIGHTWARD — Roadmap (Batch 7 "Soul-Forged" — ACTIVE 2026-07-19)
 
 > **Pivot (2026-07-16):** The world is no longer a dream — it's your network. Live browser
 > network metrics (RTT, jitter, bandwidth, connection type, real clock) drive every game
@@ -6,16 +6,24 @@
 > — but its parameters are now live functions of your internet connection. Same tab, same
 > seed, totally different world depending on where and how you're connected.
 
-**Status: X1 CONTENT BLITZ (repaired) + X3 MEGA FEATURES SHIPPED (2026-07-18).** Branch
-`u2-grimdark`. Typecheck clean, build green, **Gauntlet 62 functions / 1163 assertions ALL
-GREEN (headless raw-CDP Chrome, `?gl&seed=1234`, 0 page errors)** — the first honest full-suite
-run since the bulk commit. Awaiting user feel verdict.
+**Status: W7 SHIPPED ✅ (2026-07-19).** Branch `u2-grimdark`. Typecheck clean, build green,
+**Gauntlet ALL 1191 TESTS PASSED (1128ms)** — including 4 new W7 soul-feed tests.
 
 All systems implemented: C1 echoes, S1 survival pressure (vigor/resolve), U1 Lens UI unification,
 U2 grimdark chrome, C2 waystones, C3 Loom passive tree (40 nodes + 4 keystones), C4 Armory
 (5 boss relics, 12 silver/star items, 3 new mobs), C5 buildings rework (10 new towers, 4 roles,
 LTD2-style upgrade paths), G1/G2 visual upgrade + juice, W6 scoreboards, N3 living network
-(jitter→fire, realm→wind).
+(jitter→fire, realm→wind), **W7 soul-feeding (feed materials → soul-gear XP + affinity bonuses).**
+
+### W7 — Soul-Feeding ✅ (2026-07-19)
+- Consume inventory items to directly grant XP to soul-bound gear slots
+- Materials: `xpValue` + `soulAffinity` fields on all 24 MaterialDefs (TS-only, not packed to Rust)
+- Items: `soulXp` field on feedable items (ores, bars, herbs, charcoal, torch)
+- Affinity system: matching affinity = 1.5× bonus, opposed = 0.5× penalty, neutral = 1.0×
+- SoulFeedSystem: `feed()`, `canFeed()`, `affinityLabel()`
+- UI: "feed" tag on feedable items in Bag, slot picker popup with affinity highlighting
+- 4 Gauntlet tests: basic feed, affinity multipliers, level-up, non-feedable rejection
+- Files: `materials.ts`, `items.ts`, `systems/soulfeed.ts` (NEW), `ui.ts`, `styles.ts`, `main.ts`, `regression.ts`
 
 **X1 CONTENT BLITZ (2026-07-18, repaired same day by chief-of-staff review):** 15 new enemies
 with data-driven behaviors (ranged w/ sim-clock projectiles, siege, exploder, buffer, healer,
@@ -1301,7 +1309,7 @@ mined for ideas, but are not in the active queue.
 
 - **W5 — Zoom & LOD:** folded into G1/G2 (SUBPIPX + post-processing touch the same render
   pipeline).
-- **W7 — Loot economy & soul-feeding:** still conceptually sound — feed materials → soul-gear
+- **W7 — Loot economy & soul-feeding:** ✅ SHIPPED (2026-07-19, Batch 7). Feed materials → soul-gear XP with affinity bonuses.
   xp. May return as N4 if the core loop needs deepening after N1–N3.
 - **W8 — Grid inventory & paper-doll:** deferred indefinitely. The current inventory works;
   a D2/PoE grid is a lot of UI work for marginal gain.
