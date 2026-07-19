@@ -38,6 +38,8 @@ export class NetworkSystem {
   private lastConnectionType = '';
   private lastOnline = true;
   private endpointFetching = false; // guard against overlapping fetches
+  private endpointFailStreak = 0;   // consecutive all-beacons-unreachable
+  private endpointBackoffUntil = 0; // ms timestamp — skip polls until this time
 
   // transition debouncing
   private pendingTransition: { from: string; to: string; since: number } | null = null;
@@ -421,8 +423,12 @@ export class NetworkSystem {
     }
   }
 
-  /** Fire-and-forget beacon ping. Non-blocking — update() does NOT await. */
+  /** Fire-and-forget beacon ping. Non-blocking — update() does NOT await.
+   *  Uses exponential backoff when all beacons are unreachable:
+   *  10s → 20s → 40s → ... → max 5 min between attempts. */
   private pollEndpoint(nowMs: number) {
+    // Respect backoff after consecutive failures
+    if (this.endpointBackoffUntil > 0 && nowMs < this.endpointBackoffUntil) return;
     if (nowMs - this.lastEndpointMs < 10000) return;
     this.lastEndpointMs = nowMs;
     if (this.endpointFetching) return;
@@ -439,22 +445,36 @@ export class NetworkSystem {
 
   private tryEndpoints(endpoints: string[], idx: number, t0: number) {
     if (idx >= endpoints.length) {
-      this.netLog('resonance-echo', `All beacons unreachable — using fallback`);
+      // All beacons unreachable — apply exponential backoff
+      this.endpointFailStreak++;
+      const delay = Math.min(10000 * Math.pow(2, this.endpointFailStreak), 300_000);
+      this.endpointBackoffUntil = performance.now() + delay;
+      this.netLog('resonance-echo',
+        `All beacons unreachable — backing off ${(delay / 1000).toFixed(0)}s (streak ${this.endpointFailStreak})`);
       this.endpointFetching = false;
       return;
     }
     const url = endpoints[idx];
     const host = new URL(url).hostname;
-    fetch(url, { mode: 'no-cors', cache: 'no-store' })
+    // Use AbortController timeout instead of no-cors so that blocked/aborted
+    // requests actually reject and trigger the backoff chain.
+    const ctl = new AbortController();
+    const tm = setTimeout(() => ctl.abort(), 5000);
+    fetch(url, { cache: 'no-store', signal: ctl.signal })
       .then(() => {
+        clearTimeout(tm);
         const lat = performance.now() - t0;
         this.snap.endpointLatency = lat;
         this.trackEchoSample(url, lat);
+        // Success resets the fail streak
+        this.endpointFailStreak = 0;
+        this.endpointBackoffUntil = 0;
         this.netLog('resonance-echo',
           `${host} echoed in ${lat.toFixed(0)}ms`);
         this.endpointFetching = false;
       })
       .catch(() => {
+        clearTimeout(tm);
         this.netLog('resonance-echo', `${host} unreachable — trying next beacon...`);
         this.tryEndpoints(endpoints, idx + 1, t0);
       });

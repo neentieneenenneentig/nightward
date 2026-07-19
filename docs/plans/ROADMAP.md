@@ -1,4 +1,4 @@
-# NIGHTWARD — Roadmap (Batch 6 "The Deep Wilds" — IN PROGRESS 🚧)
+# NIGHTWARD — Roadmap (Batch 6 "The Deep Wilds" — VERIFIED ✅ 2026-07-18)
 
 > **Pivot (2026-07-16):** The world is no longer a dream — it's your network. Live browser
 > network metrics (RTT, jitter, bandwidth, connection type, real clock) drive every game
@@ -670,8 +670,11 @@ modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup 
 > → C4 (armory) ✅ → G1-P (particles/post-proc/juice) ✅ → C5 (buildings rework) ✅
 > → W6 (scoreboards) ✅ → N3 (living network) ✅**
 >
-> **ALL MILESTONES SHIPPED (2026-07-18, bulk session).** Testing/debugging loop
-> deferred to subsequent session per user request ("SPEED AND POWER").
+> **ALL MILESTONES SHIPPED (2026-07-18, bulk session).** **✅ VERIFIED 2026-07-18:**
+> typecheck clean, build green (779 modules, 5.42s), Gauntlet **ALL 1161 TESTS PASSED**
+> (62 functions, 4703ms, 0 page errors). Two worldgen-dependent skips only (`testGathering`,
+> `testFireIgnite` — no feature/flammable tile near spawn on seed 1234). Smoke test clean:
+> game boots, renders, gathers, enters night cycle without JS errors.
 >
 > **Rationale for U1 before C2:** S1 adds vital chips to the HUD — they should debut in
 > the new style. C2–C5 all add new panels (Loom tree, Armory slots, Buildings upgrade UI)

@@ -207,15 +207,15 @@ export class ChunkMap {
   }
 
   private destroyChunk(c: Chunk) {
-    c.sprite.destroy();
-    c.tex.destroy(true);
+    c.sprite?.destroy();
+    c.tex?.destroy(true);
     if (c.foam) {
-      c.foam.view.destroy();
-      for (const t of c.foam.texs) t.destroy(true);
+      c.foam.view?.destroy();
+      for (const t of c.foam.texs) t?.destroy(true);
     }
     if (c.glow) {
-      c.glow.view.destroy();
-      c.glow.tex.destroy(true);
+      c.glow.view?.destroy();
+      c.glow.tex?.destroy(true);
     }
   }
 
