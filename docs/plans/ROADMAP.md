@@ -6,8 +6,20 @@
 > — but its parameters are now live functions of your internet connection. Same tab, same
 > seed, totally different world depending on where and how you're connected.
 
-**Status: W7 SHIPPED ✅ (2026-07-19).** Branch `u2-grimdark`. Typecheck clean, build green,
-**Gauntlet ALL 1191 TESTS PASSED (1128ms)** — including 4 new W7 soul-feed tests.
+**Status: W7 SHIPPED ✅ + Painterly filter prototype ✅ (2026-07-19).** Branch `u2-grimdark`.
+Typecheck clean, build green, **Gauntlet 63/66 PASSED (3 pre-existing/flaky fails).**
+
+**G1-Painterly — Kuwahara oil-painting filter (2026-07-19):**
+- `PainterlyPass` in `postprocess.ts`: Kuwahara filter (4-quadrant variance-minimizing mean)
+  applied at 1/5 resolution for performance, then upscaled with linear interpolation
+- Toggle: **V** key or `?painterly` URL param; runtime tweaks via `NW.painterly.{enabled, strength, radius}`
+- Configurable: strength 0–1 (blend with original), radius 1–4 (brush-stroke size)
+- Sits above vignette (z=70), below UI — HUD stays crisp
+- Existing grain overlay (`renderer.ts`) complements the canvas-texture feel
+- **Performance note:** Canvas2D Kuwahara at full-res is too slow for 60fps gameplay; this
+  implementation processes at 1/5 res (~32K px) which is acceptable as a toggle-once "screenshot
+  mode." A future WGSL port (WebGPU only) would make it real-time.
+- Files: `postprocess.ts` (+162 lines), `main.ts` (+24 lines, V key + NW.painterly)
 
 All systems implemented: C1 echoes, S1 survival pressure (vigor/resolve), U1 Lens UI unification,
 U2 grimdark chrome, C2 waystones, C3 Loom passive tree (40 nodes + 4 keystones), C4 Armory

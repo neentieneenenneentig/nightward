@@ -130,6 +130,19 @@ async function boot() {
     post.resize(stage.app.screen.width, stage.app.screen.height);
   });
 
+  // G1: oil-painting Kuwahara filter — toggle with K, tweak via NW.painterly
+  let painterlyEnabled = new URLSearchParams(location.search).has('painterly');
+  let painterlyStrength = 0.85;
+  let painterlyRadius = 2;
+  (window as any).NW = { ...((window as any).NW ?? {}), painterly: {
+    get enabled() { return painterlyEnabled; },
+    set enabled(v: boolean) { painterlyEnabled = v; },
+    get strength() { return painterlyStrength; },
+    set strength(v: number) { painterlyStrength = Math.max(0, Math.min(1, v)); },
+    get radius() { return painterlyRadius; },
+    set radius(v: number) { painterlyRadius = Math.max(1, Math.min(4, v | 0)); },
+  } };
+
   const gather = new GatherSystem(ctx);
   const economy = new EconomySystem(ctx);
   const build = new BuildSystem(ctx);
@@ -278,6 +291,12 @@ async function boot() {
         inspectBox.style.display = 'none';
         inspectBox.dataset.pinned = '';
       }
+    }
+    // V toggles the oil-painting Kuwahara filter
+    if (e.key === 'v' || e.key === 'V') {
+      e.preventDefault();
+      painterlyEnabled = !painterlyEnabled;
+      ctx.toast(`Oil-paint filter: ${painterlyEnabled ? 'ON' : 'OFF'}`, painterlyEnabled ? 'good' : 'info');
     }
     // M3: G = Scatter Cache — spend gold to reduce horde size
     if (e.key === 'G') {
@@ -678,8 +697,9 @@ async function boot() {
         bloomSpots,
         grade: { tint: gradeTint, strength: gradeStrength },
         vignetteIntensity: vignetteI,
+        painterly: { enabled: painterlyEnabled, strength: painterlyStrength, radius: painterlyRadius },
       };
-      post.apply(stage.app.screen.width, stage.app.screen.height, ppCfg);
+      post.apply(stage.app.screen.width, stage.app.screen.height, ppCfg, stage.app.canvas);
     }
 
     // update Resonance panel
@@ -964,7 +984,7 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
     }
   });
   // expose the live config + materials table + network for runtime tuning from the console
-  (window as any).NW = { CFG, state, MATS: MATERIALS, ENEMIES, NET: ctx.net };
+  (window as any).NW = { ...((window as any).NW ?? {}), CFG, state, MATS: MATERIALS, ENEMIES, NET: ctx.net };
 }
 
 import { ITEMS } from './game/data/items';
