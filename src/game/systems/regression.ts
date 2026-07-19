@@ -2458,6 +2458,93 @@ async function testFoeBuffKeepsScaling(nw: any) {
   ok(true, 'foe buff scaling test completed');
 }
 
+// ---- W7: Soul-Feeding tests ----
+
+async function testSoulFeedBasic(nw: any) {
+  const state = nw.state;
+  const sf = nw.ctx.soulfeed;
+  ok(!!sf, 'soulfeed system exists on ctx');
+
+  // Add feedable items
+  state.player.inv['log'] = 5;
+  state.player.inv['iron_ore'] = 3;
+  ok(state.player.inv['log'] === 5, '5 logs in inventory');
+
+  // Feed logs to weapon (neutral affinity)
+  const r1 = sf.feed(state, 'log', 2, 'weapon');
+  ok(r1 !== null, 'feed log → weapon returns result');
+  ok(r1!.xp === 4, `feed 2 logs = 4 xp (2 × 2 each)`);
+  ok(state.player.inv['log'] === 3, '2 logs consumed, 3 remain');
+  ok(state.player.soulItems?.weapon !== undefined, 'weapon soul created');
+  ok(state.player.soulItems!.weapon!.xp === 4, 'weapon soul has 4 xp');
+
+  // Feed remaining logs
+  sf.feed(state, 'log', 3, 'weapon');
+  ok(state.player.inv['log'] === undefined || state.player.inv['log'] === 0, 'all logs consumed');
+  ok(state.player.soulItems!.weapon!.xp === 10, 'weapon soul now has 10 xp (4 + 3×2)');
+}
+
+async function testSoulFeedAffinity(nw: any) {
+  const state = nw.state;
+  const sf = nw.ctx.soulfeed;
+
+  // star_bar maps to Warp Rift material which has soulAffinity: 'amulet'
+  state.player.inv['star_bar'] = 3;
+
+  // Feed to matching affinity slot (amulet) → 1.5×
+  const r1 = sf.feed(state, 'star_bar', 1, 'amulet');
+  ok(r1!.affinityMul === 1.5, `amulet affinity → 1.5× multiplier`);
+  ok(r1!.xp === 90, `1 star_bar × 60 xp × 1.5 = 90 xp`);
+
+  // Feed to neutral slot (weapon) → 1.0×
+  const r2 = sf.feed(state, 'star_bar', 1, 'weapon');
+  ok(r2!.affinityMul === 1.0, `weapon (neutral) → 1.0× multiplier`);
+  ok(r2!.xp === 60, `1 star_bar × 60 xp × 1.0 = 60 xp`);
+
+  // Feed to opposed slot (tool_axe is opposed to amulet affinity) → 0.5×
+  const r3 = sf.feed(state, 'star_bar', 1, 'tool_axe');
+  ok(r3!.affinityMul === 0.5, `tool_axe (opposed) → 0.5× multiplier`);
+  ok(r3!.xp === 30, `1 star_bar × 60 xp × 0.5 = 30 xp`);
+
+  ok(state.player.inv['star_bar'] === undefined || state.player.inv['star_bar'] === 0, 'all star bars consumed');
+}
+
+async function testSoulFeedLevelUp(nw: any) {
+  const state = nw.state;
+  const sf = nw.ctx.soulfeed;
+
+  // 10 iron_ore × 10 xp each = 100 xp. Level 1→2 needs 50 xp (base).
+  state.player.inv['iron_ore'] = 10;
+  const r = sf.feed(state, 'iron_ore', 10, 'weapon');
+  ok(r!.leveled === true, 'weapon soul leveled up from feeding');
+  ok(r!.newLevel >= 2, `weapon soul at level ${r!.newLevel} (expected ≥2)`);
+  ok(r!.newXp >= 0, `overflow xp carried: ${r!.newXp}`);
+}
+
+async function testSoulFeedRejectNonFeedable(nw: any) {
+  const state = nw.state;
+  const sf = nw.ctx.soulfeed;
+
+  // Equipment should not be feedable
+  ok(!sf.canFeed('sword_copper'), 'sword_copper is NOT feedable');
+  ok(!sf.canFeed('armor_iron'), 'armor_iron is NOT feedable');
+  ok(!sf.canFeed('ring_star'), 'ring_star is NOT feedable');
+
+  // Potions should not be feedable
+  ok(!sf.canFeed('tonic_minor'), 'tonic_minor is NOT feedable');
+
+  // Materials should be feedable
+  ok(sf.canFeed('log'), 'log is feedable');
+  ok(sf.canFeed('copper_ore'), 'copper_ore is feedable');
+  ok(sf.canFeed('star_bar'), 'star_bar is feedable');
+
+  // Attempting to feed a non-feedable item returns null
+  state.player.inv['sword_copper'] = 1;
+  const r = sf.feed(state, 'sword_copper', 1, 'weapon');
+  ok(r === null, 'feeding non-feedable item returns null');
+  ok(state.player.inv['sword_copper'] === 1, 'non-feedable item not consumed');
+}
+
 const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Boot & state integrity', fn: testBoot },
   { name: 'Starting inventory', fn: testStartingInventory },
@@ -2531,6 +2618,11 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Foe buffs — birth scaling survives buff/expiry', fn: testFoeBuffKeepsScaling },
   // ---- Content sweep ----
   { name: 'Data integrity — every data row structurally valid', fn: testDataIntegrity },
+  // ---- W7: Soul-Feeding ----
+  { name: 'Soul-feed — materials grant XP, consume from inv', fn: testSoulFeedBasic },
+  { name: 'Soul-feed — affinity bonus 1.5×, opposed 0.5×', fn: testSoulFeedAffinity },
+  { name: 'Soul-feed — level-up on threshold crossing', fn: testSoulFeedLevelUp },
+  { name: 'Soul-feed — non-feedable items rejected', fn: testSoulFeedRejectNonFeedable },
 ];
 
 /** Run all registered tests sequentially. Returns { pass, fail, total, report }. */

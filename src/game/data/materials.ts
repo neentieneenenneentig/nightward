@@ -9,6 +9,7 @@
 // names or art. Live-edit via window.NW.MATS + __nw.core.pushMaterials().
 import { type RGB, ramp } from '../../engine/procgen/palette';
 import type { Detail } from '../../engine/procgen/sprites';
+import type { SoulSlot } from './soulgear';
 
 export interface MaterialDef {
   name: string;
@@ -24,68 +25,72 @@ export interface MaterialDef {
   wetness: number;     // 0..1 baseline moisture — R2: water-family tiles are wet SOURCES that
                         // diffuse dampness into flammable neighbors; high wet[] blocks ignition
                         // and extinguishes an already-burning tile
+  /** W7: base soul XP granted per unit when fed to a soul slot. 0 = cannot be fed. */
+  xpValue: number;
+  /** W7: which soul slot type gets 1.5× bonus XP from this material. */
+  soulAffinity?: SoulSlot;
 }
 
 /** index IS the material id (u8). Keep in sync with `M` below. */
 export const MATERIALS: MaterialDef[] = [
   // ---- 0–8: the original nine biomes (art verbatim from the old biomes.ts) ----
   { name: 'deep', art: { ramp: ramp('#0a2138', '#0d2b47', '#123a5e'), detail: 'waves' },
-    passable: false, speedMult: 0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 0, wetness: 1.0 },
+    passable: false, speedMult: 0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 0, wetness: 1.0, xpValue: 0 },
   { name: 'water', art: { ramp: ramp('#123a5e', '#1b4d78', '#2565a0'), detail: 'waves' },
-    passable: false, speedMult: 0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 0, wetness: 1.0 },
+    passable: false, speedMult: 0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 0, wetness: 1.0, xpValue: 0 },
   { name: 'sand', art: { ramp: ramp('#c2a15f', '#d4b878', '#e6d094'), detail: 'speckle' },
-    passable: true, speedMult: 0.9, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0.1 },
+    passable: true, speedMult: 0.9, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0.1, xpValue: 1, soulAffinity: 'charm' },
   { name: 'grass', art: { ramp: ramp('#2f6b3f', '#3f8148', '#569a53'), detail: 'grass' },
-    passable: true, speedMult: 1.0, buildable: true, flammable: 0.15, fuel: 2, burnsTo: 10, heightClass: 1, wetness: 0.05 },
+    passable: true, speedMult: 1.0, buildable: true, flammable: 0.15, fuel: 2, burnsTo: 10, heightClass: 1, wetness: 0.05, xpValue: 1, soulAffinity: 'tool_axe' },
   { name: 'meadow', art: { ramp: ramp('#3f8148', '#569a53', '#74b25e'), detail: 'flowers',
     accents: ramp('#e6c86e', '#d97b7b', '#c9a0dc', '#f2f2f2') },
-    passable: true, speedMult: 1.0, buildable: true, flammable: 0.2, fuel: 2, burnsTo: 10, heightClass: 1, wetness: 0.05 },
+    passable: true, speedMult: 1.0, buildable: true, flammable: 0.2, fuel: 2, burnsTo: 10, heightClass: 1, wetness: 0.05, xpValue: 2, soulAffinity: 'ring' },
   { name: 'forest', art: { ramp: ramp('#24523a', '#2f6b3f', '#3f8148'), detail: 'forest' },
-    passable: true, speedMult: 1.0, buildable: true, flammable: 0.45, fuel: 6, burnsTo: 10, heightClass: 1, wetness: 0.1 },
+    passable: true, speedMult: 1.0, buildable: true, flammable: 0.45, fuel: 6, burnsTo: 10, heightClass: 1, wetness: 0.1, xpValue: 3, soulAffinity: 'tool_axe' },
   { name: 'hill', art: { ramp: ramp('#5d6b52', '#75835f', '#8f9c72'), detail: 'pebbles' },
-    passable: true, speedMult: 0.85, buildable: true, flammable: 0.05, fuel: 2, burnsTo: 10, heightClass: 2, wetness: 0.05 },
+    passable: true, speedMult: 0.85, buildable: true, flammable: 0.05, fuel: 2, burnsTo: 10, heightClass: 2, wetness: 0.05, xpValue: 2, soulAffinity: 'tool_pick' },
   { name: 'mountain', art: { ramp: ramp('#4a4f5a', '#5a5f6b', '#737887'), detail: 'cracks' },
-    passable: false, speedMult: 0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 3, wetness: 0 },
+    passable: false, speedMult: 0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 3, wetness: 0, xpValue: 0 },
   { name: 'snow', art: { ramp: ramp('#c9d2e0', '#dfe6f0', '#f4f7fc'), detail: 'sparkle' },
-    passable: false, speedMult: 0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 3, wetness: 1.0 },
+    passable: false, speedMult: 0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 3, wetness: 1.0, xpValue: 0 },
   // ---- 9–15: new writable materials (props are CFG-grade — tuned at the gate) ----
   { name: 'Dirt', art: { ramp: ramp('#7a5f3f', '#93764f', '#ac8f64'), detail: 'speckle' },
-    passable: true, speedMult: 1.0, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0.05 },
+    passable: true, speedMult: 1.0, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0.05, xpValue: 1 },
   { name: 'Ash', art: { ramp: ramp('#3a3a3e', '#4a4a50', '#5f5f66'), detail: 'speckle' },
-    passable: true, speedMult: 1.0, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0 },
+    passable: true, speedMult: 1.0, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0, xpValue: 2, soulAffinity: 'weapon' },
   { name: 'Ice', art: { ramp: ramp('#9fc4e8', '#bcd9f2', '#e0f0fb'), detail: 'cracks' },
-    passable: true, speedMult: 1.15, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 0, wetness: 1.0 },
+    passable: true, speedMult: 1.15, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 0, wetness: 1.0, xpValue: 0 },
   { name: 'Mud', art: { ramp: ramp('#241c12', '#33281a', '#443423'), detail: 'wet' },
-    passable: true, speedMult: 0.55, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0.6 },
+    passable: true, speedMult: 0.55, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0.6, xpValue: 2, soulAffinity: 'armor' },
   { name: 'Gravel', art: { ramp: ramp('#6b6f77', '#7d828c', '#9198a3'), detail: 'pebbles' },
-    passable: true, speedMult: 0.95, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0.05 },
+    passable: true, speedMult: 0.95, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0.05, xpValue: 1, soulAffinity: 'tool_pick' },
   { name: 'Tilled Soil', art: { ramp: ramp('#4a3928', '#5a4632', '#6e5740'), detail: 'furrows' },
-    passable: true, speedMult: 0.9, buildable: false, flammable: 0.1, fuel: 1, burnsTo: 9, heightClass: 1, wetness: 0.15 },
+    passable: true, speedMult: 0.9, buildable: false, flammable: 0.1, fuel: 1, burnsTo: 9, heightClass: 1, wetness: 0.15, xpValue: 1, soulAffinity: 'tool_axe' },
   { name: 'Shallows', art: { ramp: ramp('#2565a0', '#3579b4', '#4a8ec9'), detail: 'waves' },
-    passable: true, speedMult: 0.6, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 0, wetness: 1.0 },
+    passable: true, speedMult: 0.6, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 0, wetness: 1.0, xpValue: 0 },
   // ---- 16–23: realm-warped materials ----
   { name: 'Fading Zone', art: { ramp: ramp('#cc00cc', '#dd33dd', '#ee66ee'), detail: 'speckle',
     accents: ramp('#ff00ff', '#ff66ff') },
-    passable: true, speedMult: 0.5, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0 },
+    passable: true, speedMult: 0.5, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0, xpValue: 4, soulAffinity: 'weapon' },
   { name: 'Flux Crystal', art: { ramp: ramp('#00cccc', '#33dddd', '#66eeee'), detail: 'sparkle',
     accents: ramp('#00ffff', '#ffffff') },
-    passable: true, speedMult: 0.3, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0 },
+    passable: true, speedMult: 0.3, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0, xpValue: 6, soulAffinity: 'ring' },
   { name: 'Verdant Bloom', art: { ramp: ramp('#cc9900', '#ddb833', '#eecc66'), detail: 'flowers',
     accents: ramp('#ffd700', '#ffec80') },
-    passable: true, speedMult: 1.2, buildable: true, flammable: 0.1, fuel: 4, burnsTo: 9, heightClass: 1, wetness: 0.05 },
+    passable: true, speedMult: 1.2, buildable: true, flammable: 0.1, fuel: 4, burnsTo: 9, heightClass: 1, wetness: 0.05, xpValue: 3, soulAffinity: 'amulet' },
   { name: 'Dead Zone', art: { ramp: ramp('#222222', '#333333', '#444444'), detail: 'speckle' },
-    passable: true, speedMult: 1.0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0 },
+    passable: true, speedMult: 1.0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0, xpValue: 1 },
   { name: 'Scorch Wall', art: { ramp: ramp('#cc4400', '#dd5522', '#ee7744'), detail: 'pebbles',
     accents: ramp('#ff6600', '#ff9944') },
-    passable: false, speedMult: 0, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 2, wetness: 0 },
+    passable: false, speedMult: 0, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 2, wetness: 0, xpValue: 0 },
   { name: 'Azure Vein', art: { ramp: ramp('#5588cc', '#77aadd', '#99ccff'), detail: 'sparkle' },
-    passable: true, speedMult: 1.0, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0.05 },
+    passable: true, speedMult: 1.0, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0.05, xpValue: 5, soulAffinity: 'charm' },
   { name: 'Warp Rift', art: { ramp: ramp('#7722dd', '#9944ff', '#bb77ff'), detail: 'cracks',
     accents: ramp('#aa44ff', '#dd99ff') },
-    passable: true, speedMult: 1.0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0 },
+    passable: true, speedMult: 1.0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0, xpValue: 8, soulAffinity: 'amulet' },
   { name: 'Ley Bloom', art: { ramp: ramp('#00cc44', '#33dd66', '#66ee88'), detail: 'sparkle',
     accents: ramp('#00ff55', '#88ffaa') },
-    passable: true, speedMult: 1.3, buildable: true, flammable: 0.05, fuel: 3, burnsTo: 9, heightClass: 1, wetness: 0.02 },
+    passable: true, speedMult: 1.3, buildable: true, flammable: 0.05, fuel: 3, burnsTo: 9, heightClass: 1, wetness: 0.02, xpValue: 5, soulAffinity: 'weapon' },
 ];
 
 /** Material ids by name — index into MATERIALS. */

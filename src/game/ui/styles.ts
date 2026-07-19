@@ -296,7 +296,42 @@ html, body, #nw-observatory, .nw-pbody {
   color: var(--ink-bright); }
 .nw-cell .tag { position: absolute; left: 3px; top: 2px; font-size: 9px;
   color: var(--gold); }
+.nw-cell .tag.feed { color: #88ccff; }
 .nw-empty { color: var(--ink-dim); padding: 18px; text-align: center; }
+
+/* ---- W7: soul-feed slot picker ---- */
+.nw-feed-picker {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  background: var(--bg-base);
+  border: 1px solid var(--metal);
+  border-radius: 4px;
+  box-shadow: 0 0 24px rgba(0,0,0,.8), inset 0 0 0 1px var(--metal-lo);
+  padding: 12px;
+  z-index: 200;
+  min-width: 220px;
+  max-width: 280px;
+}
+.nw-feed-hd {
+  font-family: var(--font-display); font-size: 11px; letter-spacing: 1px;
+  color: var(--ink-bright); text-align: center; margin-bottom: 8px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--metal-lo);
+}
+.nw-feed-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border-radius: 3px; cursor: pointer; font-size: 12px; color: var(--ink);
+  margin-bottom: 3px;
+}
+.nw-feed-row:hover { background: var(--bg-lift); color: var(--ink-bright); }
+.nw-feed-row.affinity { box-shadow: inset 0 0 0 1px #88ccff44; color: #aaddff; }
+.nw-feed-row.opposed { box-shadow: inset 0 0 0 1px #cc444444; color: #cc8888; }
+.nw-feed-lv { font-size: 10px; color: var(--ink-dim); margin-left: auto; }
+.nw-feed-aff { font-size: 9px; color: var(--gold); }
+.nw-feed-cancel {
+  text-align: center; padding: 6px; margin-top: 6px;
+  border-top: 1px solid var(--metal-lo); cursor: pointer;
+  font-size: 11px; color: var(--ink-dim);
+}
+.nw-feed-cancel:hover { color: var(--ink-bright); }
 
 /* ---- recipe / build list rows ---- */
 .nw-row { display: flex; align-items: center; gap: 10px; padding: 8px;

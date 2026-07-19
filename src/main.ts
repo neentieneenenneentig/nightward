@@ -30,6 +30,7 @@ import { NetworkSystem } from './game/systems/network';
 import { VitalsSystem } from './game/systems/vitals';
 import { LoomSystem } from './game/systems/loom';
 import { ScoreboardSystem } from './game/systems/scoreboard';
+import { SoulFeedSystem } from './game/systems/soulfeed';
 import { craft } from './game/systems/crafting';
 import { activeEffects } from './game/systems/effects';
 import { toggleEquip, invAdd } from './game/rules';
@@ -154,6 +155,10 @@ async function boot() {
   // W6: Scoreboards — connection uptime, death scorecard, leaderboard
   const scoreboard = new ScoreboardSystem(ctx);
   ctx.scoreboard = scoreboard;
+
+  // W7: Soul-feeding — consume materials to grant XP to soul-bound gear
+  const soulfeed = new SoulFeedSystem();
+  ctx.soulfeed = soulfeed;
 
   // resonance system — polls browser APIs, feeds game systems
   const net = new NetworkSystem();
@@ -291,6 +296,17 @@ async function boot() {
     craft: (id: string) => { const ok = craft(state, id, ctx.toast, log, net); if (ok) vitals.markAction(); ui.rebuildPanel(); },
     useItem: (id: string) => { useItem(id); ui.rebuildPanel(); },
     equip: (id: string) => { equipItem(id); ui.rebuildPanel(); },
+    feedSoul: (itemId: string, count: number, targetSlot: import('./game/data/soulgear').SoulSlot) => {
+      const result = soulfeed.feed(state, itemId, count, targetSlot);
+      if (result) {
+        vitals.markAction();
+        log.push('system',
+          `Fed ${count}× ${ITEMS[itemId].name} → ${targetSlot} soul +${result.xp} xp` +
+          (result.leveled ? ` (lv ${result.newLevel}!)` : ''),
+          state.clock);
+      }
+      return result;
+    },
     toggleMute: () => Sound.toggle(),
     newWorld: () => { location.hash = 's=' + ((Math.random() * 2 ** 31) | 0); location.reload(); },
     isPlacing: () => !!build.mode,

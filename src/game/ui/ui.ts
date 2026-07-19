@@ -15,6 +15,7 @@ import {
   population, territoryScore, soulXpProgress,
 } from '../rules';
 import type { SoulSlot } from '../data/soulgear';
+import { SoulFeedSystem, totalSoulXp, itemSoulAffinity, type FeedResult } from '../systems/soulfeed';
 import { phase, phaseRemaining } from '../systems/daynight';
 import type { GameState } from '../state';
 import type { LogEntry } from '../systems/log';
@@ -36,6 +37,8 @@ export interface UIHooks {
   isPlacing(): boolean;
   gatherView(): { label: string; frac: number } | null;
   logEntries(): LogEntry[];
+  /** W7: feed an item to a soul-gear slot. Returns FeedResult or null if invalid. */
+  feedSoul(itemId: string, count: number, targetSlot: SoulSlot): FeedResult | null;
 }
 
 type Panel = 'bag' | 'craft' | 'skills' | 'log' | null;
@@ -432,20 +435,24 @@ export class UI {
       body.appendChild(empty); return;
     }
     const grid = el('div', 'nw-grid');
+    const feedSys = new SoulFeedSystem();
     for (const id of ids) {
       const def = ITEMS[id];
       const slot = slotOf(id);
       const worn = !!slot && p.equip?.[slot] === id;
       const usable = !!def.heal;
+      const feedable = !slot && !usable && feedSys.canFeed(id);
       const tag = worn ? '<span class="tag on">worn</span>'
         : slot ? '<span class="tag">equip</span>'
-        : usable ? '<span class="tag">use</span>' : '';
+        : usable ? '<span class="tag">use</span>'
+        : feedable ? '<span class="tag feed">feed</span>' : '';
       const cell = el('div', 'nw-cell' + (worn ? ' worn' : ''));
       cell.innerHTML = `<img src="${icon(id)}" alt=""><span class="n">${p.inv[id]}</span>${tag}`;
       cell.title = def.name
         + (def.weaponDmg ? ` (+${def.weaponDmg} dmg)` : '')
         + (def.armor ? ` (+${def.armor} armor)` : '')
-        + (def.heal ? ` (heals ${def.heal})` : '');
+        + (def.heal ? ` (heals ${def.heal})` : '')
+        + (feedable ? ` (soul xp: ${totalSoulXp(id)} each)` : '');
       cell.tabIndex = 0; cell.setAttribute('role', 'button');
       if (slot) {
         cell.setAttribute('aria-label', `${worn ? 'Unequip' : 'Equip'} ${def.name}`);
@@ -455,10 +462,80 @@ export class UI {
         cell.setAttribute('aria-label', `Use ${def.name}`);
         cell.addEventListener('click', () => this.hooks.useItem(id));
         cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.hooks.useItem(id); } });
+      } else if (feedable) {
+        cell.setAttribute('aria-label', `Feed ${def.name} to soul gear`);
+        cell.addEventListener('click', () => this.showFeedPicker(id, p.inv[id]));
+        cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.showFeedPicker(id, p.inv[id]); } });
       }
       grid.appendChild(cell);
     }
     body.appendChild(grid);
+  }
+
+  /** W7: show a slot picker popup for soul-feeding an item. */
+  private showFeedPicker(itemId: string, available: number) {
+    const def = ITEMS[itemId];
+    const feedSys = new SoulFeedSystem();
+    const xpEach = totalSoulXp(itemId);
+    const affinity = itemSoulAffinity(itemId);
+    const ALL_SLOTS: { slot: SoulSlot; label: string; glyph: string }[] = [
+      { slot: 'weapon', label: 'Weapon', glyph: '⚔' },
+      { slot: 'armor', label: 'Armor', glyph: '🛡' },
+      { slot: 'tool_axe', label: 'Axe', glyph: '🪓' },
+      { slot: 'tool_pick', label: 'Pick', glyph: '⛏' },
+      { slot: 'ring', label: 'Ring', glyph: '💍' },
+      { slot: 'amulet', label: 'Amulet', glyph: '📿' },
+      { slot: 'charm', label: 'Charm', glyph: '🍀' },
+    ];
+
+    // Remove any existing picker
+    const existing = this.panelHost.querySelector('.nw-feed-picker');
+    if (existing) existing.remove();
+
+    const picker = el('div', 'nw-feed-picker');
+    picker.innerHTML = `<div class="nw-feed-hd">Feed ${def.name} (${xpEach} soul xp each)</div>`;
+
+    for (const { slot, label, glyph } of ALL_SLOTS) {
+      const si = this.state.player.soulItems?.[slot];
+      const lv = si ? si.level : 1;
+      const affLabel = feedSys.affinityLabel(itemId, slot);
+      const row = el('div', 'nw-feed-row');
+      const isAffinity = affinity === slot;
+      const isOpposed = affinity && ['weapon','armor','tool_axe','tool_pick','ring','amulet','charm'].includes(slot)
+        && (affinity === 'weapon' && ['armor','charm'].includes(slot)
+          || affinity === 'armor' && ['weapon','ring'].includes(slot)
+          || affinity === 'tool_axe' && ['tool_pick','amulet'].includes(slot)
+          || affinity === 'tool_pick' && ['tool_axe','ring'].includes(slot)
+          || affinity === 'ring' && ['armor','tool_pick'].includes(slot)
+          || affinity === 'amulet' && ['tool_axe','charm'].includes(slot)
+          || affinity === 'charm' && ['weapon','amulet'].includes(slot));
+      row.className = 'nw-feed-row' + (isAffinity ? ' affinity' : '') + (isOpposed ? ' opposed' : '');
+      row.innerHTML = `<span>${glyph} ${label}</span><span class="nw-feed-lv">soul lv ${lv}</span>${affLabel ? `<span class="nw-feed-aff">${affLabel}</span>` : ''}`;
+      row.tabIndex = 0; row.setAttribute('role', 'button');
+      row.addEventListener('click', () => {
+        const count = Math.min(available, 99); // feed all available, max 99 at once
+        const result = this.hooks.feedSoul(itemId, count, slot);
+        if (result) {
+          this.toast(
+            `Fed ${count}× ${def.name} → ${label} soul +${result.xp} xp${result.leveled ? ` (lv ${result.newLevel}!)` : ''}`,
+            result.leveled ? 'good' : 'info',
+          );
+          picker.remove();
+          this.rebuildPanel();
+        }
+      });
+      row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.click(); } });
+      picker.appendChild(row);
+    }
+
+    const cancel = el('div', 'nw-feed-cancel');
+    cancel.textContent = 'Cancel';
+    cancel.tabIndex = 0; cancel.setAttribute('role', 'button');
+    cancel.addEventListener('click', () => picker.remove());
+    cancel.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); picker.remove(); } });
+    picker.appendChild(cancel);
+
+    this.panelHost.appendChild(picker);
   }
 
   /** One equipment slot: shows the worn item + its soul level (click to unequip), or an empty placeholder. */

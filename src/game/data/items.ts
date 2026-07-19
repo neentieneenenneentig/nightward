@@ -29,6 +29,8 @@ export interface ItemDef {
   effects?: string[];
   /** C4: boss relic — unique drop from a specific lord (6th equip slot) */
   relic?: string;
+  /** W7: soul XP granted when fed to a soul-gear slot. Materials use MaterialDef.xpValue instead. */
+  soulXp?: number;
 }
 
 const I = (
@@ -42,18 +44,18 @@ const I = (
 
 export const ITEMS: Record<string, ItemDef> = Object.fromEntries([
   // materials
-  I('log', 'Timber', 'log', '#6b4a38'),
-  I('fine_log', 'Fine Timber', 'log', '#8a5a38', '#c2a15f'),
-  I('plank', 'Plank', 'plank', '#a3794f'),
-  I('stone', 'Runestone', 'stone', '#737887'),
-  I('copper_ore', 'Copper Ore', 'ore', '#5a5f6b', '#c47b3b'),
-  I('iron_ore', 'Iron Ore', 'ore', '#5a5f6b', '#9aa7b8'),
-  I('copper_bar', 'Copper Bar', 'bar', '#c47b3b'),
-  I('iron_bar', 'Iron Bar', 'bar', '#9aa7b8'),
+  I('log', 'Timber', 'log', '#6b4a38', undefined, { soulXp: 2 }),
+  I('fine_log', 'Fine Timber', 'log', '#8a5a38', '#c2a15f', { soulXp: 4 }),
+  I('plank', 'Plank', 'plank', '#a3794f', undefined, { soulXp: 3 }),
+  I('stone', 'Runestone', 'stone', '#737887', undefined, { soulXp: 2 }),
+  I('copper_ore', 'Copper Ore', 'ore', '#5a5f6b', '#c47b3b', { soulXp: 6 }),
+  I('iron_ore', 'Iron Ore', 'ore', '#5a5f6b', '#9aa7b8', { soulXp: 10 }),
+  I('copper_bar', 'Copper Bar', 'bar', '#c47b3b', undefined, { soulXp: 12 }),
+  I('iron_bar', 'Iron Bar', 'bar', '#9aa7b8', undefined, { soulXp: 20 }),
   // herbs & food
-  I('sunleaf', 'Sunleaf', 'herb', '#569a53', '#e6c86e'),
-  I('moonbell', 'Moonbell', 'herb', '#3f8148', '#c9a0dc'),
-  I('berry', 'Wild Berries', 'berry', '#b3402e', '#569a53'),
+  I('sunleaf', 'Sunleaf', 'herb', '#569a53', '#e6c86e', { soulXp: 5 }),
+  I('moonbell', 'Moonbell', 'herb', '#3f8148', '#c9a0dc', { soulXp: 7 }),
+  I('berry', 'Wild Berries', 'berry', '#b3402e', '#569a53', { soulXp: 3 }),
   // tools
   I('axe_flint', 'Flint Axe', 'axe', '#737887', '#6b4a38', { toolClass: 'axe', toolPower: 1 }),
   I('axe_copper', 'Copper Axe', 'axe', '#c47b3b', '#6b4a38', { toolClass: 'axe', toolPower: 2 }),
@@ -79,8 +81,8 @@ export const ITEMS: Record<string, ItemDef> = Object.fromEntries([
   I('charm_ember', 'Ember Charm', 'charm', '#c85a2e', '#ffd27a', { trinket: 'charm', regen: 0.5 }),
   I('charm_moon', 'Moon Charm', 'charm', '#4a6ea8', '#c9a0dc', { trinket: 'charm', regen: 1 }),
   // firemaking
-  I('torch', 'Torch', 'torch', '#c47b3b', '#ffd27a'),
-  I('charcoal', 'Charcoal', 'charcoal', '#232023', '#3a3a3e'),
+  I('torch', 'Torch', 'torch', '#c47b3b', '#ffd27a', { soulXp: 2 }),
+  I('charcoal', 'Charcoal', 'charcoal', '#232023', '#3a3a3e', { soulXp: 4 }),
 
   // C4: Boss relics — unique drops from domain lords (6th equip slot)
   I('relic_thorn', "Thornwarden's Bramble Heart", 'charm', '#3a6b2f', '#ff6b6b',
@@ -95,10 +97,10 @@ export const ITEMS: Record<string, ItemDef> = Object.fromEntries([
     { effects: ['see_foe_hp', 'resonance_boost'], relic: 'nullmaw' }),
 
   // C4: New material tiers
-  I('silver_ore', 'Silver Ore', 'ore', '#7a8a9a', '#d0d8e0'),
-  I('silver_bar', 'Silver Bar', 'bar', '#d0d8e0'),
-  I('star_ore', 'Star-Metal Ore', 'ore', '#1a2a4a', '#aaccff'),
-  I('star_bar', 'Star-Metal Bar', 'bar', '#aaccff'),
+  I('silver_ore', 'Silver Ore', 'ore', '#7a8a9a', '#d0d8e0', { soulXp: 18 }),
+  I('silver_bar', 'Silver Bar', 'bar', '#d0d8e0', undefined, { soulXp: 35 }),
+  I('star_ore', 'Star-Metal Ore', 'ore', '#1a2a4a', '#aaccff', { soulXp: 30 }),
+  I('star_bar', 'Star-Metal Bar', 'bar', '#aaccff', undefined, { soulXp: 60 }),
 
   // C4: Silver/star-tier gear
   I('sword_silver', 'Silver Blade', 'sword', '#d0d8e0', '#52402f', { weaponDmg: 13 }),
