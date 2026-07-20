@@ -11,6 +11,32 @@ import { type RGB, ramp } from '../../engine/procgen/palette';
 import type { Detail } from '../../engine/procgen/sprites';
 import type { SoulSlot } from './soulgear';
 
+/** N2b: per-tile gameplay effects applied while the player stands on this material.
+ *  All fields are optional — most materials have no effects. Effects are data rows,
+ *  not engine code: adding a new material with effects is just a row edit. */
+export interface MaterialEffects {
+  /** HP damage per sim-second while standing on this tile. */
+  damagePerSec?: number;
+  /** Multiplier on natural HP regen (1.0 = normal). */
+  regenMult?: number;
+  /** Multiplier on gather yield (1.0 = normal). */
+  gatherYieldMult?: number;
+  /** Multiplier on all XP gain (1.0 = normal). */
+  xpMult?: number;
+  /** Multiplier on soul-gear XP gain (1.0 = normal). */
+  soulXpMult?: number;
+  /** Multiplier on building construction speed (1.0 = normal). */
+  buildSpeedMult?: number;
+  /** Prevents gathering on this tile regardless of features present. */
+  noGathering?: boolean;
+  /** Stun duration in ms when the player first steps onto this tile. */
+  stunOnEnterMs?: number;
+  /** Speed multiplier applied for `speedBurstMs` after leaving this tile. */
+  speedBurstOnExit?: number;
+  /** Duration in ms for the exit speed burst. */
+  speedBurstMs?: number;
+}
+
 export interface MaterialDef {
   name: string;
   art: { ramp: RGB[]; detail: Detail; accents?: RGB[] };  // never crosses the wasm boundary
@@ -29,6 +55,8 @@ export interface MaterialDef {
   xpValue: number;
   /** W7: which soul slot type gets 1.5× bonus XP from this material. */
   soulAffinity?: SoulSlot;
+  /** N2b: per-tile gameplay effects while the player stands on this material. */
+  effects?: MaterialEffects;
 }
 
 /** index IS the material id (u8). Keep in sync with `M` below. */
@@ -68,29 +96,37 @@ export const MATERIALS: MaterialDef[] = [
     passable: true, speedMult: 0.9, buildable: false, flammable: 0.1, fuel: 1, burnsTo: 9, heightClass: 1, wetness: 0.15, xpValue: 1, soulAffinity: 'tool_axe' },
   { name: 'Shallows', art: { ramp: ramp('#2565a0', '#3579b4', '#4a8ec9'), detail: 'waves' },
     passable: true, speedMult: 0.6, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 0, wetness: 1.0, xpValue: 0 },
-  // ---- 16–23: realm-warped materials ----
+  // ---- 16–23: realm-warped materials (N2b: per-tile gameplay effects) ----
   { name: 'Fading Zone', art: { ramp: ramp('#cc00cc', '#dd33dd', '#ee66ee'), detail: 'speckle',
     accents: ramp('#ff00ff', '#ff66ff') },
-    passable: true, speedMult: 0.5, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0, xpValue: 4, soulAffinity: 'weapon' },
+    passable: true, speedMult: 0.5, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0, xpValue: 4, soulAffinity: 'weapon',
+    effects: { damagePerSec: 0.5 } },  // packet-loss: slow + chip damage
   { name: 'Flux Crystal', art: { ramp: ramp('#00cccc', '#33dddd', '#66eeee'), detail: 'sparkle',
     accents: ramp('#00ffff', '#ffffff') },
-    passable: true, speedMult: 0.3, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0, xpValue: 6, soulAffinity: 'ring' },
+    passable: true, speedMult: 0.3, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0, xpValue: 6, soulAffinity: 'ring',
+    effects: { stunOnEnterMs: 500, speedBurstOnExit: 1.5, speedBurstMs: 2000 } },  // latency spike: stun→rebound
   { name: 'Verdant Bloom', art: { ramp: ramp('#cc9900', '#ddb833', '#eecc66'), detail: 'flowers',
     accents: ramp('#ffd700', '#ffec80') },
-    passable: true, speedMult: 1.2, buildable: true, flammable: 0.1, fuel: 4, burnsTo: 9, heightClass: 1, wetness: 0.05, xpValue: 3, soulAffinity: 'amulet' },
+    passable: true, speedMult: 1.2, buildable: true, flammable: 0.1, fuel: 4, burnsTo: 9, heightClass: 1, wetness: 0.05, xpValue: 3, soulAffinity: 'amulet',
+    effects: { regenMult: 2.0, gatherYieldMult: 1.5 } },  // bandwidth bloom: double regen + richer gathers
   { name: 'Dead Zone', art: { ramp: ramp('#222222', '#333333', '#444444'), detail: 'speckle' },
-    passable: true, speedMult: 1.0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0, xpValue: 1 },
+    passable: true, speedMult: 1.0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0, xpValue: 1,
+    effects: { noGathering: true } },  // dead zone: no building, no gathering
   { name: 'Scorch Wall', art: { ramp: ramp('#cc4400', '#dd5522', '#ee7744'), detail: 'pebbles',
     accents: ramp('#ff6600', '#ff9944') },
-    passable: false, speedMult: 0, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 2, wetness: 0, xpValue: 0 },
+    passable: false, speedMult: 0, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 2, wetness: 0, xpValue: 0,
+    effects: { damagePerSec: 2.0 } },  // firewall barrier: hurts anything touching it
   { name: 'Azure Vein', art: { ramp: ramp('#5588cc', '#77aadd', '#99ccff'), detail: 'sparkle' },
-    passable: true, speedMult: 1.0, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0.05, xpValue: 5, soulAffinity: 'charm' },
+    passable: true, speedMult: 1.0, buildable: true, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0.05, xpValue: 5, soulAffinity: 'charm',
+    effects: { xpMult: 1.5 } },  // DNS cache: bonus XP while standing on it
   { name: 'Warp Rift', art: { ramp: ramp('#7722dd', '#9944ff', '#bb77ff'), detail: 'cracks',
     accents: ramp('#aa44ff', '#dd99ff') },
-    passable: true, speedMult: 1.0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0, xpValue: 8, soulAffinity: 'amulet' },
+    passable: true, speedMult: 1.0, buildable: false, flammable: 0, fuel: 0, burnsTo: -1, heightClass: 1, wetness: 0, xpValue: 8, soulAffinity: 'amulet',
+    effects: { damagePerSec: 1.5, stunOnEnterMs: 300 } },  // routing loop: disorienting + chip damage
   { name: 'Ley Bloom', art: { ramp: ramp('#00cc44', '#33dd66', '#66ee88'), detail: 'sparkle',
     accents: ramp('#00ff55', '#88ffaa') },
-    passable: true, speedMult: 1.3, buildable: true, flammable: 0.05, fuel: 3, burnsTo: 9, heightClass: 1, wetness: 0.02, xpValue: 5, soulAffinity: 'weapon' },
+    passable: true, speedMult: 1.3, buildable: true, flammable: 0.05, fuel: 3, burnsTo: 9, heightClass: 1, wetness: 0.02, xpValue: 5, soulAffinity: 'weapon',
+    effects: { soulXpMult: 2.0, buildSpeedMult: 1.5 } },  // signal booster: double soul XP + faster building
 ];
 
 /** Material ids by name — index into MATERIALS. */

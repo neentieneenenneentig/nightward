@@ -31,6 +31,7 @@ import { VitalsSystem } from './game/systems/vitals';
 import { LoomSystem } from './game/systems/loom';
 import { ScoreboardSystem } from './game/systems/scoreboard';
 import { SoulFeedSystem } from './game/systems/soulfeed';
+import { MaterialEffectSystem } from './game/systems/materialEffects';
 import { craft } from './game/systems/crafting';
 import { activeEffects } from './game/systems/effects';
 import { toggleEquip, invAdd } from './game/rules';
@@ -172,6 +173,10 @@ async function boot() {
   // W7: Soul-feeding — consume materials to grant XP to soul-bound gear
   const soulfeed = new SoulFeedSystem();
   ctx.soulfeed = soulfeed;
+
+  // N2b: Material effect hooks — per-tile gameplay effects from materials
+  const matFx = new MaterialEffectSystem(ctx);
+  ctx.matFx = matFx;
 
   // resonance system — polls browser APIs, feeds game systems
   const net = new NetworkSystem();
@@ -487,7 +492,7 @@ async function boot() {
     // S1: collect RTT samples during the night for stability tracking
     if (ph.isNight) net.sampleNightRtt();
 
-    const a = ui.isOpen() ? { x: 0, y: 0 } : input.axis();
+    const a = (ui.isOpen() || matFx.isStunned) ? { x: 0, y: 0 } : input.axis();
     const feetSpeed = world.speedAt(Math.floor(player.x / TILE), Math.floor(player.y / TILE));
     // N2a: move speed modifier from echo jitter — read from mapping (live-tweakable)
     const moveSpeedMul = net.getGameValue('moveSpeed');
@@ -495,8 +500,10 @@ async function boot() {
     const resolveSpeedMul = vitals.getSpeedMult();
     // C3: Loom move speed modifier
     const loomSpeedMul = 1 + (loom.ensureMods().moveSpeedPct / 100);
+    // N2b: material speed burst (e.g. Flux Crystal exit)
+    const matSpeedMul = matFx.speedBurst;
     const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y),
-      feetSpeed * moveSpeedMul * resolveSpeedMul * loomSpeedMul);
+      feetSpeed * moveSpeedMul * resolveSpeedMul * loomSpeedMul * matSpeedMul);
     state.player.x = player.x;
     state.player.y = player.y;
 
@@ -514,6 +521,7 @@ async function boot() {
     fire.update(effectiveDt);
     echoes.update(effectiveDt);
     vitals.update(effectiveDt);
+    matFx.update(effectiveDt);  // N2b: material tile effects
     build.updateDecay(effectiveDt);  // C2: disconnect decay
 
     // N3: re-push fire params with network-driven modifiers every 2s
