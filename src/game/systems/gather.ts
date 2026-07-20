@@ -60,6 +60,12 @@ export class GatherSystem {
     if (!t || this.active) return;
     const { state, toast } = this.ctx;
 
+    // N2b: material effects — some tiles block gathering entirely
+    if (this.ctx.matFx?.mods?.noGathering) {
+      toast("This ground resists your efforts — nothing can be harvested here.", 'bad');
+      return;
+    }
+
     if (skillLevel(state, t.def.skill) < t.def.levelReq) {
       toast(`Requires ${SKILL_NAME[t.def.skill]} ${t.def.levelReq}`, 'bad');
       return;
@@ -148,12 +154,23 @@ export class GatherSystem {
         d.n = Math.max(0, Math.floor(scaled) + (Math.random() < scaled % 1 ? 1 : 0));
       }
     }
+    // N2b: material effect — Verdant Bloom tiles boost gather yield
+    const matYieldMul = this.ctx.matFx?.mods?.gatherYieldMult ?? 1;
+    if (matYieldMul !== 1) {
+      for (const d of drops) d.n = Math.max(1, Math.round(d.n * matYieldMul));
+    }
     for (const d of drops) { if (d.n > 0) { invAdd(state, d.id, d.n); acquireGear(state, d.id); } }
-    const newLevel = addXp(state, a.def.skill, a.def.xp);
+    // N2b: material XP multiplier (Azure Vein etc.)
+    const matXpMul = this.ctx.matFx?.mods?.xpMult ?? 1;
+    const scaledXp = Math.round(a.def.xp * matXpMul);
+    const newLevel = addXp(state, a.def.skill, scaledXp);
 
     if (a.def.toolClass) {
       const slot = toolSlotFor(a.def.toolClass);
-      const toolLvl = awardSoulXp(state, slot, CFG.soulgear.toolXpPerUse);
+      // N2b: material soul-XP multiplier (Ley Bloom etc.)
+      const matSoulXpMul = this.ctx.matFx?.mods?.soulXpMult ?? 1;
+      const scaledSoulXp = Math.round(CFG.soulgear.toolXpPerUse * matSoulXpMul);
+      const toolLvl = awardSoulXp(state, slot, scaledSoulXp);
       if (toolLvl) {
         toast(`Your ${a.def.toolClass} feels sharper — soul level ${toolLvl}!`, 'good');
         this.ctx.log?.push('level', `Tool (${a.def.toolClass}) reached soul level ${toolLvl}`, state.clock);
@@ -184,7 +201,7 @@ export class GatherSystem {
 
     Sound.play(pickSfx(GATHER_SFX[a.def.skill] ?? ['forage']));
     const got = drops.map((d) => `+${d.n} ${ITEMS[d.id].name}`).join('  ');
-    toast(`${got}   (+${a.def.xp} ${SKILL_NAME[a.def.skill]} xp)`);
+    toast(`${got}   (+${scaledXp} ${SKILL_NAME[a.def.skill]} xp)`);
     const s = this.ctx.net?.snap;
     this.ctx.log?.push('gather', `${got || 'Gathered nothing'} from ${a.def.name}`, state.clock);
 
