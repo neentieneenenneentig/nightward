@@ -100,6 +100,18 @@ html, body, #nw-observatory, .nw-pbody {
   background: linear-gradient(180deg, var(--blood-hi), var(--blood) 60%, #6d130e);
   transition: width .2s; }
 .nw-gold { color: var(--gold); font-weight: 700; }
+/* ---- L1: age / lifespan chip — a hard, ever-draining clock ---- */
+.nw-agebar { position: relative; width: calc(60px * var(--scale)); height: calc(9px * var(--scale));
+  background: var(--bg-deep); border: 1px solid #000; border-radius: 2px; overflow: hidden;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.8); }
+.nw-agefill { position: absolute; inset: 0; z-index: 1; width: 100%; right: 0; left: auto;
+  background: linear-gradient(180deg, #cfa860, var(--metal-hi) 60%, #6a5638);
+  transition: width .3s; }
+.nw-age.warn .nw-agefill { background: linear-gradient(180deg, #e0a04a, #b06a1e 60%, #6e3f10); }
+.nw-age.critical .nw-agefill { background: linear-gradient(180deg, var(--blood-hi), var(--blood) 60%, #6d130e); }
+.nw-age.critical { animation: nw-age-pulse 1.1s ease-in-out infinite; }
+@keyframes nw-age-pulse { 0%, 100% { box-shadow: inset 0 0 0 1px var(--metal-lo), 0 2px 8px rgba(0,0,0,.4); }
+  50% { box-shadow: inset 0 0 0 1px var(--blood-hi), 0 0 10px rgba(210,74,56,.5); } }
 .nw-clock .sun { color: var(--gold); } .nw-clock .moon { color: #a9b6e6; }
 .nw-domain .dn { color: #ccbbdd; } .nw-domain .dg { color: #d89a9a; letter-spacing: 1px; }
 .nw-domain { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; }
@@ -470,6 +482,42 @@ html, body, #nw-observatory, .nw-pbody {
 .nw-toast.good { color: #d9f6c2; border-color: var(--good); box-shadow: inset 0 0 0 1px var(--good), inset 0 0 0 2px rgba(0,0,0,.5), 0 3px 12px rgba(0,0,0,.45); }
 .nw-toast.bad { color: #f6d2d2; border-color: var(--bad); box-shadow: inset 0 0 0 1px var(--bad), inset 0 0 0 2px rgba(0,0,0,.5), 0 3px 12px rgba(0,0,0,.45); }
 @keyframes nw-pop { from { transform: translateY(-8px); opacity: 0; } }
+
+/* ---- W6: leaderboard panel ---- */
+.nw-lb-cur { margin-bottom: 18px; }
+.nw-lb-hist { border-top: 1px solid var(--metal-lo); padding-top: 14px; }
+.nw-lb-sechd {
+  font-family: var(--font-display); font-size: max(10px, calc(11px * var(--scale)));
+  color: var(--accent); letter-spacing: 2px; text-transform: uppercase;
+  margin-bottom: 10px; font-weight: 700;
+}
+.nw-lb-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.nw-lb-stat {
+  background: radial-gradient(circle at 50% 32%, #1b1510, #0d0a07 78%);
+  border: 1px solid #000;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--metal-lo), inset 0 2px 6px rgba(0,0,0,.65);
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 6px;
+}
+.nw-lb-val { font-family: var(--font-display); font-size: max(12px, calc(14px * var(--scale))); color: var(--ink-bright); font-weight: 700; }
+.nw-lb-lbl { font-size: max(8px, calc(9px * var(--scale))); color: var(--ink-dim); text-transform: uppercase; letter-spacing: 1px; }
+.nw-lb-list { display: flex; flex-direction: column; gap: 3px; }
+.nw-lb-row {
+  display: flex; align-items: center; gap: 10px; padding: 6px 8px;
+  background: radial-gradient(circle at 50% 32%, #1b1510, #0d0a07 78%);
+  border: 1px solid #000;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--metal-lo), inset 0 2px 6px rgba(0,0,0,.65);
+}
+.nw-lb-row:first-child { box-shadow: inset 0 0 0 1px var(--metal-hi), inset 0 2px 8px rgba(0,0,0,.5), 0 0 8px rgba(216,166,72,.15); }
+.nw-lb-row.cheat { opacity: .55; filter: grayscale(.4); }
+.nw-lb-rank { font-size: max(13px, calc(15px * var(--scale))); min-width: 32px; text-align: center; color: var(--gold); }
+.nw-lb-score { font-family: var(--font-display); font-size: max(12px, calc(13px * var(--scale))); color: var(--accent); font-weight: 700; min-width: 52px; }
+.nw-lb-age { font-family: var(--font-display); font-size: max(11px, calc(12px * var(--scale))); color: var(--ink-bright); font-weight: 700; min-width: 70px; }
+.nw-lb-detail { flex: 1; font-size: max(9px, calc(10px * var(--scale))); color: var(--ink-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nw-lb-realm { font-size: max(9px, calc(10px * var(--scale))); color: var(--metal-hi); text-align: right; }
+.nw-lb-cheat, .cheat i { color: var(--bad); font-style: italic; }
 
 /* ---- game over ---- */
 .nw-gameover { position: absolute; inset: 0; display: flex; flex-direction: column;

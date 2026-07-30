@@ -1,12 +1,22 @@
-// W6: Lifespan & Scoreboards. Tracks connection uptime, builds a run
-// scorecard on death, and persists top-10 runs in localStorage.
-// Respects the no-persistence rule: run STATE is never saved, but run
-// OUTCOMES (scorecard) may be persisted as historical records.
+// W6/L1: Lifespan & Scoreboards. Tracks connection uptime, builds a run
+// scorecard on death, and persists top runs in localStorage. Respects the
+// no-persistence rule: run STATE is never saved, but run OUTCOMES (scorecard)
+// may be persisted as historical records.
+//
+// L1: the board ranks by `legacyScore` — a transparent weighted sum of what
+// you actually DID this run (nights, kills, bosses, buildings, Loom points,
+// gold, years lived) — not by how long the tab happened to sit open. That
+// old sort key (`connectionAge` descending, uncapped) rewarded being AFK: a
+// player who walled themselves in and did nothing had the dominant strategy
+// for a "high score." The hard lifespan cap (systems/lifespan.ts) bounds
+// every run to roughly the same window regardless, so what's left to
+// optimize is what you accomplish inside it — which is the point.
+import { CFG } from '../data/config';
 
 export interface RunScorecard {
-  v: 1;
+  v: 2;
   date: string;              // ISO date string of when the run ended
-  connectionAge: number;     // seconds the tab was open
+  connectionAge: number;     // seconds the tab was open (kept as a stat, no longer the sort key)
   dominantRealm: string;     // biome that had the most uptime
   riftsSurvived: number;     // count of realm transitions
   peakRtt: number;           // highest RTT recorded
@@ -18,6 +28,39 @@ export interface RunScorecard {
   goldHoarded: number;
   finalRealm: string;        // realm at time of death
   loomPointsEarned: number;
+  age: number;                                        // L1: years lived when the run ended
+  causeOfDeath: 'old_age' | 'hall_fallen' | 'unknown'; // L1
+  legit: boolean;                                      // L1: false if god mode was ever used this run
+  legacyScore: number;                                 // L1: the ranking number — see computeLegacyScore
+}
+
+/** Bag of stats computeLegacyScore needs — shared by snapshot(), getLiveStats(), and v1 migration. */
+export interface LegacyInputs {
+  nightsSurvived: number;
+  enemiesKilled: number;
+  bossesSlain: number;
+  buildingsBuilt: number;
+  loomPointsEarned: number;
+  goldHoarded: number;
+  age: number;
+  causeOfDeath: 'old_age' | 'hall_fallen' | 'unknown';
+}
+
+/** L1: a single transparent number for "which run was best." Weights live in
+ *  CFG.legacy.weights (data, tunable live) — the Lens design law is
+ *  legibility, so this stays a plain weighted sum, not a hidden curve. */
+export function computeLegacyScore(inp: LegacyInputs): number {
+  const w = CFG.legacy.weights;
+  const yearsLived = Math.max(0, inp.age - CFG.lifespan.startAge);
+  let score = inp.nightsSurvived * w.nightSurvived
+    + inp.enemiesKilled * w.kill
+    + inp.bossesSlain * w.bossKill
+    + inp.buildingsBuilt * w.building
+    + inp.loomPointsEarned * w.loomPoint
+    + inp.goldHoarded * w.gold
+    + yearsLived * w.yearLived;
+  if (inp.causeOfDeath === 'old_age') score += w.oldAgeBonus;
+  return Math.round(score);
 }
 
 const LS_KEY = 'nw.leaderboard';
@@ -67,19 +110,42 @@ export class ScoreboardSystem {
   /** Call on rift/transition. */
   onRift() { this.riftsSurvived++; }
 
-  /** Build the scorecard snapshot at death. */
-  snapshot(): RunScorecard {
+  private loomPointsEarned(): number {
     const { state } = this.ctx;
-    let dominantRealm = 'Unknown';
-    let maxT = 0;
+    return (state.player?.loomPoints ?? 0)
+      + Object.values(state.player?.loomNodes ?? {} as Record<string, number>).reduce((s: number, r: number) => s + r, 0);
+  }
+
+  private dominantRealm(): string {
+    let dominantRealm = 'Unknown', maxT = 0;
     for (const [realm, t] of this.dominantRealmTally) {
       if (t > maxT) { maxT = t; dominantRealm = realm; }
     }
+    return dominantRealm;
+  }
+
+  /** Build the scorecard snapshot at death. */
+  snapshot(): RunScorecard {
+    const { state } = this.ctx;
+    const loomPointsEarned = this.loomPointsEarned();
+    const age = Math.floor(state.player?.age ?? CFG.lifespan.startAge);
+    const causeOfDeath: RunScorecard['causeOfDeath'] = state.gameOverCause ?? 'unknown';
+    const legit = !state.everGod;
+    const legacyScore = computeLegacyScore({
+      nightsSurvived: state.nightsSurvived ?? 0,
+      enemiesKilled: this.enemiesKilled,
+      bossesSlain: this.bossesSlain,
+      buildingsBuilt: this.buildingsBuilt,
+      loomPointsEarned,
+      goldHoarded: state.player?.gold ?? 0,
+      age,
+      causeOfDeath,
+    });
     return {
-      v: 1,
+      v: 2,
       date: new Date().toISOString(),
       connectionAge: Math.round(this.connectionUptime),
-      dominantRealm,
+      dominantRealm: this.dominantRealm(),
       riftsSurvived: this.riftsSurvived,
       peakRtt: Math.round(this.peakRtt),
       lowestDownlink: this.lowestDownlink === Infinity ? 0 : Math.round(this.lowestDownlink * 10) / 10,
@@ -89,18 +155,23 @@ export class ScoreboardSystem {
       bossesSlain: this.bossesSlain,
       goldHoarded: state.player?.gold ?? 0,
       finalRealm: this.ctx.net?.currentBiome?.name ?? 'Unknown',
-      loomPointsEarned: (state.player?.loomPoints ?? 0)
-        + Object.values(state.player?.loomNodes ?? {} as Record<string, number>).reduce((s: number, r: number) => s + r, 0),
+      loomPointsEarned,
+      age,
+      causeOfDeath,
+      legit,
+      legacyScore,
     };
   }
 
   /** Save the current run to the leaderboard. */
-  saveToLeaderboard() {
+  saveToLeaderboard(): RunScorecard {
     const card = this.snapshot();
     const entries = loadLeaderboard();
     entries.push(card);
-    // Sort by connection age descending
-    entries.sort((a, b) => b.connectionAge - a.connectionAge);
+    // L1: legit runs ranked first (by legacyScore desc); flagged (god-mode)
+    // runs are still recorded but sort after ALL legit runs regardless of
+    // score — a god-mode run can never look like a top legit finish.
+    entries.sort((a, b) => (Number(b.legit) - Number(a.legit)) || (b.legacyScore - a.legacyScore));
     // Prune to max
     const pruned = entries.slice(0, MAX_ENTRIES);
     try {
@@ -108,13 +179,89 @@ export class ScoreboardSystem {
     } catch { /* quota exceeded — silently drop */ }
     return card;
   }
+
+  /** Live stats for the current run — safe to call every frame. */
+  getLiveStats() {
+    const { state } = this.ctx;
+    const rtt = this.ctx.net?.snap?.rtt ?? 0;
+    const dl = this.ctx.net?.snap?.downlink ?? 0;
+    const loomPointsEarned = this.loomPointsEarned();
+    const age = Math.floor(state.player?.age ?? CFG.lifespan.startAge);
+    // The run isn't over — no old-age bonus counted until it actually ends.
+    const legacyScore = computeLegacyScore({
+      nightsSurvived: state.nightsSurvived ?? 0,
+      enemiesKilled: this.enemiesKilled,
+      bossesSlain: this.bossesSlain,
+      buildingsBuilt: this.buildingsBuilt,
+      loomPointsEarned,
+      goldHoarded: state.player?.gold ?? 0,
+      age,
+      causeOfDeath: 'unknown',
+    });
+    return {
+      connectionAge: Math.round(this.connectionUptime),
+      dominantRealm: this.dominantRealm(),
+      riftsSurvived: this.riftsSurvived,
+      peakRtt: Math.round(Math.max(this.peakRtt, rtt)),
+      lowestDownlink: Math.min(this.lowestDownlink, dl),
+      enemiesKilled: this.enemiesKilled,
+      bossesSlain: this.bossesSlain,
+      buildingsBuilt: this.buildingsBuilt,
+      nightsSurvived: state.nightsSurvived ?? 0,
+      goldHoarded: state.player?.gold ?? 0,
+      age,
+      legit: !state.everGod,
+      legacyScore,
+      minutesRemaining: this.ctx.lifespan?.minutesRemaining?.() ?? 0,
+    };
+  }
+}
+
+/** v1 records predate age/causeOfDeath/legit/legacyScore entirely — migrate
+ *  them in place so old local run history doesn't vanish or crash the UI.
+ *  Best-effort score: no age/old-age term (unknown), `legit: true` by
+ *  default since v1 never tracked god-mode use (generous, not punitive, for
+ *  runs that predate the tracking existing at all). */
+function migrate(raw: any): RunScorecard {
+  if (raw && raw.v === 2) return raw as RunScorecard;
+  const legacyScore = computeLegacyScore({
+    nightsSurvived: raw?.nightsSurvived ?? 0,
+    enemiesKilled: raw?.enemiesKilled ?? 0,
+    bossesSlain: raw?.bossesSlain ?? 0,
+    buildingsBuilt: raw?.buildingsBuilt ?? 0,
+    loomPointsEarned: raw?.loomPointsEarned ?? 0,
+    goldHoarded: raw?.goldHoarded ?? 0,
+    age: CFG.lifespan.startAge,
+    causeOfDeath: 'unknown',
+  });
+  return {
+    v: 2,
+    date: raw?.date ?? new Date(0).toISOString(),
+    connectionAge: raw?.connectionAge ?? 0,
+    dominantRealm: raw?.dominantRealm ?? 'Unknown',
+    riftsSurvived: raw?.riftsSurvived ?? 0,
+    peakRtt: raw?.peakRtt ?? 0,
+    lowestDownlink: raw?.lowestDownlink ?? 0,
+    nightsSurvived: raw?.nightsSurvived ?? 0,
+    buildingsBuilt: raw?.buildingsBuilt ?? 0,
+    enemiesKilled: raw?.enemiesKilled ?? 0,
+    bossesSlain: raw?.bossesSlain ?? 0,
+    goldHoarded: raw?.goldHoarded ?? 0,
+    finalRealm: raw?.finalRealm ?? 'Unknown',
+    loomPointsEarned: raw?.loomPointsEarned ?? 0,
+    age: CFG.lifespan.startAge,
+    causeOfDeath: 'unknown',
+    legit: true,
+    legacyScore,
+  };
 }
 
 export function loadLeaderboard(): RunScorecard[] {
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return [];
-    return JSON.parse(raw) as RunScorecard[];
+    const parsed = JSON.parse(raw) as any[];
+    return parsed.map(migrate);
   } catch { return []; }
 }
 

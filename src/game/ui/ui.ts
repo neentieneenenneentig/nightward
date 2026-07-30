@@ -21,6 +21,7 @@ import type { GameState } from '../state';
 import type { LogEntry } from '../systems/log';
 import { injectStyles } from './styles';
 import { Toasts } from './toast';
+import { loadLeaderboard, formatAge } from '../systems/scoreboard';
 
 export interface UIHooks {
   interact(): void;
@@ -36,12 +37,14 @@ export interface UIHooks {
   newWorld(): void;
   isPlacing(): boolean;
   gatherView(): { label: string; frac: number } | null;
+  /** L1: current age/lifespan-remaining reading — drives the HUD chip+bar. */
+  lifespanView(): { age: number; frac: number; minutesRemaining: number; warning: boolean; critical: boolean };
   logEntries(): LogEntry[];
   /** W7: feed an item to a soul-gear slot. Returns FeedResult or null if invalid. */
   feedSoul(itemId: string, count: number, targetSlot: SoulSlot): FeedResult | null;
 }
 
-type Panel = 'bag' | 'craft' | 'skills' | 'log' | null;
+type Panel = 'bag' | 'craft' | 'skills' | 'log' | 'leaderboard' | null;
 
 const icon = (id: string) => iconUrl(id, ITEMS[id].icon as any);
 
@@ -55,6 +58,9 @@ export class UI {
   private hpFill!: HTMLElement;
   private hpText!: HTMLElement;
   private goldText!: HTMLElement;
+  private ageText!: HTMLElement;
+  private ageFill!: HTMLElement;
+  private ageBadge!: HTMLElement;
   private clock!: HTMLElement;
   private nights!: HTMLElement;
   private domainEl!: HTMLElement;
@@ -109,17 +115,26 @@ export class UI {
         <span>&#10022;</span> <span id="nw-resolve-text">100</span>
       </div>
       <div class="nw-badge nw-gold">&#9679; <span id="nw-gold">0</span></div>
+      <div class="nw-badge nw-age" id="nw-age" title="Age — the years pass as you dream">
+        <span>&#9203;</span>
+        <div class="nw-agebar"><div class="nw-agefill" id="nw-agefill"></div></div>
+        <span id="nw-age-text" style="font-size:11px">${CFG.lifespan.startAge}</span>
+      </div>
       <div class="nw-badge nw-clock" id="nw-clock"></div>
       <div class="nw-badge" id="nw-nights" title="damage · defense · population · territory"></div>
       <div class="nw-badge" id="nw-echoes" style="display:none" title="echoes of the slain"></div>
       <div class="nw-badge nw-domain" id="nw-domain" title="the realm you stand in"></div>
       <div class="nw-spacer"></div>
       <div class="nw-badge nw-btn" id="nw-mute" style="pointer-events:auto" title="sound on/off">&#128266;</div>
+      <div class="nw-badge nw-btn" id="nw-lb" style="pointer-events:auto" title="leaderboard (;)">&#127942;</div>
       <div class="nw-badge nw-btn" id="nw-newworld" style="pointer-events:auto" title="new world">&#10227;</div>`;
     this.root.appendChild(top);
     this.hpFill = top.querySelector('#nw-hp')!;
     this.hpText = top.querySelector('#nw-hptext')!;
     this.goldText = top.querySelector('#nw-gold')!;
+    this.ageText = top.querySelector('#nw-age-text')!;
+    this.ageFill = top.querySelector('#nw-agefill')!;
+    this.ageBadge = top.querySelector('#nw-age')!;
     this.clock = top.querySelector('#nw-clock')!;
     this.nights = top.querySelector('#nw-nights')!;
     this.echoEl = top.querySelector('#nw-echoes')!;
@@ -128,6 +143,7 @@ export class UI {
     this.domainEl = top.querySelector('#nw-domain')!;
     this.muteEl = top.querySelector('#nw-mute')!;
     top.querySelector('#nw-newworld')!.addEventListener('click', () => this.hooks.newWorld());
+    top.querySelector('#nw-lb')!.addEventListener('click', () => this.toggle('leaderboard'));
     this.muteEl.addEventListener('click', () => {
       const on = this.hooks.toggleMute();
       this.muteEl.innerHTML = on ? '&#128266;' : '&#128263;';
@@ -274,6 +290,7 @@ export class UI {
     else if (kl === 'c') this.toggle('craft');
     else if (kl === 'k') this.toggle('skills');
     else if (kl === 'l') this.toggle('log');
+    else if (k === ';') this.toggle('leaderboard');
   }
 
   /** Cycle focus through all focusable elements within the open panel.
@@ -330,7 +347,7 @@ export class UI {
     this.panelHost.appendChild(scrim);
 
     const head = el('div', 'nw-phead');
-    const titles: Record<string, string> = { bag: 'BAG', craft: 'CRAFTING', skills: 'SKILLS', log: 'LOG' };
+    const titles: Record<string, string> = { bag: 'BAG', craft: 'CRAFTING', skills: 'SKILLS', log: 'LOG', leaderboard: 'LEADERBOARD' };
     head.innerHTML = `<h2>${titles[this.panel]}</h2>`;
     if (this.panel === 'craft') head.appendChild(this.craftTabs());
     const x = el('div', 'nw-x'); x.innerHTML = '&times;';
@@ -377,6 +394,7 @@ export class UI {
     else if (this.panel === 'craft') this.fillCraft(body);
     else if (this.panel === 'skills') this.fillSkills(body);
     else if (this.panel === 'log') this.fillLog(body);
+    else if (this.panel === 'leaderboard') this.fillLeaderboard(body);
   }
 
   private fillLog(body: HTMLElement) {
@@ -636,6 +654,18 @@ export class UI {
     this.hpText.textContent = Math.ceil(Math.max(0, p.hp)) + '';
     this.goldText.textContent = p.gold + '';
 
+    // L1: age/lifespan chip + bar — the hard run-length clock
+    const lv = this.hooks.lifespanView();
+    this.ageText.textContent = String(lv.age);
+    this.ageFill.style.width = (lv.frac * 100).toFixed(1) + '%';
+    this.ageBadge.classList.toggle('warn', lv.warning && !lv.critical);
+    this.ageBadge.classList.toggle('critical', lv.critical);
+    this.ageBadge.title = lv.critical
+      ? `Age ${lv.age} — your breath grows short. The dream is ending.`
+      : lv.warning
+      ? `Age ${lv.age} — the years weigh heavy (~${lv.minutesRemaining.toFixed(1)} min left at this pace).`
+      : `Age ${lv.age} — the years pass as you dream.`;
+
     // S1: vigor & resolve HUD chips — pulse red at ≤25
     const vigor = Math.round(p.vigor ?? 100);
     const resolve = Math.round(p.resolve ?? 100);
@@ -690,6 +720,64 @@ export class UI {
 
   private interactTarget() { return this.hooks.gatherView() != null; }
 
+  /** W6/L1: Leaderboard panel — current run stats + historical "perfect run" board. */
+  private fillLeaderboard(body: HTMLElement) {
+    // Live stats from the running scoreboard system
+    const sb = (window as any).__nw?.sys?.scoreboard;
+    const liveStats = sb?.getLiveStats?.() ?? null;
+
+    // ---- current run stats ----
+    const curSec = el('div', 'nw-lb-cur');
+    curSec.innerHTML = '<div class="nw-lb-sechd">CURRENT RUN</div>';
+    if (liveStats) {
+      curSec.innerHTML += `
+        <div class="nw-lb-score">Legacy Score: <b>${liveStats.legacyScore}</b>${liveStats.legit ? '' : ' <span class="nw-lb-cheat">(god mode used — not eligible for the legit ranking)</span>'}</div>
+        <div class="nw-lb-grid">
+          <div class="nw-lb-stat"><span class="nw-lb-val">${liveStats.age}</span><span class="nw-lb-lbl">age</span></div>
+          <div class="nw-lb-stat"><span class="nw-lb-val">${liveStats.minutesRemaining.toFixed(1)}m</span><span class="nw-lb-lbl">left</span></div>
+          <div class="nw-lb-stat"><span class="nw-lb-val">${liveStats.nightsSurvived}</span><span class="nw-lb-lbl">nights</span></div>
+          <div class="nw-lb-stat"><span class="nw-lb-val">${liveStats.enemiesKilled}</span><span class="nw-lb-lbl">kills</span></div>
+          <div class="nw-lb-stat"><span class="nw-lb-val">${liveStats.bossesSlain}</span><span class="nw-lb-lbl">bosses</span></div>
+          <div class="nw-lb-stat"><span class="nw-lb-val">${liveStats.buildingsBuilt}</span><span class="nw-lb-lbl">built</span></div>
+          <div class="nw-lb-stat"><span class="nw-lb-val">${liveStats.goldHoarded}</span><span class="nw-lb-lbl">gold</span></div>
+          <div class="nw-lb-stat"><span class="nw-lb-val">${formatAge(liveStats.connectionAge)}</span><span class="nw-lb-lbl">uptime</span></div>
+        </div>`;
+    } else {
+      curSec.innerHTML += '<div class="nw-empty">Stats will appear as you play.</div>';
+    }
+    body.appendChild(curSec);
+
+    // ---- historical leaderboard ----
+    const histSec = el('div', 'nw-lb-hist');
+    histSec.innerHTML = '<div class="nw-lb-sechd">TOP RUNS &mdash; by Legacy Score</div>';
+
+    const entries = loadLeaderboard();
+    if (!entries.length) {
+      const empty = el('div', 'nw-empty');
+      empty.textContent = 'No runs recorded yet. Survive, and your name will be written in the static.';
+      histSec.appendChild(empty);
+    } else {
+      const list = el('div', 'nw-lb-list');
+      let rank = 0;
+      for (const e of entries) {
+        rank++;
+        const row = el('div', 'nw-lb-row' + (e.legit ? '' : ' cheat'));
+        const rankIcon = !e.legit ? '&#128128;' : rank === 1 ? '&#129351;' : rank === 2 ? '&#129352;' : rank === 3 ? '&#129353;' : `#${rank}`;
+        const causeIcon = e.causeOfDeath === 'old_age' ? '&#9203;' : e.causeOfDeath === 'hall_fallen' ? '&#128128;' : '?';
+        row.innerHTML = `
+          <span class="nw-lb-rank">${rankIcon}</span>
+          <span class="nw-lb-score">${e.legacyScore}</span>
+          <span class="nw-lb-age" title="died of ${e.causeOfDeath === 'old_age' ? 'natural causes' : e.causeOfDeath === 'hall_fallen' ? 'the hall falling' : 'unknown causes'}">${causeIcon} age ${e.age}</span>
+          <span class="nw-lb-detail">${e.nightsSurvived}n &middot; ${e.enemiesKilled}k &middot; ${e.bossesSlain}b &middot; ${e.goldHoarded}g</span>
+          <span class="nw-lb-realm">${e.dominantRealm}${e.legit ? '' : ' &middot; <i>god mode</i>'}</span>`;
+        list.appendChild(row);
+      }
+      histSec.appendChild(list);
+    }
+
+    body.appendChild(histSec);
+  }
+
   showGameOver(onRestart: () => void, card?: any) {
     const over = el('div', 'nw-gameover');
     let cardHtml = '';
@@ -698,8 +786,9 @@ export class UI {
         ? `${Math.floor(card.connectionAge / 3600)}h ${Math.floor((card.connectionAge % 3600) / 60)}m`
         : `${Math.floor(card.connectionAge / 60)}m ${card.connectionAge % 60}s`;
       cardHtml = `
-        <div style="font-size:11px;color:var(--ink-dim);margin-top:12px;line-height:1.6;text-align:left;max-width:300px;">
-          <div><span style="color:var(--metal-hi)">Connection age:</span> ${ageStr}</div>
+        <div style="font-size:12px;color:var(--metal-hi);margin-top:10px;">Legacy Score: <b>${card.legacyScore}</b>${card.legit ? '' : ' <span style="color:#c66">(god mode used — not eligible for the legit ranking)</span>'}</div>
+        <div style="font-size:11px;color:var(--ink-dim);margin-top:8px;line-height:1.6;text-align:left;max-width:300px;">
+          <div><span style="color:var(--metal-hi)">Age at death:</span> ${card.age}</div>
           <div><span style="color:var(--metal-hi)">Nights survived:</span> ${card.nightsSurvived}</div>
           <div><span style="color:var(--metal-hi)">Enemies killed:</span> ${card.enemiesKilled} (${card.bossesSlain} bosses)</div>
           <div><span style="color:var(--metal-hi)">Buildings:</span> ${card.buildingsBuilt}</div>
@@ -708,16 +797,35 @@ export class UI {
           <div><span style="color:var(--metal-hi)">Rifts survived:</span> ${card.riftsSurvived}</div>
           <div><span style="color:var(--metal-hi)">Peak RTT:</span> ${card.peakRtt}ms · <span style="color:var(--metal-hi)">Lowest BW:</span> ${card.lowestDownlink}Mbps</div>
           <div><span style="color:var(--metal-hi)">Loom points:</span> ${card.loomPointsEarned}</div>
+          <div><span style="color:var(--metal-hi)">Connection age:</span> ${ageStr}</div>
         </div>`;
     }
-    over.innerHTML = `<h1>THE THREAD IS CUT</h1>
-      <div style="color:var(--ink-dim);max-width:340px">Your Hearthstone lies in ruin and the dark takes the rest.
-      You survived ${this.state.nightsSurvived} night${this.state.nightsSurvived === 1 ? '' : 's'}.</div>
+    // L1: two distinct endings — a violent hall-fall vs. a peaceful old-age
+    // ending — never mixed, and never using network jargon in the fiction
+    // (Veil law).
+    const oldAge = card?.causeOfDeath === 'old_age';
+    const title = oldAge ? 'THE DREAM FADES' : 'THE THREAD IS CUT';
+    const flavor = oldAge
+      ? `Your dream-self grows heavy with years and lies down beneath the dark, and does not wake.
+         You lived ${card?.age ?? '?'} years and survived ${this.state.nightsSurvived} night${this.state.nightsSurvived === 1 ? '' : 's'}.`
+      : `Your Hearthstone lies in ruin and the dark takes the rest.
+         You survived ${this.state.nightsSurvived} night${this.state.nightsSurvived === 1 ? '' : 's'}.`;
+    over.innerHTML = `<h1>${title}</h1>
+      <div style="color:var(--ink-dim);max-width:340px">${flavor}</div>
       ${cardHtml}`;
     const btn = el('div', 'nw-btn primary'); btn.textContent = 'Try again';
     btn.style.pointerEvents = 'auto';
     btn.addEventListener('click', onRestart);
     over.appendChild(btn);
+
+    // W6: "View Leaderboard" button on death screen
+    const lbBtn = el('div', 'nw-btn'); lbBtn.textContent = 'Leaderboard';
+    lbBtn.style.pointerEvents = 'auto';
+    lbBtn.style.marginTop = '4px';
+    lbBtn.addEventListener('click', () => {
+      this.open('leaderboard');
+    });
+    over.appendChild(lbBtn);
     this.root.appendChild(over);
   }
 }

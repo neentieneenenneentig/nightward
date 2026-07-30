@@ -48,15 +48,52 @@ export const CFG = {
   // (much steeper/higher-ceiling) curve — hundreds of hours to reach maxLevel,
   // RuneScape-style. Tune live via window.NW.CFG to taste.
   soulgear: {
-    xpBase: 900,             // ×10 (W4 balance pass), same treatment as the skill curve
+    // L1: retuned for the hard 15-minute run — xpBase 900 needed 300 landed
+    // swings just to reach soul level 2 (most of a whole run spent only
+    // swinging). 250/5 keeps the curve's long-tail shape (still hundreds of
+    // actions to maxLevel) but makes the FIRST few levels reachable within a
+    // single run's combat budget, so gear growth is something you can feel.
+    xpBase: 250,
     xpGrowth: 1.085,
     maxLevel: 100,
-    weaponXpPerSwing: 3,  // per swing that lands at least one hit
-    armorXpPerHit: 2,     // per hit taken while armor is worn
-    toolXpPerUse: 4,      // per successful gather with that tool class
-    ringXpPerSwing: 2,    // per landed swing while a ring is worn
-    amuletXpPerHit: 2,    // per hit taken while an amulet is worn
-    charmXpPerKill: 5,    // per kill while a charm is worn (×10 from bosses)
+    weaponXpPerSwing: 5,  // per swing that lands at least one hit (was 3)
+    armorXpPerHit: 3,     // per hit taken while armor is worn (was 2)
+    toolXpPerUse: 6,      // per successful gather with that tool class (was 4)
+    ringXpPerSwing: 3,    // per landed swing while a ring is worn (was 2)
+    amuletXpPerHit: 3,    // per hit taken while an amulet is worn (was 2)
+    charmXpPerKill: 8,    // per kill while a charm is worn (×10 from bosses) (was 5)
+  },
+
+  // L1: The Lifespan — a hard, run-length clock the player cannot out-turtle.
+  // Ages via REAL wall-clock time (see systems/lifespan.ts), not sim time, so
+  // the cap holds regardless of network jank and never fires during a
+  // synchronous __nw.step() test. "10 years per real minute" is the flavor
+  // pace the user asked for; baseRunMinutes is the actual target session
+  // length. Aging only ever speeds up (never slows below 1×) as vigor/resolve
+  // run low — neglect can cut a run short, but nothing extends it past the cap.
+  lifespan: {
+    startAge: 16,                  // a green recruit, dreamed into being
+    yearsPerRealMinute: 10,
+    baseRunMinutes: 15,            // the hard target
+    varianceMinutes: 1.5,          // seeded ± jitter → a 14–16.5 min window
+    vitalsSwingPct: 12,            // max % faster aging from neglected vitals
+    warnMinutesRemaining: 1.5,     // "the years weigh heavy" banner begins
+    criticalMinutesRemaining: 0.4, // heartbeat vignette begins
+  },
+
+  // L1: Legacy score — a single, transparent number for "which run was best."
+  // Weights are data so they can be tuned live without touching engine code.
+  legacy: {
+    weights: {
+      nightSurvived: 500,
+      kill: 8,
+      bossKill: 300,
+      building: 40,
+      loomPoint: 150,
+      gold: 0.5,
+      yearLived: 4,      // per year past startAge when the run ended
+      oldAgeBonus: 1000, // finishing the dream beats being cut short
+    },
   },
 
   time: {
@@ -112,6 +149,12 @@ export const CFG = {
     cinderIgnitesCA: true,
     orbitRadPerSec: 1.6,     // Null Orb angular speed
     orbContactImmunitySec: 0.8, // per-foe grace between orb contact hits
+  },
+
+  // C3: The Loom — per-run passive tree point income.
+  loom: {
+    pointsPerBossKill: 2,   // L1: a second income source — 1/night alone is too
+                             // thin for a 15-minute run to meaningfully spend
   },
 
   audio: {

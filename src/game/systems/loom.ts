@@ -34,6 +34,18 @@ export class LoomSystem {
     this.ctx.log?.push('loom', `+${bonus} Loom point (night ${state.nightsSurvived})`, state.clock);
   }
 
+  /** L1: a second Loom-point income source — nights-survived alone (1/night)
+   *  is too thin for a hard 15-minute run to meaningfully spend across a
+   *  40-node/4-keystone tree. Called from worldbosses.hurt()'s death branch,
+   *  any killer. */
+  onBossSlain() {
+    const { state } = this.ctx;
+    const bonus = CFG.loom.pointsPerBossKill;
+    state.player.loomPoints = (state.player.loomPoints ?? 0) + bonus;
+    this.ctx.toast?.(`The Loom drinks deep — +${bonus} points`, 'good');
+    this.ctx.log?.push('loom', `+${bonus} Loom points (boss slain)`, state.clock);
+  }
+
   /** Check if the Long Thread keystone grants extra points from total levels. */
   onSkillLevelUp() {
     if (!this.ensureMods().longThread) return;

@@ -253,6 +253,12 @@ export class WorldBossSystem {
     }
     // S1: a boss kill always feeds vitals — never AFK (locked spec)
     this.ctx.vitals?.onKill?.(true);
+    // Review fix: this call was missing entirely — hordes.ts calls
+    // scoreboard.onKill on every foe death, but world bosses (the only
+    // enemies with `boss: true`) never went through that path, so
+    // ScoreboardSystem.bossesSlain was permanently stuck at 0 on every run.
+    this.ctx.scoreboard?.onKill?.(true);
+    this.ctx.loom?.onBossSlain?.();
 
     Sound.play('enemyDie');
     this.ctx.toast(`You have slain ${b.name}! The land trembles.`, 'good');

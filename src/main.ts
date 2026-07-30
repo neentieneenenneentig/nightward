@@ -28,6 +28,7 @@ import { FireSystem } from './game/systems/fire';
 import { EchoSystem } from './game/systems/echoes';
 import { NetworkSystem } from './game/systems/network';
 import { VitalsSystem } from './game/systems/vitals';
+import { LifespanSystem } from './game/systems/lifespan';
 import { LoomSystem } from './game/systems/loom';
 import { ScoreboardSystem } from './game/systems/scoreboard';
 import { SoulFeedSystem } from './game/systems/soulfeed';
@@ -117,7 +118,7 @@ async function boot() {
     toast: (m: string, k?: any) => ui.toast(m, k),
     onGold: () => {},
     damagePlayer: (d: number, src?: string) => combat.damagePlayer(d, src),
-    onHallDestroyed: () => triggerGameOver(),
+    onHallDestroyed: () => triggerGameOver('hall_fallen'),
   };
 
   // G1: particle system — pre-allocated pool for gather poofs, fire embers, slash trails, etc.
@@ -161,6 +162,12 @@ async function boot() {
   // S1: Survival Pressure — vigor & resolve decay, restore via action
   const vitals = new VitalsSystem(ctx);
   ctx.vitals = vitals;
+
+  // L1: The Lifespan — hard run-length clock; ages via real time, ends the
+  // run in death of natural causes independent of combat/hall state
+  const lifespan = new LifespanSystem(ctx);
+  ctx.lifespan = lifespan;
+  ctx.onOldAgeDeath = () => triggerGameOver('old_age');
 
   // C3: The Loom — per-run passive tree, points from nights survived
   const loom = new LoomSystem(ctx);
@@ -335,6 +342,13 @@ async function boot() {
     newWorld: () => { location.hash = 's=' + ((Math.random() * 2 ** 31) | 0); location.reload(); },
     isPlacing: () => !!build.mode,
     logEntries: () => log.recent(100),
+    lifespanView: () => ({
+      age: Math.floor(state.player.age),
+      frac: lifespan.fracRemaining(),
+      minutesRemaining: lifespan.minutesRemaining(),
+      warning: lifespan.isWarning(),
+      critical: lifespan.isCritical(),
+    }),
     gatherView: () => {
       if (gather.active) return { label: labelFor(gather.active.def), frac: gather.active.progress / gather.active.need };
       if (gather.target) return { label: labelFor(gather.target.def) + ' (E)', frac: 0 };
@@ -366,12 +380,17 @@ async function boot() {
     log.push('system', `Used ${ITEMS[id].name} (+${heal} hp)`, state.clock);
   }
 
-  function triggerGameOver() {
+  function triggerGameOver(cause: 'hall_fallen' | 'old_age') {
     if (state.gameOver) return;
     state.gameOver = true;
+    state.gameOverCause = cause;
     hordes.onDawn(); // clear the field
-    log.push('death', 'The hall has fallen. The racket is finished.', state.clock);
-    // W6: save scorecard and show death screen
+    if (cause === 'old_age') {
+      log.push('death', `The years catch up at last. Age ${Math.floor(state.player.age)}, the dream lets go gently.`, state.clock);
+    } else {
+      log.push('death', 'The hall has fallen. The racket is finished.', state.clock);
+    }
+    // W6/L1: save scorecard and show death screen
     const card = scoreboard.saveToLeaderboard();
     ui.showGameOver(() => { location.reload(); }, card);
   }
@@ -423,7 +442,7 @@ async function boot() {
   let frames = 0;
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
-    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals, loom, scoreboard }, world, player, gen, chunks,
+    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals, lifespan, loom, scoreboard }, world, player, gen, chunks,
     get log() { return log; },  // expose full GameLog (entries + export + download)
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
@@ -460,6 +479,7 @@ async function boot() {
     frames++;
     const frameMs = Math.min(tk.deltaMS, 250); // clamp after tab-sleep
     scoreboard.updateReal(performance.now());  // W6: track connection uptime
+    lifespan.updateReal(performance.now());    // L1: age the character, hard run-length cap
     acc = Math.min(acc + tk.deltaMS, 250);
     while (acc >= STEP) {
       sim(STEP / 1000);
@@ -790,11 +810,15 @@ async function boot() {
     html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
     html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">IDENTITY</div>';
     const idRevealed = (net as any).identityFetched;
-    html += `<div ${attr('identity-ip')} style="font-size:9px;cursor:help;">IP: ${idRevealed && s.publicIp ? s.publicIp : '— unrevealed (explore to reveal)'}</div>`;
-    html += `<div ${attr('identity-isp')} style="font-size:9px;cursor:help;">ISP: ${idRevealed && s.isp ? s.isp : '— unrevealed (explore to reveal)'}</div>`;
-    html += `<div style="font-size:9px;">City: ${idRevealed && s.city ? s.city : '— unrevealed (explore to reveal)'} · Country: ${idRevealed && s.country ? s.country : '—'}</div>`;
-    html += `<div style="font-size:9px;">ASN: ${idRevealed && s.asn ? s.asn : '— unrevealed (explore to reveal)'}</div>`;
-    html += `<div ${attr('identity-colo')} style="font-size:9px;cursor:help;">CF colo: ${s.colo || '—'} · warp: ${s.warp ? 'yes' : 'no'}</div>`;
+    // Review fix: isp/city/country/asn/colo come verbatim from third-party
+    // JSON (ipapi.co) / text (cloudflare trace) responses with no
+    // sanitization, then went straight into innerHTML — escape before
+    // interpolating so a markup-bearing registrant/org string can't inject.
+    html += `<div ${attr('identity-ip')} style="font-size:9px;cursor:help;">IP: ${idRevealed && s.publicIp ? escapeHtml(s.publicIp) : '— unrevealed (explore to reveal)'}</div>`;
+    html += `<div ${attr('identity-isp')} style="font-size:9px;cursor:help;">ISP: ${idRevealed && s.isp ? escapeHtml(s.isp) : '— unrevealed (explore to reveal)'}</div>`;
+    html += `<div style="font-size:9px;">City: ${idRevealed && s.city ? escapeHtml(s.city) : '— unrevealed (explore to reveal)'} · Country: ${idRevealed && s.country ? escapeHtml(s.country) : '—'}</div>`;
+    html += `<div style="font-size:9px;">ASN: ${idRevealed && s.asn ? escapeHtml(s.asn) : '— unrevealed (explore to reveal)'}</div>`;
+    html += `<div ${attr('identity-colo')} style="font-size:9px;cursor:help;">CF colo: ${s.colo ? escapeHtml(s.colo) : '—'} · warp: ${s.warp ? 'yes' : 'no'}</div>`;
     html += `<div style="font-size:9px;color:#887;">local gateway — not observable from a browser</div>`;
     html += '</div>';
 
@@ -910,6 +934,11 @@ function getInspectData(key: string): NetInspect | null {
   return null;
 }
 
+/** Escape a string sourced from a third-party API before it lands in innerHTML. */
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+}
+
 function formatUptime(ms: number): string {
   const s = Math.floor(ms / 1000);
   const h = Math.floor(s / 3600);
@@ -924,9 +953,20 @@ function formatUptime(ms: number): string {
 function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem) {
   if (!CFG.debug.enabled) return;
   const { state } = ctx;
+  // Review fix: these hotkeys (god mode, +50 gold, +materials, full heal,
+  // forced horde/dusk) previously shipped live in every production build —
+  // the only gate was CFG.debug.enabled, which nothing ever set to false.
+  // Several (g/h/m/.) also had no e.repeat guard, so holding the key down
+  // key-repeated the browser's way to unbounded gold/materials. Restrict the
+  // KEYBOARD path to dev builds; window.NW/__nw stay exposed in production
+  // either way (the documented live-tuning feature, and how the Gauntlet
+  // drives state — always by direct object mutation, never a simulated
+  // keypress — so this doesn't touch testability).
+  if (import.meta.env.DEV) {
   let brush = M.DIRT; // god-brush material, cycled with Shift+P
   window.addEventListener('keydown', (e) => {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+    if (e.repeat) return; // defense in depth: block OS key-repeat spam on these too
     switch (e.key) {
       case 'p': { // god brush: paint the current material at the player's feet tile
         if (!state.god) break;
@@ -979,6 +1019,10 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
       case 'j': hordes.onDusk(phase(state.clock).dayIndex); break; // force a wave
       case 'u': { // god/test mode: immortal + effectively infinite everything
         state.god = !state.god;
+        // L1: sticky for the whole run — flags this run's scorecard as not
+        // eligible for the legit leaderboard ranking, even if god mode gets
+        // toggled back off before the run ends.
+        if (state.god) state.everGod = true;
         if (state.god) {
           state.player.gold += 99999;
           for (const id of Object.keys(ITEMS)) state.player.inv[id] = 9999;
@@ -991,6 +1035,7 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
       }
     }
   });
+  } // end import.meta.env.DEV
   // expose the live config + materials table + network for runtime tuning from the console
   (window as any).NW = { ...((window as any).NW ?? {}), CFG, state, MATS: MATERIALS, ENEMIES, NET: ctx.net };
 }

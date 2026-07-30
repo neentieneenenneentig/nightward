@@ -641,6 +641,13 @@ export class NetworkSystem {
 
   /** Periodic refresh for IP info (ipify + Cloudflare trace) and geo (ipapi.co). */
   private pollIpInfo(nowMs: number) {
+    // Review fix: this must stay dark until the player has explored at least
+    // once (F8 design law — "scrying reveals who you are", Lens shows
+    // "unrevealed (explore to reveal)" until then). Previously this ran
+    // unconditionally off real uptime alone, so identity requests could fire
+    // — and `snap.publicIp` etc. got populated — before the player ever
+    // explored, while the UI kept claiming nothing had been revealed yet.
+    if (!this.identityFetched) return;
     // Refresh IP + Cloudflare trace every 5 minutes
     if (nowMs - this.lastIpFetchMs > 300_000) {
       this.fetchIpInfo();

@@ -126,7 +126,14 @@ export class HordeSystem {
           const bt = this.ctx.world.buildingAt(Math.floor(p.tx / TILE), Math.floor(p.ty / TILE));
           if (bt) this.damageBuilding(bt, p.dmg);
         }
-        this.ctx.particles?.spawn?.('hit', p.tx, p.ty, 4);
+        // Review fix: 'hit' isn't a real ParticleKind (only poof/ember/slash/
+        // spark/wisp/rift/death/heal/crit exist) — `ctx` being typed `any`
+        // let this typo past tsc entirely. PARTICLE_DEFS['hit'] was
+        // `undefined`, so this threw on every projectile landing, taking
+        // hordes.update() (and the whole render-loop ticker callback that
+        // calls it) down with it. 'spark' is the impact effect used
+        // elsewhere in this file for the same kind of moment.
+        this.ctx.particles?.spawn?.('spark', p.tx, p.ty, 4);
         this.projectiles.splice(i, 1);
       }
     }
@@ -536,7 +543,10 @@ export class HordeSystem {
       if (fired) {
         eb._trapT = def.trap.cooldownSec;
         if (def.trap.damage > 0) {
-          this.ctx.particles?.spawn?.('hit', bx, by, 6);
+          // Review fix: same 'hit' → 'spark' typo as the projectile-impact
+          // site above (PARTICLE_DEFS has no 'hit' entry — this threw on
+          // every damaging trap spring).
+          this.ctx.particles?.spawn?.('spark', bx, by, 6);
           Sound.play('hit');
           this.ctx.log?.push('combat', `${def.name} springs!`, state.clock);
         }

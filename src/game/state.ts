@@ -3,6 +3,7 @@
 import { CFG } from './data/config';
 import { ITEMS } from './data/items';
 import type { SoulSlot } from './data/soulgear';
+import { mulberry32 } from '../engine/rng';
 
 export interface Building {
   uid: number;
@@ -53,6 +54,7 @@ export interface GameState {
     loomPoints: number;               // C3: unspent passive points
     loomNodes: Record<string, number>;// C3: nodeId → allocated rank
     _longThreadPoints?: number;       // C3: internal tracker for Long Thread keystone
+    age: number;                      // L1: years lived this run (see systems/lifespan.ts)
   };
   /** tileKey "tx,ty" → clock time when the node respawns */
   depleted: Record<string, number>;
@@ -62,7 +64,10 @@ export interface GameState {
   explored: Record<string, number>;    // region key → 1 (for fog / future minimap)
   nightsSurvived: number;
   gameOver: boolean;
+  gameOverCause: 'hall_fallen' | 'old_age' | null; // L1: what actually ended the run
   god: boolean;                        // debug/test mode: immortal, everything unlocked
+  everGod: boolean;                    // L1: sticky — true once god mode was ever toggled on this run; flags the scorecard as not leaderboard-legit
+  lifespanTargetMin: number;           // L1: seeded target run length in minutes (CFG.lifespan.baseRunMinutes ± jitter)
 }
 
 /** Worn gear, one item id per slot (undefined = empty). */
@@ -98,12 +103,19 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
       soulItems[slot] = { slot, templateId: s.id, level: 1, xp: 0 };
     }
   }
+  // L1: seeded ± jitter around the target run length — deterministic per
+  // seed (a given ?seed= always rolls the same target run length), but not
+  // an identical stopwatch across different seeds.
+  const lifeRng = mulberry32(seed ^ 0x1ea9e57e);
+  const jitter = (lifeRng() * 2 - 1) * CFG.lifespan.varianceMinutes;
+  const lifespanTargetMin = CFG.lifespan.baseRunMinutes + jitter;
+
   return {
     v: 1,
     seed,
     clock: 0,
     nextUid: 1,
-    player: { x: spawn.x, y: spawn.y, hp: CFG.player.maxHp, gold: 0, inv, xp: {}, equip: {}, soulItems, echoes: {}, vigor: CFG.vitals.vigorMax, resolve: CFG.vitals.resolveMax, lastActionT: 0, loomPoints: 0, loomNodes: {} },
+    player: { x: spawn.x, y: spawn.y, hp: CFG.player.maxHp, gold: 0, inv, xp: {}, equip: {}, soulItems, echoes: {}, vigor: CFG.vitals.vigorMax, resolve: CFG.vitals.resolveMax, lastActionT: 0, loomPoints: 0, loomNodes: {}, age: CFG.lifespan.startAge },
     depleted: {},
     buildings: [],
     worldBosses: [],
@@ -111,6 +123,9 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     explored: {},
     nightsSurvived: 0,
     gameOver: false,
+    gameOverCause: null,
     god: false,
+    everGod: false,
+    lifespanTargetMin,
   };
 }

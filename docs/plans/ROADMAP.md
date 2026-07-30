@@ -6,8 +6,85 @@
 > — but its parameters are now live functions of your internet connection. Same tab, same
 > seed, totally different world depending on where and how you're connected.
 
-**Status: W7 SHIPPED ✅ + Painterly filter prototype ✅ (2026-07-19).** Branch `u2-grimdark`.
-Typecheck clean, build green, **Gauntlet 63/66 PASSED (3 pre-existing/flaky fails).**
+**Status: L1 "The Lifespan" SHIPPED ✅ (2026-07-31).** Branch `u2-grimdark`.
+Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions PASSED**
+(live-verified 3× consecutively via headless Chrome + raw CDP at `?gl&seed=1234`, zero flakes).
+
+**L1 — The Lifespan: a hard 15-minute "perfect run" loop (2026-07-31).** User's direction
+overnight: turn the open-ended survival loop into a bounded, replayable run — "a hard 15 minute
+game loop... hard lifespan for players, like 10 years per minute... they simply fall over and die
+of natural causes... challenging loop gameplay where u try to get the perfect run." Full brief:
+`docs/plans/L1-lifespan-perfect-run.md`. Shipped:
+- **`systems/lifespan.ts` (new):** the character ages via REAL wall-clock time (not sim time —
+  the cap has to hold regardless of network jank/`simSpeed` drift), `startAge` 16, seeded
+  per-run target of `baseRunMinutes` 15 ± `varianceMinutes` 1.5 (a 14–16.5 min window, seeded
+  off `state.seed` so a given `?seed=` always rolls the same target). Aging rate is modulated
+  by S1's existing vigor/resolve vitals — full vitals = exactly the baseline 15-min ceiling;
+  neglect accelerates aging up to `vitalsSwingPct` (12%) faster. **One-directional only: nothing
+  extends a run past the seeded cap, including god mode** — old-age death is a SECOND, distinct
+  terminal condition alongside hall-destruction, and it is NOT blocked by `state.god` (by design).
+- HUD: an age chip + draining lifespan bar in the top bar; warning toast + amber tint inside the
+  final `warnMinutesRemaining`, a heartbeat vignette inside `criticalMinutesRemaining`.
+- Natural death gets its own ending — "THE DREAM FADES" — distinct flavor text from the
+  hall-destroyed "THE THREAD IS CUT," no gold loss/scatter (it's the intended way a run ends,
+  not a punishment). `GameState.gameOverCause: 'hall_fallen' | 'old_age'`.
+- **Scoreboard v2 (`systems/scoreboard.ts`):** `RunScorecard` gains `age`, `causeOfDeath`,
+  `legit`, and `legacyScore` (a transparent weighted sum over nights/kills/bosses/buildings/loom
+  points/gold/years-lived + an old-age-finish bonus, weights in `CFG.legacy.weights`, data not
+  code). **This replaces the old sort key (`connectionAge` descending, uncapped) — that key
+  rewarded being AFK: a player who walled in and did nothing had the dominant leaderboard
+  strategy, since nothing ever ended the run.** v1 localStorage records migrate in place on load
+  (best-effort score, no crash/data loss). W6's in-progress leaderboard panel (already
+  uncommitted on this branch) is finished as part of this milestone and folded into the v2 board.
+- **Leaderboard integrity:** `state.everGod` (sticky, set once god mode is ever toggled on) flags
+  a run's scorecard `legit: false`; the leaderboard sorts ALL legit runs above ALL flagged runs
+  regardless of score, so a god-mode run can never look like a top legit finish. Verified live:
+  a deliberately lower-scoring legit run outranks a much higher-scoring flagged one.
+- Rebalance: `soulgear.xpBase` 900→250 (+ raised per-action soul xp across the board) — the old
+  curve needed ~300 landed swings just to reach weapon soul level 2, most of a whole run spent
+  only swinging. Loom gains a second point income (`CFG.loom.pointsPerBossKill`, +2/boss) since
+  1/night alone (~2-3 points in a 15-min run) barely samples the 40-node tree.
+
+**Chief-of-staff review pass, same session — real bugs found and fixed (not just the requested
+feature):**
+1. **World-boss kills never reached the scoreboard.** `worldbosses.ts`'s `hurt()` death branch
+   never called `scoreboard.onKill()` (only the ordinary horde-foe death path in `hordes.ts`
+   does, and `EnemyDef.boss` is `weight:0` there — it can never actually spawn through that path)
+   — `bossesSlain` was permanently stuck at 0 on every run, forever. Fixed: `hurt()` now calls
+   `scoreboard.onKill(true)` (and `loom.onBossSlain()`).
+2. **`particles.spawn('hit', ...)` — not a real `ParticleKind`.** Two call sites in `hordes.ts`
+   (a landed projectile, a damaging trap spring) passed a particle type that doesn't exist in
+   `PARTICLE_DEFS`; `ctx: any` erased the type check that would normally catch this. Both threw
+   on every occurrence — a live, previously-undetected crash bug in the projectile/trap-impact
+   path, found by the new, more-thorough Death & Scatter regression test actually exercising the
+   surrounding sim instead of a tautological `ok(true, ...)`. Fixed: `'hit'` → `'spark'`.
+3. **Debug/god-mode hotkeys shipped live in every production build.** `CFG.debug.enabled: true`
+   was the only gate, and nothing ever set it false; `g`/`h`/`m`/`.` also had no `e.repeat` guard,
+   so holding the key key-repeated to unbounded gold/materials. The keyboard path is now gated
+   behind `import.meta.env.DEV` (stripped from `npm run build` output); `window.NW`/`window.__nw`
+   stay exposed in production either way (the documented live-tuning feature, and how the
+   Gauntlet drives state — always by direct mutation, never a simulated keypress).
+4. **Identity-probe honesty bug.** `network.ts`'s `pollIpInfo()` fired its periodic IP/geo
+   refresh off real uptime alone, independent of whether the player had ever triggered the
+   `explore` action — violating the documented privacy law ("scrying reveals who you are") and
+   leaving the Lens UI claiming "unrevealed" after the data had already left the browser. Fixed:
+   gated behind `identityFetched`.
+5. Unsanitized third-party strings (ISP/city/country/ASN/colo from `ipapi.co`/Cloudflare trace)
+   went straight into `innerHTML` in the Lens Identity section. Escaped.
+6. Several regression tests were tautological (`ok(x.length >= 0, ...)`, `ok(Math.abs(...) >= 0,
+   ...)`, trailing `ok(true, ...)` after real assertions) — the exact failure mode flagged twice
+   before in this project's history. Rewrote to assert the actual claimed behavior (boss fight
+   really kills, night wave really produces foes, death really scatters the player, long walk
+   doesn't corrupt position to NaN).
+7. **Confirmed NOT a bug:** the spam-click swing-restart DPS allowance in `combat.ts` is
+   correctly rate-capped (`CFG.combat.restartMinIntervalSec`) and is documented, intentional,
+   user-requested design (the "redaming" feature from S1) — no change made.
+
+**Known, accepted limitation (not fixed, low stakes for a local single-player leaderboard):**
+`everGod` only flips when god mode is toggled via the (now DEV-only) keyboard hotkey — a
+sufficiently determined player editing `window.__nw.state.god` directly via devtools, or hand-
+editing the `nw.leaderboard` localStorage key, could still bypass the flag. There's no backend to
+enforce this against, same accepted tradeoff as `window.NW.CFG` being globally live-tweakable.
 
 **G1-Painterly — Kuwahara oil-painting filter (2026-07-19):**
 - `PainterlyPass` in `postprocess.ts`: Kuwahara filter (4-quadrant variance-minimizing mean)
