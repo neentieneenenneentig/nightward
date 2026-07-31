@@ -159,8 +159,8 @@ own worktree (see `docs/plans/WORKFLOW.md`) and has a detailed brief `docs/plans
 when it becomes the active task.
 
 ## Non-negotiables (keep these true)
-- **100% procgen** — no hosted image/audio assets; everything is generated from seed + params.
-  UI chrome (RPGUI) is the sole exception (bundled, zlib-licensed — see W4.5).
+- **100% procgen** — no hosted image/audio assets; everything is generated from seed + params,
+  including UI chrome (CSS-only Grimdark Chrome skin, no image/font dependencies — see U2).
 - **Data-driven** — content is a row in `src/game/data/*`; systems are generic functions over one
   `GameState`. Adding content ≠ new engine code.
 - Loose-mode TS + Vite + PixiJS v8 (WebGPU, `?gl` forces WebGL). Determinism from seed.

@@ -36,7 +36,7 @@ way, you get a Legacy Score and a shot at a better run.
 - **TypeScript + Vite** — data-driven architecture, live-tweakable at runtime
 - **Rust → WebAssembly** (`nightward-core`) — simulation engine: writable world,
   per-chunk cellular automata (fire, wetness), sparse override store
-- Fixed-timestep sim (30 Hz) decoupled from rendering; DOM overlay UI (RPGUI skin)
+- Fixed-timestep sim (30 Hz) decoupled from rendering; DOM overlay UI (Grimdark Chrome skin)
 
 ## Run
 

@@ -14,9 +14,10 @@ correction here, don't let the disagreement stand.
   this file is what supersedes it).
 - **`docs/plans/WORKFLOW.md`** — how we work. Branching, verification, the Gauntlet, known
   pitfalls, harness gotchas.
-- **`docs/plans/<ID>-*.md`** — individual milestone briefs. Point-in-time implementation
-  specs, superseded by this doc once shipped. Useful for "why does this exist," not "what
-  does this currently do."
+- **`docs/plans/<ID>-*.md`** — individual milestone briefs, written while a milestone is in
+  flight. Once it ships, its facts get folded into this doc and its history into ROADMAP.md,
+  and the brief itself gets deleted — don't let these pile up indefinitely (they did, once;
+  30-odd of them got cleared out on 2026-07-31 for exactly this reason).
 
 ---
 

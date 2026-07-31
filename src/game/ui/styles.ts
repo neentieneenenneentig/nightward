@@ -4,7 +4,7 @@
 // as deliberate contrast. Builds on U1's architecture (one stylesheet, CSS custom
 // properties, unchanged DOM/layout).
 //
-// No rpgui, no Press Start 2P, no border-image, no hue-rotate, no --font-pixel.
+// No Press Start 2P, no border-image, no hue-rotate, no --font-pixel.
 
 export function injectStyles() {
   if (document.getElementById('nw-styles')) return;
