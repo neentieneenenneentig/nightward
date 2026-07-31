@@ -1,24 +1,34 @@
 # NIGHTWARD
 
-**Your internet connection is the game world.**
+**Your internet connection is the world you're dreaming, and you only get one dream.**
+
+A ~15-minute browser survival-RPG: gather, craft, build a fortified hold, and fight off
+night hordes and roaming boss lords — all shaped by your live network connection, and all
+inside one finite character lifespan that ages in real time and ends in death of natural
+causes whether or not anything kills you first. Reload for a new connection-driven world
+and a shot at a better Legacy Score.
 
 Live browser network metrics — RTT, jitter, bandwidth, connection type, real clock —
-drive every mechanic: terrain generation, resource flows, day/night cycle, enemy spawns,
-difficulty scaling. Two people on the same world seed get totally different experiences
-because their connections differ. Same tab, same seed, different world depending on where
-and how you're connected.
+drive every mechanic: terrain, resource flows, day/night pacing, enemy spawns, difficulty.
+Two people on the same world seed get different experiences because their connections
+differ.
 
 Built on a Rust→WebAssembly simulation core with a 100% procedurally generated pixel-art
 renderer. Zero hosted assets, zero backend, zero persistence — the world lives exactly as
-long as your tab does.
+long as your tab does, and even a run that ends peacefully doesn't survive a reload. The
+one thing that persists: a local leaderboard of past runs' scorecards.
+
+**Full design doc: [`docs/GDD.md`](docs/GDD.md)** — the source of truth for what the game
+is. This README is a pitch; that file is the reference.
 
 ## Core loop
 
-Gather resources → craft gear → build territory → survive the night hordes.
-But every number — spawn rates, regen speed, enemy difficulty, even the day/night
-cycle — is driven by your live network conditions. Fast internet = your territory
-thrives. Jittery WiFi = chaotic combat. Switch from Ethernet to cellular = the world
-reshuffles. Toggle airplane mode = hard reset.
+Gather resources → craft gear → build territory → survive the night hordes, inside a
+~15-minute lifespan that ages in real time regardless of how the fight goes. Every
+number — spawn rates, regen speed, enemy difficulty, even the day/night cycle — is driven
+by your live network conditions. Fast internet = your territory thrives. Jittery WiFi =
+chaotic combat. The run ends when your hall falls, or when the years catch up — either
+way, you get a Legacy Score and a shot at a better run.
 
 ## Stack
 
@@ -43,30 +53,28 @@ connections make different worlds from the same seed.
 
 ## What's shipped
 
-- ✅ Walkable infinite procgen world with noise biomes + domain-warped coasts
-- ✅ Gatherable resources, inventory, equipment slots, RS-style skill leveling
-- ✅ Crafting: weapons, armor, tools, consumables, buildings
-- ✅ Territory system: hall, huts, walls, watchtowers, population, tribute
-- ✅ Night horde waves scaling with night # + territory value
-- ✅ Weighty combat: windup→active→recovery state machine, telegraph tells
-- ✅ Soul Gear: soul-bound gear with per-slot XP leveling
-- ✅ Day hunts: daytime prey mobs, wander/despawn
-- ✅ Rust/wasm world engine: 16 materials, writable overrides, chunk streaming
-- ✅ Dual-grid autotile rendering with pseudo-3D cliff ledges
-- ✅ Fire cellular automaton: wind-driven spread, burnout, glow overlay, firemaking skill
-- ✅ Pixel UI skin (RPGUI), event log, SFX system, god mode
+- ✅ Walkable infinite procgen world, 24 writable materials, Rust/wasm world engine with
+  dual-grid autotile rendering, cliff ledges, and a real fire cellular automaton
+- ✅ Gathering, crafting (67 items / 45 recipes across 3 crafting skills), 8 RS-style skills
+- ✅ Territory: hall/walls/huts/traps/utility buildings + 15 towers in tiered upgrade paths,
+  anchor-chained placement via waystones with disconnect decay
+- ✅ Weighty combat (windup→active→recovery, telegraphed enemies, per-swing damage rolls)
+  vs. 25 enemy types incl. 5 world-boss domain lords
+- ✅ Progression: Soul Gear (per-slot leveling gear), 5 boss Echoes, a 40-node Loom passive
+  tree, 5 unique boss relics
+- ✅ The Wire: live network metrics (19 tracked, 22 game mappings) drive sim speed, gold
+  rate, enemy scale, damage rolls, vitals, and more — with full graceful degradation
+- ✅ The Veil (pure-fantasy fiction) & the Lens (`O` key — every raw network number, with
+  inspect-mode source/action/consumer breakdowns)
+- ✅ Survival vitals (Vigor/Resolve decay-and-restore pressure)
+- ✅ **The Lifespan**: a hard ~15-minute run — your character ages in real time and the run
+  ends in death of natural causes if nothing kills you first — plus a Legacy Score
+  leaderboard replacing the old "how long was the tab open" metric
+- ✅ Grimdark Chrome UI skin (100% CSS, no image assets), procgen particles/post-processing,
+  procedural WebAudio SFX + mood music
 
-## What's next (Batch 5 — "The Wire")
-
-- 🚧 **N1 — Network Seed**: live browser network metrics → game parameters
-- 🚧 **N2 — Wire Realm**: network-themed biomes, connection events as game events
-- 🚧 **G1 — Visual upgrade**: SUBPIX rendering, post-processing, particles
-- 🚧 **W6 — Scoreboards**: connection-uptime leaderboards
-- 🚧 **G2 — Juice pass**: screen shake, hit-stop, knockback, attack trails
-- 🚧 **N3 — Living Network**: network metrics drive the fire/wetness sim
-- 🚧 **A1 — Local agent** (stretch): optional native binary for deeper metrics
-
-Full roadmap: [`docs/plans/ROADMAP.md`](docs/plans/ROADMAP.md)
+Full design reference: [`docs/GDD.md`](docs/GDD.md). Build history / what's next:
+[`docs/plans/ROADMAP.md`](docs/plans/ROADMAP.md).
 
 ## Privacy & external endpoints
 
@@ -86,11 +94,14 @@ A full list of contacted endpoints is logged to the browser console at boot.
 
 ## Live tuning
 
-In the browser console:
+In the browser console (available in every build, dev or production):
 - `window.NW.CFG` — live game config (editable at runtime)
 - `window.NW.MATS` — material table
-- `window.NW.NET` — live network metrics (coming in N1)
-- `window.__nw` — sim state, systems, step(), craft(), paint()
+- `window.NW.NET` — live network metrics + mappings (editable at runtime)
+- `window.__nw` — sim state, systems, `step()`, `craft()`, `paint()`, and the regression
+  suite (`__nw.regression.run()`, or load with `?test`)
 
-Debug hotkeys: `.` +30s · `n` skip to night · `j` force wave · `g` +gold ·
-`m` +materials · `h` heal · `u` god mode · `p` paint brush · `f` ignite
+Debug hotkeys (`.` +30s clock, `n` skip to night, `j` force wave, `g` +gold, `m`
++materials, `h` heal, `u` god mode, `p`/`Shift+P` paint brush) only register in `npm run
+dev` — they're stripped from production builds (`npm run build`), so a live game never
+ships with a free-resources hotkey reachable by a real player.
