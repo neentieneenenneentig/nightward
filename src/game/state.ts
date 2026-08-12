@@ -63,6 +63,12 @@ export interface GameState {
   region: string;                      // region key the player is currently in
   explored: Record<string, number>;    // region key → 1 (for fog / future minimap)
   nightsSurvived: number;
+  /** B2: has dusk fallen since the last dawn? Dawn credits a night only if so.
+   *  A flag, not a counter compared against nightsSurvived — the run's own stats
+   *  get assigned directly by fixtures and by any future save/restore, and a
+   *  gate that a stray assignment can wedge shut is the wrong shape. This is
+   *  simply the rule itself: you cannot survive a night you were not here for. */
+  nightEntered: boolean;
   gameOver: boolean;
   gameOverCause: 'hall_fallen' | 'old_age' | null; // L1: what actually ended the run
   god: boolean;                        // debug/test mode: immortal, everything unlocked
@@ -122,6 +128,7 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     region: '',
     explored: {},
     nightsSurvived: 0,
+    nightEntered: false,   // a run that boots mid-night has not entered it
     gameOver: false,
     gameOverCause: null,
     god: false,

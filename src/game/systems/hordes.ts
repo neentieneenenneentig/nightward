@@ -54,6 +54,11 @@ export class HordeSystem {
   constructor(private ctx: any) {}
 
   onDusk(nightIndex: number) {
+    // B2: the player was here when night fell — record it BEFORE the firstNight
+    // early-return, so the dawn credit is gated on presence, not on whether a
+    // wave happened to spawn. (With firstNight: 1 nothing is quiet today, but
+    // raising it must not silently start voiding survived nights.)
+    this.ctx.state.nightEntered = true;
     if (nightIndex < CFG.horde.firstNight) return;
     // M3: gold-scaled horde size — the network detects your cache
     const gold = this.ctx.state.player.gold;
@@ -70,14 +75,29 @@ export class HordeSystem {
     this.ctx.log?.push('combat', `Night ${nightIndex} falls — ${this.toSpawn} incoming (gold ${gold} → ${goldMult.toFixed(1)}× horde)`, this.ctx.state.clock);
   }
 
-  onDawn() {
-    const { state, toast } = this.ctx;
-    state.nightsSurvived++;
+  /** Sweep the night's survivors off the field. Dawn does this; so does the end
+   *  of the run. B2: this used to live inside onDawn(), so `triggerGameOver`
+   *  calling it "to clear the field" also handed out a night survived — every
+   *  run, at the moment it ended, worth CFG.legacy.weights.nightSurvived. */
+  clearField() {
     if (CFG.horde.dawnFlee) {
       for (const f of this.foes) this.ctx.views.removeFoe(f.uid);
       this.foes = [];
     }
     this.toSpawn = 0;
+  }
+
+  /** B2: `fought` is false when this dawn ends a night the player never entered
+   *  — a run that booted mid-night never saw onDusk, so there is nothing to
+   *  credit. The field still clears either way; dawn is dawn. */
+  onDawn(fought: boolean) {
+    const { state, toast } = this.ctx;
+    this.clearField();
+    if (!fought) {
+      this.ctx.log?.push('combat', 'Dawn breaks on a night that was already underway — no credit', state.clock);
+      return;
+    }
+    state.nightsSurvived++;
     toast(`Dawn breaks. Nights survived: ${state.nightsSurvived}`, 'good');
     this.ctx.log?.push('combat', `Dawn breaks — nights survived: ${state.nightsSurvived}`, state.clock);
   }

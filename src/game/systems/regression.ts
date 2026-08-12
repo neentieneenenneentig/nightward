@@ -1114,7 +1114,13 @@ async function testLoomKeystones(nw: any) {
   // Glass Echo
   const glassEcho = LOOM_NODES.find((n: any) => n.id === 'keystone_glass');
   ok(glassEcho !== undefined, 'Glass Echo keystone exists');
-  ok(glassEcho!.keystoneDesc!.includes('HP'), 'Glass Echo description mentions HP tradeoff');
+  // The old assertion here was `keystoneDesc.includes('HP')` — it pinned the
+  // *advertisement* in place. Glass Echo promises "Max HP halved" and nothing
+  // implements it: `glassEcho` is read in exactly one place, combat.ts's
+  // damage-roll transform, which is the upside. Testing the description made
+  // the missing downside harder to notice, not easier. The gap is a balance
+  // call, recorded for B3 (§12 Q3), so it is left alone here rather than
+  // silently implemented — but it is no longer defended by a test.
 
   // Deep Roots
   const deepRoots = LOOM_NODES.find((n: any) => n.id === 'keystone_roots');
@@ -1142,17 +1148,174 @@ async function testLoomKeystones(nw: any) {
     }
   }
 
-  const allocated = loom.allocate('keystone_glass_echo');
-  if (allocated) {
-    const mods = loom.ensureMods();
-    ok(mods.glassEcho === true, 'Glass Echo flag is true after allocation');
+  // This used to read `loom.allocate('keystone_glass_echo')` — a node id that
+  // does not exist. allocate() returned false, the whole `if (allocated)` body
+  // was unreachable, and the test closed on `ok(true, ...)`. It had never once
+  // allocated a keystone. Allocate the real id and assert unconditionally, so
+  // a rename cannot quietly hollow it out again.
+  ok(loom.allocate('keystone_glass'), 'Glass Echo allocates once its prereq is held');
+  const mods = loom.ensureMods();
+  ok(mods.glassEcho === true, 'Glass Echo flag is live after allocation');
 
-    // Verify HP halving is readable
-    const hpMul = loom.getPlayerHpMul?.() ?? 1;
-    ok(hpMul < 1, `Glass Echo reduces player HP multiplier: ${hpMul}`);
-  }
+  // The implemented half of the keystone: damage rolls are remapped out of the
+  // bottom of the D5 band, so a roll sitting on the band floor comes back high.
+  const floorRoll = loom.getDmgRollTransform(0.30);
+  ok(floorRoll > 0.30, `Glass Echo lifts a floor roll: 0.30 → ${floorRoll.toFixed(2)}`);
 
-  ok(true, 'loom keystones test completed');
+  ok(state.player.loomPoints > 0, 'points remain, so the next check is about rank not funds');
+  ok(!loom.canAllocate('keystone_glass'), 'a keystone cannot be taken twice');
+}
+
+/** B2 — a night can only be survived if it was entered.
+ *
+ *  Two paths handed out free nights, each worth CFG.legacy.weights.nightSurvived
+ *  on a board whose entire purpose is comparing runs:
+ *
+ *    1. D2 seeds the clock from the real local time of day, and ~29% of the real
+ *       day lands inside the game's night. Such a run never sees dusk — but the
+ *       next dawn credited a night AND a Loom point anyway (§5).
+ *    2. triggerGameOver() called hordes.onDawn() purely to sweep the field, and
+ *       onDawn() incremented the counter. So every run, however it ended,
+ *       collected one final night at the moment it ended. The plan missed this
+ *       one; it is the path that actually produced §5's own 7-second scorecard,
+ *       which could not have crossed a dawn at all.
+ *
+ *  Measured live before the fix: a run parked in daylight having fought nothing
+ *  reported nightsSurvived 1 / loomPoints 1, then 2 after onHallDestroyed(). */
+async function testNightCreditRequiresEntry(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+  const cy = CFG.time.daySec + CFG.time.nightSec;
+  const restoreClock = state.clock;
+  state.gameOver = false;
+  state.gameOverCause = null;
+
+  // --- sweeping the field is not a credit ---------------------------------
+  const beforeSweep = state.nightsSurvived;
+  sys.hordes.clearField();
+  eq(state.nightsSurvived, beforeSweep, 'clearField() sweeps without crediting a night');
+  eq(sys.hordes.foes.length, 0, 'clearField() does clear the foes');
+
+  // --- dawn on a night nobody entered credits nothing ----------------------
+  const beforeUnentered = state.nightsSurvived;
+  const pointsBefore = state.player.loomPoints ?? 0;
+  sys.hordes.onDawn(false);
+  eq(state.nightsSurvived, beforeUnentered, 'dawn after an unentered night credits no night');
+  eq(state.player.loomPoints ?? 0, pointsBefore, '...and no Loom point');
+
+  // --- a real dusk → dawn cycle credits exactly one ------------------------
+  // Driven through nw.step so the gate under test is main.ts's own transition
+  // branch, not a hand-call into the horde system.
+  state.clock = CFG.time.daySec - 1;      // daylight; let any pending edge settle
+  nw.step(2);
+  state.nightEntered = false;
+  const survivedBefore = state.nightsSurvived;
+
+  state.clock = CFG.time.daySec + 1;      // into the night → dusk edge
+  nw.step(2);
+  eq(state.nightEntered, true, 'crossing dusk marks the night as entered');
+  eq(state.nightsSurvived, survivedBefore, '...and credits nothing yet');
+
+  state.clock = cy + 1;                    // into the next day → dawn edge
+  nw.step(2);
+  eq(state.nightsSurvived, survivedBefore + 1, 'crossing dawn after a real dusk credits one night');
+  eq(state.nightEntered, false, 'the dawn consumes the mark, so it cannot be spent twice');
+
+  // --- §5's actual scenario: the run booted mid-night ----------------------
+  // Sit inside the night with no dusk on record — which is precisely what D2's
+  // real-clock start produces for the ~29% of the real day that lands in the
+  // game's night — then cross into day. This is the case that pins main.ts's
+  // transition gate; the onDawn(false) check above only pins the horde system.
+  state.clock = CFG.time.daySec + 50;      // mid-night
+  nw.step(2);
+  state.nightEntered = false;              // ...but nobody was here when it fell
+  const survivedBoot = state.nightsSurvived;
+  const pointsBoot = state.player.loomPoints ?? 0;
+  state.clock = cy + 1;                     // cross into day → dawn edge
+  nw.step(2);
+  eq(state.nightsSurvived, survivedBoot, 'a run that booted mid-night gets no night at its first dawn');
+  eq(state.player.loomPoints ?? 0, pointsBoot, '...and no Loom point either');
+
+  // A stat fixture must not be able to wedge the gate shut. This is why the
+  // mark is a flag and not `nightsEntered > nightsSurvived`: regression.ts
+  // assigns state.nightsSurvived directly (the scoreboard fixtures set it to 5
+  // and to 20), and under the counter form that put the credit permanently out
+  // of reach — the extended playthrough silently survived 0 nights across 6
+  // full day/night cycles.
+  state.nightsSurvived = 999;
+  state.clock = CFG.time.daySec - 1; nw.step(2);
+  state.clock = CFG.time.daySec + 1; nw.step(2);   // dusk
+  state.clock = cy + 1; nw.step(2);                // dawn
+  eq(state.nightsSurvived, 1000, 'credit still works after nightsSurvived is assigned directly');
+
+  state.nightsSurvived = survivedBefore + 1;
+  state.clock = restoreClock;
+  state.nightEntered = false;
+  sys.hordes.clearField();
+}
+
+/** B2 — the Long Thread counts skill levels with the game's xp curve.
+ *
+ *  systems/loom.ts carried its own levelOf(): it multiplied CFG.xp.growth
+ *  without rounding, while rules.xpToNext rounds every level's cost. The copy's
+ *  cumulative ran fractionally high, so the two disagreed at 64 xp values in
+ *  0..60000 — and, because the drift is always in the same direction, they
+ *  disagreed at *exactly* the gate totals. A skill parked on 286 xp is level 5
+ *  by the curve the rest of the game uses, and was level 4 to the Loom.
+ *
+ *  The expected values below are written down, not derived from the curve.
+ *  Eight skills on the level-5 gate is 40 total levels, which is 4 points at one
+ *  per ten. Under the old private copy the same xp read as level 4 apiece — 32
+ *  levels, 3 points. So this separates the fix from the bug rather than
+ *  restating whichever one happens to be compiled in. */
+async function testLongThreadCurve(nw: any) {
+  const { state } = nw;
+  const { SKILLS } = await import('../data/skills');
+  const { LOOM_NODES } = await import('../data/loom');
+  const loom = nw.sys.loom;
+
+  const saved = {
+    xp: { ...state.player.xp },
+    nodes: { ...state.player.loomNodes },
+    points: state.player.loomPoints,
+    lt: state.player._longThreadPoints,
+  };
+
+  eq(SKILLS.length, 8, 'eight skills feed the Long Thread total');
+
+  const thread = LOOM_NODES.find((n: any) => n.id === 'keystone_thread')!;
+  state.player.loomNodes = {};
+  for (const reqId of thread.req ?? [])
+    state.player.loomNodes[reqId] = LOOM_NODES.find((n: any) => n.id === reqId)?.maxRank ?? 1;
+  state.player.loomPoints = 10;
+  ok(loom.allocate('keystone_thread'), 'Long Thread allocates once its prereq is held');
+  ok(loom.ensureMods().longThread, 'Long Thread modifier is live');
+
+  // Every skill parked exactly on the level-5 gate.
+  state.player.xp = {};
+  for (const s of SKILLS) state.player.xp[s.id] = 286;
+  state.player._longThreadPoints = 0;
+  const atGate = state.player.loomPoints;
+  loom.onSkillLevelUp();
+  eq(state.player.loomPoints - atGate, 4,
+    '8 skills on the L5 gate (286 xp) = 40 levels = 4 Long Thread points');
+  eq(state.player._longThreadPoints, 4, 'the grant is banked so it is not paid twice');
+
+  loom.onSkillLevelUp();
+  eq(state.player.loomPoints - atGate, 4, 'a second call with no new levels grants nothing');
+
+  // One xp short of the gate is one level short on every skill: 32 levels → 3.
+  for (const s of SKILLS) state.player.xp[s.id] = 285;
+  state.player._longThreadPoints = 0;
+  const belowGate = state.player.loomPoints;
+  loom.onSkillLevelUp();
+  eq(state.player.loomPoints - belowGate, 3,
+    '8 skills one xp below the gate (285) = 32 levels = 3 points');
+
+  state.player.xp = saved.xp;
+  state.player.loomNodes = saved.nodes;
+  state.player.loomPoints = saved.points;
+  state.player._longThreadPoints = saved.lt;
 }
 
 // =========================================================================
@@ -2076,9 +2239,13 @@ async function testSurvivalPlaythrough(nw: any) {
     if (state.player.gold > prevGold) {
       m.goldEarned += state.player.gold - prevGold;
     }
-    // Track nights survived
+    // Track nights survived. B2: accumulate the DELTA, not the absolute counter.
+    // state.nightsSurvived is a run-wide stat that earlier fixtures assign
+    // directly (the scoreboard tests set it to 5, 1 and 20), so copying it here
+    // reported a playthrough's nights as "20 + however many it actually did" —
+    // and that number is what gets quoted as evidence.
     if (state.nightsSurvived > prevNight) {
-      m.nightsSurvived = state.nightsSurvived;
+      m.nightsSurvived += state.nightsSurvived - prevNight;
       logEvent(m, state.clock, 'night', `survived night ${state.nightsSurvived}`);
       prevNight = state.nightsSurvived;
     }
@@ -3238,9 +3405,10 @@ async function testExhaustivePlaythrough(nw: any) {
     if (state.player.gold > prevGold) m.goldEarned += state.player.gold - prevGold;
     prevGold = state.player.gold;
 
-    // Track nights
+    // Track nights — the DELTA, not the absolute run stat (see the same fix in
+    // testSurvivalPlaythrough above; fixtures assign state.nightsSurvived).
     if (state.nightsSurvived > prevNight) {
-      m.nightsSurvived = state.nightsSurvived;
+      m.nightsSurvived += state.nightsSurvived - prevNight;
       exLog(m, state.clock, 'night', `survived night ${state.nightsSurvived}`);
       exMark(m, 'hordes');
       prevNight = state.nightsSurvived;
@@ -3407,9 +3575,29 @@ async function testExhaustivePlaythrough(nw: any) {
     console.log(`    ${pt.phase}: ${dur.toFixed(0)}s game-time`);
   }
 
-  // Core survival — these MUST pass
-  ok(!state.gameOver || m.nightsSurvived >= 3,
-    `game not over OR ${m.nightsSurvived} nights survived`);
+  // Core survival — these MUST pass.
+  //
+  // This used to read `!state.gameOver || m.nightsSurvived >= 3`. Two problems.
+  // The disjunct passes for any run that merely didn't end, whatever it did —
+  // it went green on a playthrough that survived 0 nights. And the threshold it
+  // guarded is not deterministic: phase 4 steps a LIVE, un-paused game, the
+  // background rAF loop races the suite's own stepping, and gameOver freezes
+  // state.clock — measured across three identical runs, phase 4 survived 1, 4
+  // and 6 nights. Any fixed lower bound here is a coin flip. It only ever
+  // looked stable because m.nightsSurvived was copying the absolute run stat,
+  // which an earlier fixture had already set to 20.
+  //
+  // So assert the bound that IS deterministic, and that is the one B2 exists to
+  // defend: nights credited can never exceed the nights the clock could hold.
+  // Phantom credits — the free night at dawn, the free night at death — break
+  // this immediately, while a slow run does not.
+  const { CFG: CFG4 } = await import('../data/config');
+  const p4 = m.phaseTimings.find((pt: any) => pt.phase.startsWith('PHASE 4'));
+  const p4Elapsed = p4 ? Math.max(0, p4.endClock - p4.startClock) : 0;
+  const cycleCap = Math.ceil(p4Elapsed / (CFG4.time.daySec + CFG4.time.nightSec)) + 1;
+  ok(m.nightsSurvived <= cycleCap,
+    `${m.nightsSurvived} nights credited across ${p4Elapsed.toFixed(0)}s of phase-4 clock ` +
+    `(at most ${cycleCap} cycles fit) — no phantom nights`);
   ok(state.player.hp > 0 || state.god === true,
     'player alive or god-mode at end of playthrough');
   ok(m.ticksElapsed >= 10000,
@@ -3465,6 +3653,8 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Game log', fn: testLogEntries },
   { name: 'XP & leveling', fn: testXpAndLeveling },
   { name: 'XP curve — gates at 5/10/15/20/30 vs recipe levelReqs', fn: testXpCurve },
+  { name: 'Night credit requires entering the night', fn: testNightCreditRequiresEntry },
+  { name: 'Long Thread counts levels on the real xp curve', fn: testLongThreadCurve },
   { name: 'State immutability', fn: testStateImmutabilityPattern },
   { name: '🔥 Survival playthrough (10 min)', fn: testSurvivalPlaythrough },
   // ---- P1 Gauntlet (14 behavioral tests) ----

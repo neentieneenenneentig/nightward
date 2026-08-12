@@ -2,6 +2,7 @@
 // Allocate nodes; modifiers are consumed by existing systems as percentage
 // multipliers. Keystones warp game rules. No respec — a run IS its weave.
 import { CFG } from '../data/config';
+import { levelFromXp } from '../rules';
 import {
   LOOM_NODES, nodeById, computeModifiers,
   DEFAULT_MODIFIERS, type LoomModifiers, type LoomNode,
@@ -50,8 +51,14 @@ export class LoomSystem {
   onSkillLevelUp() {
     if (!this.ensureMods().longThread) return;
     const { state } = this.ctx;
+    // B2: use rules.levelFromXp — the game's one xp curve. This file used to
+    // carry its own copy that multiplied the growth factor unrounded, while
+    // rules.xpToNext rounds each level's cost. The two disagreed at 64 xp values
+    // in 0..60000 and — because loom's cumulative ran fractionally high — they
+    // disagreed at *exactly* the gate totals (286→L5 vs L4, 886→L10 vs L9), so
+    // a skill that had just levelled counted as one lower here.
     const totalLevels = Object.values(state.player.xp as Record<string, number>)
-      .reduce((sum, xp) => sum + levelOf(xp), 0);
+      .reduce((sum, xp) => sum + levelFromXp(xp), 0);
     // +1 point per 10 total levels (retuned B1: old /4 was ~7 pts on the
     // expensive curve; new curve triples levels so /10 keeps it ~7 pts)
     const earned = Math.floor(totalLevels / 10);
@@ -137,18 +144,4 @@ export class LoomSystem {
     const m = this.ensureMods();
     return m.nightMarket ? CFG.worldBoss.wakeGold / 2 : CFG.worldBoss.wakeGold;
   }
-}
-
-// ---- Helpers ----------------------------------------------------------------
-
-function levelOf(xp: number): number {
-  let lvl = 1;
-  let needed = CFG.xp.base;
-  let acc = 0;
-  while (acc + needed <= xp && lvl < CFG.xp.maxLevel) {
-    acc += needed;
-    lvl++;
-    needed *= CFG.xp.growth;
-  }
-  return lvl;
 }

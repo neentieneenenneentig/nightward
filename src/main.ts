@@ -384,7 +384,7 @@ async function boot() {
     if (state.gameOver) return;
     state.gameOver = true;
     state.gameOverCause = cause;
-    hordes.onDawn(); // clear the field
+    hordes.clearField(); // B2: clear the field WITHOUT crediting a night survived
     if (cause === 'old_age') {
       log.push('death', `The years catch up at last. Age ${Math.floor(state.player.age)}, the dream lets go gently.`, state.clock);
     } else {
@@ -436,6 +436,19 @@ async function boot() {
   window.addEventListener('pointerdown', startAudio);
   window.addEventListener('keydown', startAudio);
 
+  // D2: set initial clock phase to real time-of-day once; game then runs at
+  // its own speed — no per-tick nudge toward wall clock.
+  //
+  // B2: this MUST happen before `wasNight` is seeded below. It used to run ~35
+  // lines later, so wasNight was read off the un-initialised clock (0 = day)
+  // and the first sim tick of any run that booted into the night saw a
+  // day→night edge that had not happened. That synthetic dusk called
+  // hordes.onDusk() — spawning a full night's wave on top of a player with a
+  // flint axe and no walls (§4) — and armed the free-night credit that survived
+  // even the gate below, because a dusk edge genuinely had fired (§5).
+  const cy = CFG.time.daySec + CFG.time.nightSec;
+  state.clock = net.snap.timeOfDay * cy;
+
   // ---- the loop ----
   let acc = STEP;
   let wasNight = phase(state.clock).isNight;
@@ -470,11 +483,6 @@ async function boot() {
     setTimeout(() => regression.runAll((window as any).__nw), 500);
   }
 
-  // D2: set initial clock phase to real time-of-day once; game then runs at
-  // its own speed — no per-tick nudge toward wall clock.
-  const cy = CFG.time.daySec + CFG.time.nightSec;
-  state.clock = net.snap.timeOfDay * cy;
-
   stage.app.ticker.add((tk) => {
     frames++;
     const frameMs = Math.min(tk.deltaMS, 250); // clamp after tab-sleep
@@ -498,15 +506,24 @@ async function boot() {
     const ph = phase(state.clock);
     if (ph.isNight && !wasNight) { hordes.onDusk(ph.dayIndex); Sound.play('nightfall'); net.snapshotDuskRtt(); }
     if (!ph.isNight && wasNight) {
-      hordes.onDawn();
-      net.computeNightRttStability();
-      vitals.onSurviveNight();
-      loom.onNightSurvived();  // C3: nights survived = Loom points
+      // B2: you can only survive a night you were here for. A run that boots
+      // mid-night (D2 starts the clock at real time-of-day, and 29% of the real
+      // day lands inside one) never saw the dusk transition, so this dawn is
+      // not a survival — no night, no Loom point, and no RTT stability window
+      // computed against a dusk snapshot that was never taken.
+      const fought = state.nightEntered;
+      state.nightEntered = false;
+      hordes.onDawn(fought);
       Sound.play('dawn');
-      // Action-gated beacon echo — surviving the night pings the southern beacons
-      net.probeAction('survive_night');
-      // Passive pulse drift — dawn pulse minus dusk pulse, zero HTTP
-      net.samplePassive('survive_night');
+      if (fought) {
+        net.computeNightRttStability();
+        vitals.onSurviveNight();
+        loom.onNightSurvived();  // C3: nights survived = Loom points
+        // Action-gated beacon echo — surviving the night pings the southern beacons
+        net.probeAction('survive_night');
+        // Passive pulse drift — dawn pulse minus dusk pulse, zero HTTP
+        net.samplePassive('survive_night');
+      }
     }
     wasNight = ph.isNight;
     // S1: collect RTT samples during the night for stability tracking
