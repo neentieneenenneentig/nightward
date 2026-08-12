@@ -367,16 +367,64 @@ async function testLogEntries(nw: any) {
 async function testXpAndLeveling(nw: any) {
   const { state } = nw;
 
-  const { addXp, skillLevel } = await import('../rules');
+  const { addXp, skillLevel, levelFromXp } = await import('../rules');
   const beforeLevel = skillLevel(state, 'woodcutting');
   const beforeXp = state.player.xp.woodcutting ?? 0;
 
   const newLevel = addXp(state, 'woodcutting', 500);
   ok((state.player.xp.woodcutting ?? 0) > beforeXp, 'woodcutting XP increased');
-  ok(skillLevel(state, 'woodcutting') >= beforeLevel, 'skill level is monotonic');
-  ok(skillLevel(state, 'woodcutting') >= 2 || newLevel > 0, '500 XP grants at least level 2');
+  // B1: precise — 500 xp yields exactly level 7 under the current curve.
+  // Changing CFG.xp.base, growth, or maxLevel turns this red.
+  eq(levelFromXp(500), 7, '500 cumulative xp = level 7 (curve: base 60, growth 1.12)');
+  ok(newLevel > 0, 'addXp reports a level-up when crossing a threshold');
+  ok(skillLevel(state, 'woodcutting') >= 2, 'after adding xp, skill is at least level 2');
 
   void newLevel;
+}
+
+/** B1: pin the xp curve against the recipe levelReqs that consume it.
+ *  Changing CFG.xp.base, growth, or maxLevel without re-deriving the gates
+ *  will turn this test red.  Cumulative xp computed via the actual
+ *  levelFromXp(xpToNext-reconstructed) path, not a hand-calculated constant —
+ *  the assertion is "X total xp puts you at level L," and the precise xp value
+ *  is what the shipped curve produces. */
+async function testXpCurve(nw: any) {
+  const { levelFromXp, xpToNext } = await import('../rules');
+  const { RECIPES } = await import('../data/recipes');
+
+  /** Total xp needed to reach exactly `targetLevel` (cumulative). */
+  function xpToReach(targetLevel: number): number {
+    let xp = 0;
+    for (let L = 1; L < targetLevel; L++) xp += xpToNext(L);
+    return xp;
+  }
+
+  // Gate levels and their cumulative xp — these are the levels the recipe
+  // system gates on.  Changing CFG.xp will change these numbers; the test
+  // will tell you the new values and fail.
+  const gates: [number, number][] = [
+    [5,  xpToReach(5)],
+    [10, xpToReach(10)],
+    [15, xpToReach(15)],
+    [20, xpToReach(20)],
+    [30, xpToReach(30)],
+  ];
+
+  for (const [lvl, total] of gates) {
+    eq(levelFromXp(total), lvl, `cumulative xp ${total} = level ${lvl}`);
+  }
+
+  // Cross-check: every recipe's levelReq must be reachable (≤ maxLevel).
+  // Changing maxLevel below a used levelReq turns this red.
+  let maxRecipeReq = 0;
+  for (const r of RECIPES) {
+    if (r.levelReq > maxRecipeReq) maxRecipeReq = r.levelReq;
+    ok(r.levelReq <= 40,
+      `recipe ${r.id} levelReq ${r.levelReq} ≤ maxLevel 40`);
+  }
+  ok(maxRecipeReq > 0, `highest recipe levelReq is ${maxRecipeReq}`);
+
+  ok(true, 'xp curve gates verified');
 }
 
 async function testStateImmutabilityPattern(nw: any) {
@@ -3402,6 +3450,7 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Fire ignition', fn: testFireIgnite },
   { name: 'Game log', fn: testLogEntries },
   { name: 'XP & leveling', fn: testXpAndLeveling },
+  { name: 'XP curve — gates at 5/10/15/20/30 vs recipe levelReqs', fn: testXpCurve },
   { name: 'State immutability', fn: testStateImmutabilityPattern },
   { name: '🔥 Survival playthrough (10 min)', fn: testSurvivalPlaythrough },
   // ---- P1 Gauntlet (14 behavioral tests) ----

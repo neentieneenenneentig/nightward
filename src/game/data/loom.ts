@@ -45,7 +45,7 @@ export interface LoomModifiers {
   glassEcho: boolean;         // damage rolls only use TOP half of D5 band; max HP halved
   deepRoots: boolean;         // buildings +50% HP, towers +1 range; move speed −12%
   nightMarket: boolean;       // gold rate +40%; gold rouses bosses at half threshold
-  longThread: boolean;        // skills cap at 80; +1 loom point per 4 total levels instead of 5
+  longThread: boolean;        // +1 loom point per 10 total skill levels
 }
 
 export const DEFAULT_MODIFIERS: LoomModifiers = {
@@ -172,7 +172,7 @@ export const LOOM_NODES: LoomNode[] = [
   {
     id: 'keystone_thread', name: 'The Long Thread', branch: 'field', col: 0, row: 4, maxRank: 1,
     effects: {}, keystone: true,
-    keystoneDesc: '+1 Loom point per 4 total skill levels. Skills cap at 80.',
+    keystoneDesc: '+1 Loom point per 10 total skill levels.',
     req: ['f9'],
   },
 ];

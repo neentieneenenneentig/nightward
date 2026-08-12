@@ -23,10 +23,12 @@ export const CFG = {
   },
 
   // RS-style curve: xp to go from level L to L+1 = base * growth^(L-1)
+  // B1: retuned for the 15-min run window — copper immediately, iron mid-run,
+  // silver as a good run's reward, star as aspirational.
   xp: {
-    base: 400,               // ×10 (W4 balance pass) — leveling is a journey, not a sprint
-    growth: 1.32,
-    maxLevel: 50,
+    base: 60,
+    growth: 1.12,
+    maxLevel: 40,
   },
 
   // Weighty combat: attacks commit through windup → active (damage resolves
@@ -211,7 +213,7 @@ export const CFG = {
   },
 
   // S1: survival pressure — vitals that decay and must be restored by action.
-  // STUBS ONLY (2026-07-17) — not yet wired; implementation per S1-survival-pressure.md.
+  // All values wired by S1 and consumed by L1 aging; live-editable via NW.CFG.
   // ALL VALUES BELOW ARE BASE (neutral connection: 10Mbps, 50ms RTT, 4g, 5ms jitter,
   // 4 cores, 4GB RAM). At runtime, NetworkSystem applies multipliers on top via
   // NET_GAME_MAP rows (vigorDecay, vigorPerKill, vigorPerGather, vigorPerCampfire,

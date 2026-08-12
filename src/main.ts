@@ -583,7 +583,6 @@ async function boot() {
     // world core first — activate/deactivate chunks so the baker below reads the
     // EFFECTIVE (override-aware) materials for anything freshly scrolled in
     worldCore.ensureAround(fx, fy, w / cam.zoom, h / cam.zoom);
-    chunks.setPlayerPos(fx, fy);
     chunks.ensureAround(fx, fy, w / cam.zoom, h / cam.zoom);
     chunks.tickFoam(performance.now());
     chunks.tickGlow(performance.now());

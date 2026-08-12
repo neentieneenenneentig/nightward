@@ -52,8 +52,9 @@ export class LoomSystem {
     const { state } = this.ctx;
     const totalLevels = Object.values(state.player.xp as Record<string, number>)
       .reduce((sum, xp) => sum + levelOf(xp), 0);
-    // +1 point per 4 total levels
-    const earned = Math.floor(totalLevels / 4);
+    // +1 point per 10 total levels (retuned B1: old /4 was ~7 pts on the
+    // expensive curve; new curve triples levels so /10 keeps it ~7 pts)
+    const earned = Math.floor(totalLevels / 10);
     const prev = state.player._longThreadPoints ?? 0;
     if (earned > prev) {
       const diff = earned - prev;
