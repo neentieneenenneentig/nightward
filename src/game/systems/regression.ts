@@ -383,48 +383,62 @@ async function testXpAndLeveling(nw: any) {
 }
 
 /** B1: pin the xp curve against the recipe levelReqs that consume it.
- *  Changing CFG.xp.base, growth, or maxLevel without re-deriving the gates
- *  will turn this test red.  Cumulative xp computed via the actual
- *  levelFromXp(xpToNext-reconstructed) path, not a hand-calculated constant —
- *  the assertion is "X total xp puts you at level L," and the precise xp value
- *  is what the shipped curve produces. */
+ *
+ *  The gate numbers below are LITERAL, and that is the entire point.  The
+ *  first version of this test computed them by summing xpToNext() and then
+ *  asserted levelFromXp() of that sum — but levelFromXp IS the inverse of
+ *  that sum, so the assertion reduced to the identity f(f⁻¹(L)) === L.  It
+ *  stayed green under base 1 / growth 1.001, under base 99999 / growth 3.0,
+ *  and under the exact curve B1 was replacing.  Hand-written constants can
+ *  only stay true for one curve.
+ *
+ *  Every gate is pinned from BOTH sides — one xp below the threshold must
+ *  still report the previous level — so a curve that gets cheaper fails as
+ *  loudly as one that gets more expensive.
+ *
+ *  Turns red if: CFG.xp.base or CFG.xp.growth move at all; CFG.xp.maxLevel
+ *  drops below a gate or below the highest recipe levelReq; or xpToNext and
+ *  levelFromXp stop agreeing about cumulative-vs-per-level semantics.
+ *
+ *  To re-derive after an intentional curve change:
+ *    let c = 0; for (let L = 1; L < 40; L++) c += Math.round(60 * 1.12 ** (L - 1)); */
 async function testXpCurve(nw: any) {
   const { levelFromXp, xpToNext } = await import('../rules');
   const { RECIPES } = await import('../data/recipes');
+  const { CFG } = await import('../data/config');
 
-  /** Total xp needed to reach exactly `targetLevel` (cumulative). */
-  function xpToReach(targetLevel: number): number {
-    let xp = 0;
-    for (let L = 1; L < targetLevel; L++) xp += xpToNext(L);
-    return xp;
-  }
-
-  // Gate levels and their cumulative xp — these are the levels the recipe
-  // system gates on.  Changing CFG.xp will change these numbers; the test
-  // will tell you the new values and fail.
-  const gates: [number, number][] = [
-    [5,  xpToReach(5)],
-    [10, xpToReach(10)],
-    [15, xpToReach(15)],
-    [20, xpToReach(20)],
-    [30, xpToReach(30)],
+  // Cumulative xp required to REACH each level under base 60 / growth 1.12.
+  const GATES: Array<[level: number, cumulativeXp: number]> = [
+    [5,   286],    // sword_copper, armor_copper
+    [10,  886],    // iron_bar — mid-run gate
+    [15,  1943],   // sword_iron
+    [20,  3805],
+    [30,  12873],
+    [40,  41039],  // level cap
   ];
 
-  for (const [lvl, total] of gates) {
-    eq(levelFromXp(total), lvl, `cumulative xp ${total} = level ${lvl}`);
+  for (const [lvl, total] of GATES) {
+    eq(levelFromXp(total), lvl, `${total} cumulative xp = level ${lvl}`);
+    eq(levelFromXp(total - 1), lvl - 1,
+      `${total - 1} xp is still level ${lvl - 1} (gate ${lvl} is exact)`);
   }
 
-  // Cross-check: every recipe's levelReq must be reachable (≤ maxLevel).
-  // Changing maxLevel below a used levelReq turns this red.
+  // Cheapest thing to get wrong, loudest signal that CFG.xp.base moved.
+  eq(xpToNext(1), 60, 'first level costs 60 xp (CFG.xp.base)');
+
+  // The cap actually clamps — no amount of xp exceeds maxLevel.
+  eq(levelFromXp(41039 * 100), CFG.xp.maxLevel,
+    `xp is clamped at CFG.xp.maxLevel (${CFG.xp.maxLevel})`);
+
+  // Every recipe gate must be reachable under the shipped cap.  Bound to
+  // CFG.xp.maxLevel, not a literal, so lowering the cap is what breaks it.
   let maxRecipeReq = 0;
   for (const r of RECIPES) {
     if (r.levelReq > maxRecipeReq) maxRecipeReq = r.levelReq;
-    ok(r.levelReq <= 40,
-      `recipe ${r.id} levelReq ${r.levelReq} ≤ maxLevel 40`);
+    ok(r.levelReq <= CFG.xp.maxLevel,
+      `recipe ${r.id} levelReq ${r.levelReq} ≤ cap ${CFG.xp.maxLevel}`);
   }
-  ok(maxRecipeReq > 0, `highest recipe levelReq is ${maxRecipeReq}`);
-
-  ok(true, 'xp curve gates verified');
+  ok(maxRecipeReq > 0, `recipes declare levelReqs (highest is ${maxRecipeReq})`);
 }
 
 async function testStateImmutabilityPattern(nw: any) {
@@ -3545,10 +3559,14 @@ export async function runAll(nw: any): Promise<{ pass: number; fail: number; tot
     }
   }
 
+  // _pass/_fail count ASSERTIONS (ok() increments them), TESTS.length counts
+  // test functions.  The old summary mixed the two — "ALL 1310 TESTS PASSED"
+  // against a 73-function suite — which is how a reviewer ends up quoting the
+  // wrong number.  Say which unit is which.
   const elapsed = (performance.now() - startMs).toFixed(0);
   const summary = _fail === 0
-    ? `✅ ALL ${_pass} TESTS PASSED  (${elapsed}ms)`
-    : `❌ ${_fail}/${TESTS.length} FAILED  (${elapsed}ms)`;
+    ? `✅ ALL ${_pass} ASSERTIONS PASSED across ${TESTS.length} tests  (${elapsed}ms)`
+    : `❌ ${_fail} of ${_pass + _fail} ASSERTIONS FAILED across ${TESTS.length} tests  (${elapsed}ms)`;
 
   console.log('');
   console.log(_fail === 0
