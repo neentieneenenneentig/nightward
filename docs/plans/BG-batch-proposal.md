@@ -1305,6 +1305,123 @@ and **§12 Q3 is still unanswered**. B3's brief must resolve it.
 
 ---
 
+## 17. Review log — review 4 (B2.2 implementation), 2026-08-12
+
+Implemented B2's second half — the free night (§5). **B2.1 (start every run at dawn) is
+NOT here**: it overturns D2 and §12 Q2 is still unanswered.
+
+Shipped as `608fd81` on `feat/b-reachable-run`.
+
+### §5 undercounted the problem: there were three free-night paths, not one
+
+| # | Path | In the plan? |
+|---|---|---|
+| 1 | `hordes.onDawn()` incremented `nightsSurvived` unconditionally, so a run that booted mid-night was credited at its first dawn — plus a Loom point | **yes**, §5 |
+| 2 | `triggerGameOver()` called `onDawn()` purely to sweep the field, and `onDawn()` moved the counter — so **every run collected one final night at the moment it ended**, whatever the clock said | no |
+| 3 | `wasNight` was seeded from `state.clock` ~35 lines *before* the D2 assignment set that clock to the real time of day | no |
+
+**Path 2 is the one that produced §5's own evidence.** The scorecard quoted there —
+`{"nightsSurvived":1, ...}` from "a run that lasted seven seconds and did nothing at all" —
+cannot have crossed a dawn transition in seven seconds. §5 attributed its own measurement
+to the wrong line. The correct diagnosis is the game-over sweep.
+
+**Path 3 is the one that would have defeated a naive fix.** Because `wasNight` was read off
+an uninitialised clock (0 = day), booting into the night manufactured a day→night edge on
+the first sim tick. That synthetic dusk called `hordes.onDusk()`, which (a) spawned a full
+night's wave on a player holding a flint axe — **§4 is worse than documented, it is not
+merely "no preparation time", it is an instantly-armed horde** — and (b) armed a credit
+that a "was dusk seen?" gate cannot reject, because a dusk edge genuinely had fired.
+
+Measured live at 22:19 local, inside §4's own 16:56–23:59 window, via CDP against the
+running game:
+
+| | `nightsSurvived` | `loomPoints` | `toSpawn` | `foes` | after `onHallDestroyed()` |
+|---|---:|---:|---:|---:|---:|
+| before | 1 | 1 | armed | — | **2** |
+| after | 0 | 0 | 0 | 0 | **0** |
+
+D2 is untouched. The run still starts at the real time of day; it just no longer
+hallucinates a dusk when it does.
+
+### The first version of the gate was wrong, and the suite hid it
+
+The gate shipped first as `nightsEntered > nightsSurvived`. `regression.ts` assigns
+`state.nightsSurvived` directly as a scoreboard fixture — to 5, to 1, and to **20** — which
+put the credit permanently out of reach for everything that ran afterwards. The extended
+playthrough silently dropped to **0 nights across 6 full day/night cycles** and the suite
+stayed green, because the assertion guarding it was itself hollow (below).
+
+Replaced with a flag, `state.nightEntered`. A gate that a stray assignment elsewhere can
+wedge shut is the wrong shape, however correct its arithmetic.
+
+### Two more tautologies, #5 and #6
+
+**#5 — `testLoomKeystones` had never allocated a keystone.** It called
+`loom.allocate('keystone_glass_echo')`; the node id is `keystone_glass`. `allocate()`
+returned `false`, the entire `if (allocated)` body was unreachable, and the test closed on
+`ok(true, 'loom keystones test completed')`. The unreachable body also called
+`loom.getPlayerHpMul?.()`, a method that **exists nowhere in the codebase** — so simply
+fixing the id would have turned it red.
+
+**#6 — `!state.gameOver || m.nightsSurvived >= 3`.** The disjunct passes for any run that
+merely did not *end*, whatever it achieved; it was observed green on a playthrough that
+survived 0 nights. This is the same disjunct-escape-hatch shape as `|| newLevel > 0` at
+`regression.ts:377`, flagged in §B1.a.
+
+Its threshold was never deterministic either. Phase 4 steps a **live, un-paused** game
+whose rAF loop races the suite's own stepping, and `gameOver` freezes `state.clock`.
+Measured across three identical runs, phase 4 survived **1, 4 and 6 nights**. Any fixed
+lower bound there is a coin flip. It only ever looked stable because the metric was
+inflated (below).
+
+Replaced with the bound that is deterministic *and* is the thing B2 exists to defend:
+nights credited can never exceed the cycles the phase's own clock could hold. Phantom
+credits break it immediately; a slow run does not. Green 3/3 after.
+
+### The playthrough's reported nights were never real
+
+Both playthroughs did `m.nightsSurvived = state.nightsSurvived` — copying the **absolute
+run stat**, which the fixtures above had already set to 20. A reported "22 nights" was 2
+real nights plus a fixture's 20. Now accumulates the delta.
+
+This matters beyond the test: that number is what gets pasted into review threads as
+evidence that a run is reachable. **Any milestone report quoting playthrough nights from
+before this commit is quoting a contaminated metric**, including review 3's.
+
+### Glass Echo advertises a downside it does not have
+
+`keystoneDesc` promises "Max HP halved". `glassEcho` is read in exactly one place —
+`combat.ts:172`, the damage-roll transform — which is the *upside*. Nothing halves HP. It
+is a pure-upside keystone.
+
+This is the same defect class as "Skills cap at 80" (§B1.b item 1), and `regression.ts`
+was asserting that the *description* mentions HP, which pinned the claim in place while
+the behaviour was missing. That assertion is gone.
+
+**Not fixed here.** Implementing the downside is a balance change, and §B3 explicitly warns
+against tuning keystones before Q3 is settled. **Added to B3's brief.**
+
+### `systems/loom.ts` carried a private copy of the xp curve
+
+`levelOf()` multiplied `CFG.xp.growth` unrounded; `rules.xpToNext` rounds each level's
+cost. The two disagreed at **64 xp values in 0..60000** — and because loom's cumulative ran
+fractionally high, they disagreed at *exactly the gate totals*:
+
+| cumulative xp | `rules.levelFromXp` | loom's `levelOf` |
+|---:|---:|---:|
+| 286 (L5 gate) | 5 | **4** |
+| 886 (L10 gate) | 10 | **9** |
+
+So Long Thread undercounted every skill that had *just* levelled — the moment the player
+would look. Now calls `rules.levelFromXp`. This is the same rounding drift recorded in §16
+against the plan's closed form, in a second place.
+
+### Suite size
+
+**75 test functions / 1331 assertions**, up from 73 / 1310.
+
+---
+
 ## Appendix A — reproducing the measurements
 
 No test framework is involved. The driver pattern is: `vite` on port 5199, Chrome with
