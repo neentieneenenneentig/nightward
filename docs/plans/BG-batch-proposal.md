@@ -1807,6 +1807,70 @@ list and the tree lost 25 nodes.
 
 ---
 
+## 20. Review log — review 7 (B3.c), 2026-08-13
+
+§B3's third bullet asked to verify the echo-grant and relic-drop paths fire
+end-to-end, noting that `worldbosses.hurt()` had been missing its
+`scoreboard.onKill()` call for the project's entire life until L1 found it, and that
+"that code path has had very little real exercise."
+
+**The paths work.** One lord slain live, every payout audited:
+
+| path | before → after |
+|---|---|
+| echo | `{}` → `{ thornring: 1 }` |
+| **relic** | `null` → **`relic_thorn`**, dropped and auto-equipped |
+| gold | 0 → 216 |
+| items | 2 → 9 |
+| combat xp | 0 → 400 |
+| Loom points | 0 → 2 |
+| `bossesSlain` | 0 → 1 (the L1 fix holds) |
+| revive | scheduled at clock 223 — re-forms, not deleted |
+
+**But "very little real exercise" understated it.** Mutating the death branch one
+line at a time, three of its five payouts were completely undefended:
+
+| mutation | before `testBossDeathPaysOut` | after |
+|---|---|---|
+| echo grant removed | RED | RED |
+| loot drop removed | RED | RED |
+| **`scoreboard.onKill` removed** | **GREEN** | RED |
+| Loom point removed | **GREEN** | RED |
+| combat xp removed | **GREEN** | RED |
+
+The scoreboard line is the one that was *already lost once*, for the whole project,
+and nothing would have caught losing it again.
+
+### Deliberately not done
+
+**Boss hp/dmg tuning** (§B3's second bullet). §B3 itself says post-B1 the numbers
+"are already much closer (31 s with iron); this may need nothing more than a look" —
+and looking is a feel question. It belongs with the same playtest verdict B3.b is
+waiting on, not to a guess made here.
+
+### Batch B status
+
+| item | state |
+|---|---|
+| B0 toolchain | shipped |
+| B1 curve retune | shipped — **playtest gate** |
+| B2.1 start at dawn | shipped (overturns D2, §18) |
+| B2.2 no free nights | shipped (§17) |
+| B3.a payoff layer real | shipped |
+| B3.b panel + resize | shipped — **playtest gate** |
+| B3.c boss payout pinned | shipped |
+| B4 hygiene | shipped |
+
+**Batch B is code-complete.** What remains is not implementation: it is the user's
+feel verdict on B1 and B3.b, and then merge and tag. Batch G has not been started
+and is still gated on §12 Q6/Q7 and the G1 A-vs-C prototype.
+
+### Suite size
+
+**80 test functions / 1337 assertions.**
+
+---
+
 ## Appendix A — reproducing the measurements
 
 No test framework is involved. The driver pattern is: `vite` on port 5199, Chrome with
