@@ -2,7 +2,7 @@
 // Allocate nodes; modifiers are consumed by existing systems as percentage
 // multipliers. Keystones warp game rules. No respec — a run IS its weave.
 import { CFG } from '../data/config';
-import { levelFromXp } from '../rules';
+import { levelFromXp, playerMaxHp } from '../rules';
 import {
   LOOM_NODES, nodeById, computeModifiers,
   DEFAULT_MODIFIERS, type LoomModifiers, type LoomNode,
@@ -59,9 +59,10 @@ export class LoomSystem {
     // a skill that had just levelled counted as one lower here.
     const totalLevels = Object.values(state.player.xp as Record<string, number>)
       .reduce((sum, xp) => sum + levelFromXp(xp), 0);
-    // +1 point per 10 total levels (retuned B1: old /4 was ~7 pts on the
-    // expensive curve; new curve triples levels so /10 keeps it ~7 pts)
-    const earned = Math.floor(totalLevels / 10);
+    // +1 point per N total levels (retuned B1: old /4 was ~7 pts on the expensive
+    // curve; new curve triples levels so /10 keeps it ~7 pts). B3.a: the divisor
+    // is a balance number, so it lives in CFG with the rest of them.
+    const earned = Math.floor(totalLevels / CFG.loom.longThreadLevelsPerPoint);
     const prev = state.player._longThreadPoints ?? 0;
     if (earned > prev) {
       const diff = earned - prev;
@@ -92,6 +93,13 @@ export class LoomSystem {
     state.player.loomNodes[nodeId] = cur + 1;
     state.player.loomPoints!--;
     this._rebuildNeeded = true;
+
+    // B3.a: Glass Echo halves max HP, so taking it can leave the player above their
+    // new ceiling — a health bar past 100% and a free buffer the keystone was
+    // supposed to cost them. Clamp on every allocation rather than special-casing
+    // the keystone, so any future max-HP node is covered by construction.
+    const cap = playerMaxHp(state);
+    if (state.player.hp > cap) state.player.hp = cap;
 
     const rankStr = node.keystone ? '' : ` rank ${cur + 1}`;
     this.ctx.toast?.(`${node.name}${rankStr} woven into the Loom`, 'good');
@@ -125,13 +133,79 @@ export class LoomSystem {
     return this.mods;
   }
 
-  /** Apply Deep Roots keystone effects to building HP. */
+  // ---- The payoff layer -----------------------------------------------------
+  //
+  // B3.a: before this, three of the four methods below existed and were called by
+  // NOTHING in production — `getBuildingHpMul`, `getBossWakeGold` and
+  // `getDmgRollTransform` had zero call sites between them outside the regression
+  // suite. Six of LoomModifiers' fourteen stat keys had no consumer either, which
+  // made 10 of the tree's 36 nodes (38 of 128 ranks) placebo — including nine of
+  // the twelve Ward nodes. Deep Roots did nothing whatsoever.
+  //
+  // Everything the tree advertises now routes through one of these. New callers
+  // should use them rather than reading `mods` directly, so a keystone's downside
+  // can never again be documented in one file and absent from the game.
+
+  /** Building max HP: buildingHpPct ranks + Deep Roots. Applied at placement. */
   getBuildingHpMul(): number {
     const m = this.ensureMods();
-    return m.deepRoots ? 1.5 : 1.0;
+    return (1 + (m.buildingHpPct ?? 0) / 100)
+      * (m.deepRoots ? CFG.loom.deepRootsBuildingHpMul : 1);
   }
 
-  /** Apply Glass Echo: damage roll uses top half of D5 band. */
+  /** Tower damage: towerDmgPct ranks. */
+  getTowerDmgMul(): number {
+    return 1 + (this.ensureMods().towerDmgPct ?? 0) / 100;
+  }
+
+  /** Extra tower range in TILES: towerRange ranks + Deep Roots. */
+  getTowerRangeAdd(): number {
+    const m = this.ensureMods();
+    return (m.towerRange ?? 0) + (m.deepRoots ? CFG.loom.deepRootsTowerRangeAdd : 0);
+  }
+
+  /** Player move speed: moveSpeedPct ranks, then Deep Roots' penalty.
+   *  Multiplicative on purpose — the keystone should cost a real slice of whatever
+   *  speed you have built, not be cancelled by two ranks of Swift Feet. */
+  getMoveSpeedMul(): number {
+    const m = this.ensureMods();
+    return (1 + (m.moveSpeedPct ?? 0) / 100)
+      * (m.deepRoots ? CFG.loom.deepRootsMoveMul : 1);
+  }
+
+  /** Player max HP: Glass Echo halves it. The glass half of the glass cannon. */
+  getMaxHpMul(): number {
+    return this.ensureMods().glassEcho ? CFG.loom.glassEchoHpMul : 1;
+  }
+
+  /** Incoming damage after armour ranks. Diminishing, so stacking armorPct
+   *  cannot reach immunity: 50 armorPct = ÷1.5 = 33% less damage taken. */
+  getIncomingDmgMul(): number {
+    return 1 / (1 + (this.ensureMods().armorPct ?? 0) / 100);
+  }
+
+  /** Daylight regen rate: regenPct ranks. */
+  getRegenMul(): number {
+    return 1 + (this.ensureMods().regenPct ?? 0) / 100;
+  }
+
+  /** Crafting ingredient cost: craftCostReduction ranks. Floored at 10% of the
+   *  recipe so no amount of investment makes crafting free. */
+  getCraftCostMul(): number {
+    return Math.max(0.1, 1 - (this.ensureMods().craftCostReduction ?? 0) / 100);
+  }
+
+  /** Territory gold rate: territoryIncomePct ranks + Night Market. */
+  getGoldMul(): number {
+    const m = this.ensureMods();
+    return (1 + (m.territoryIncomePct ?? 0) / 100)
+      * (m.nightMarket ? CFG.loom.nightMarketGoldMul : 1);
+  }
+
+  /** Glass Echo: the D5 damage roll uses only the top half of the band.
+   *  combat.ts carried an inline copy of this remap — identical, but a second
+   *  copy of one rule is exactly the shape that produced the levelOf drift bug.
+   *  It calls this now. */
   getDmgRollTransform(roll: number): number {
     const m = this.ensureMods();
     if (!m.glassEcho) return roll;
@@ -139,9 +213,11 @@ export class LoomSystem {
     return 0.90 + (roll - 0.30) * (0.60 / 1.20);
   }
 
-  /** Apply Night Market: gold rouses bosses at half threshold. */
+  /** Night Market: gold rouses bosses at half the usual threshold. */
   getBossWakeGold(): number {
     const m = this.ensureMods();
-    return m.nightMarket ? CFG.worldBoss.wakeGold / 2 : CFG.worldBoss.wakeGold;
+    return m.nightMarket
+      ? CFG.worldBoss.wakeGold / CFG.loom.nightMarketWakeDiv
+      : CFG.worldBoss.wakeGold;
   }
 }

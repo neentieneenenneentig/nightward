@@ -167,7 +167,13 @@ export class BuildSystem {
     const m = this.mode!;
     const { state, world, toast } = this.ctx;
     invTakeAll(state, m.def.cost);
-    const b = { uid: state.nextUid++, type: m.def.id, tx: m.tx, ty: m.ty, hp: m.def.hp };
+    // B3.a: buildingHpPct had no consumer and Deep Roots' "+50% building HP"
+    // was never wired, so Fortify, Stone Mason, Bulwark, Warden's Oath and the
+    // keystone itself were all placebo. Scaled once, at placement — a building
+    // keeps the ceiling it was raised with even if the weave changes later.
+    const hpMul = this.ctx.loom?.getBuildingHpMul?.() ?? 1;
+    const bHp = Math.round(m.def.hp * hpMul);
+    const b = { uid: state.nextUid++, type: m.def.id, tx: m.tx, ty: m.ty, hp: bHp, maxHp: bHp };
     state.buildings.push(b);
     world.reindexBuildings();
     this.ctx.views.addBuilding(b);

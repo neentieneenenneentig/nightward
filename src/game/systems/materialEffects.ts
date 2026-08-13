@@ -10,6 +10,7 @@ import { CFG } from '../data/config';
 import { MATERIALS, type MaterialEffects } from '../data/materials';
 import { TILE } from '../world/worldgen';
 import { type GameState } from '../state';
+import { playerMaxHp } from '../rules';
 
 export interface ActiveMaterialMods {
   /** Multiplier on natural HP regen (1.0 = normal). */
@@ -166,10 +167,10 @@ export class MaterialEffectSystem {
     }
 
     // Regen boost — apply bonus regen beyond the normal rate
-    if (fx.regenMult && fx.regenMult > 1 && state.player.hp < CFG.player.maxHp) {
+    if (fx.regenMult && fx.regenMult > 1 && state.player.hp < playerMaxHp(state)) {
       const baseRegen = CFG.player.regenPerSec;
       const extraRegen = baseRegen * (fx.regenMult - 1) * dt;
-      state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + extraRegen);
+      state.player.hp = Math.min(playerMaxHp(state), state.player.hp + extraRegen);
     }
   }
 }

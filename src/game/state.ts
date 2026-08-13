@@ -11,6 +11,12 @@ export interface Building {
   tx: number;
   ty: number;
   hp: number;
+  /** B3.a: a building's own ceiling, not BUILDINGS[type].hp. The Loom's
+   *  buildingHpPct ranks and Deep Roots scale it at placement time, so two walls
+   *  in the same run can have different maxima and the health bar has to read the
+   *  building rather than the type. Optional so anything constructing a Building
+   *  without one still works — readers fall back to the def. */
+  maxHp?: number;
 }
 
 /** A roaming domain lord on the overworld (see systems/worldbosses.ts). */

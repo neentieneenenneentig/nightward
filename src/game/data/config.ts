@@ -153,10 +153,31 @@ export const CFG = {
     orbContactImmunitySec: 0.8, // per-foe grace between orb contact hits
   },
 
-  // C3: The Loom — per-run passive tree point income.
+  // C3: The Loom — per-run passive tree point income and keystone magnitudes.
+  //
+  // B3.a: the keystone numbers used to be literals scattered across loom.ts,
+  // economy.ts and combat.ts — where they were literals at all. Five of the eight
+  // clauses below were not implemented anywhere; the tree advertised them and the
+  // game ignored them. They live here now for the same reason every other balance
+  // number does: one file, live-editable through window.NW.CFG.
   loom: {
     pointsPerBossKill: 2,   // L1: a second income source — 1/night alone is too
                              // thin for a 15-minute run to meaningfully spend
+
+    // Glass Echo — rolls from the top of the band, but you are made of glass.
+    glassEchoHpMul: 0.5,          // "Max HP halved"
+
+    // Deep Roots — your holdings stand; you do not move well.
+    deepRootsBuildingHpMul: 1.5,  // "Buildings +50% HP"
+    deepRootsTowerRangeAdd: 1,    // "...and towers +1 range" (tiles)
+    deepRootsMoveMul: 0.88,       // "You move 12% slower"
+
+    // Night Market — gold talks, and it wakes things up.
+    nightMarketGoldMul: 1.4,      // "Gold rate +40%"
+    nightMarketWakeDiv: 2,        // "Gold rouses bosses at HALF the threshold"
+
+    // The Long Thread — breadth of skill, converted to weave.
+    longThreadLevelsPerPoint: 10, // "+1 Loom point per 10 total skill levels"
   },
 
   audio: {

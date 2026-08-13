@@ -35,7 +35,7 @@ import { SoulFeedSystem } from './game/systems/soulfeed';
 import { MaterialEffectSystem } from './game/systems/materialEffects';
 import { craft } from './game/systems/crafting';
 import { activeEffects } from './game/systems/effects';
-import { toggleEquip, invAdd } from './game/rules';
+import { toggleEquip, invAdd, playerMaxHp } from './game/rules';
 import { BUILDINGS } from './game/data/buildings';
 import { NET_GAME_MAP, NET_METRICS, BEACON_INSPECT, LENS_SECTION_INSPECT, allBeacons, type NetInspect } from './game/data/network';
 import { phase, tintAt, startClock } from './game/systems/daynight';
@@ -324,7 +324,7 @@ async function boot() {
     enterBuild: (id: string) => (id ? build.enter(id) : build.cancel()),
     startBuild: () => build.start(),
     cycleBuild: (dir: number) => build.cycle(dir),
-    craft: (id: string) => { const ok = craft(state, id, ctx.toast, log, net); if (ok) vitals.markAction(); ui.rebuildPanel(); },
+    craft: (id: string) => { const ok = craft(state, id, ctx.toast, log, net, loom); if (ok) vitals.markAction(); ui.rebuildPanel(); },
     useItem: (id: string) => { useItem(id); ui.rebuildPanel(); },
     equip: (id: string) => { equipItem(id); ui.rebuildPanel(); },
     feedSoul: (itemId: string, count: number, targetSlot: import('./game/data/soulgear').SoulSlot) => {
@@ -372,10 +372,10 @@ async function boot() {
   function useItem(id: string) {
     const heal = ITEMS[id]?.heal;
     if (!heal || (state.player.inv[id] ?? 0) <= 0) return;
-    if (state.player.hp >= CFG.player.maxHp) { ui.toast('Already at full health'); return; }
+    if (state.player.hp >= playerMaxHp(state)) { ui.toast('Already at full health'); return; }
     state.player.inv[id]--;
     if (state.player.inv[id] <= 0) delete state.player.inv[id];
-    state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + heal);
+    state.player.hp = Math.min(playerMaxHp(state), state.player.hp + heal);
     ui.toast(`Used ${ITEMS[id].name} (+${heal} hp)`, 'good');
     log.push('system', `Used ${ITEMS[id].name} (+${heal} hp)`, state.clock);
   }
@@ -457,11 +457,14 @@ async function boot() {
   let frames = 0;
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
+    // B3.a test seam: movement is composed inside sim(), so the Gauntlet can only
+    // observe it by driving the axis. Exposed for that; nothing in the game reads it.
+    input,
     sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals, lifespan, loom, scoreboard }, world, player, gen, chunks,
     get log() { return log; },  // expose full GameLog (entries + export + download)
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
-    craft: (id: string) => craft(state, id, ctx.toast, log, net),
+    craft: (id: string) => craft(state, id, ctx.toast, log, net, loom),
     // R1: the writable-world seam. __nw.core is the WorldCore wrapper (materialAt,
     // setMaterial, overrideAt, pushMaterials, stats, _activate, _deactivate).
     core: worldCore,
@@ -537,8 +540,9 @@ async function boot() {
     const moveSpeedMul = net.getGameValue('moveSpeed');
     // S1: resolve-zero speed penalty
     const resolveSpeedMul = vitals.getSpeedMult();
-    // C3: Loom move speed modifier
-    const loomSpeedMul = 1 + (loom.ensureMods().moveSpeedPct / 100);
+    // C3: Loom move speed modifier. B3.a: this also carries Deep Roots' "you move
+    // 12% slower", which was advertised and never implemented.
+    const loomSpeedMul = loom.getMoveSpeedMul();
     // N2b: material speed burst (e.g. Flux Crystal exit)
     const matSpeedMul = matFx.speedBurst;
     const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y),
@@ -1033,7 +1037,7 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
         for (const id of ['log', 'plank', 'stone', 'copper_bar', 'fine_log'])
           state.player.inv[id] = (state.player.inv[id] ?? 0) + 10;
         ctx.toast('debug: +materials'); break;
-      case 'h': state.player.hp = CFG.player.maxHp; break;
+      case 'h': state.player.hp = playerMaxHp(state); break;
       case 'j': hordes.onDusk(phase(state.clock).dayIndex); break; // force a wave
       case 'u': { // god/test mode: immortal + effectively infinite everything
         state.god = !state.god;
@@ -1045,7 +1049,7 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
           state.player.gold += 99999;
           for (const id of Object.keys(ITEMS)) state.player.inv[id] = 9999;
           for (const s of SKILLS) state.player.xp[s.id] = Math.max(state.player.xp[s.id] ?? 0, 1e7);
-          state.player.hp = CFG.player.maxHp;
+          state.player.hp = playerMaxHp(state);
         }
         ctx.toast(`debug: god mode ${state.god ? 'ON — immortal, everything unlocked' : 'OFF'}`, state.god ? 'good' : 'info');
         ctx.log?.push('system', `God mode ${state.god ? 'enabled' : 'disabled'}`, state.clock);

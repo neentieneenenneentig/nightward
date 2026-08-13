@@ -12,7 +12,7 @@ import {
   invCount, invHasAll, skillLevel, xpProgress, slotOf,
   soulStat, bestTool, type EquipSlot,
   equippedWeaponDmg, armorDef,
-  population, territoryScore, soulXpProgress,
+  population, territoryScore, soulXpProgress, playerMaxHp,
 } from '../rules';
 import type { SoulSlot } from '../data/soulgear';
 import { SoulFeedSystem, totalSoulXp, itemSoulAffinity, type FeedResult } from '../systems/soulfeed';
@@ -650,7 +650,7 @@ export class UI {
    *  Panel body is NOT rebuilt — it's only rebuilt on open() or tab change. */
   refresh() {
     const p = this.state.player;
-    this.hpFill.style.width = (100 * Math.max(0, p.hp) / CFG.player.maxHp).toFixed(1) + '%';
+    this.hpFill.style.width = (100 * Math.max(0, p.hp) / playerMaxHp(this.state)).toFixed(1) + '%';
     this.hpText.textContent = Math.ceil(Math.max(0, p.hp)) + '';
     this.goldText.textContent = p.gold + '';
 

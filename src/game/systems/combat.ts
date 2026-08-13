@@ -4,7 +4,7 @@
 import { CFG } from '../data/config';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
-import { armorDef, awardSoulXp, charmRegen, equippedWeaponDmg, hall, skillLevel } from '../rules';
+import { armorDef, awardSoulXp, charmRegen, equippedWeaponDmg, hall, playerMaxHp, skillLevel } from '../rules';
 import { activeEffects } from './effects';
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
@@ -34,9 +34,13 @@ export class CombatSystem {
 
     const { state } = this.ctx;
     // daylight heals; night doesn't. X1: 'Charging Bonus' Lens mapping scales it.
-    if (!this.ctx.isNight() && state.player.hp < CFG.player.maxHp) {
+    const maxHp = playerMaxHp(state);
+    if (!this.ctx.isNight() && state.player.hp < maxHp) {
       const regenMul = this.ctx.net?.getGameValue?.('regenRate') ?? 1;
-      state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + (CFG.player.regenPerSec + charmRegen(state)) * regenMul * dt);
+      // B3.a: the Loom's regenPct ranks had no consumer — every 'Hearty' rank a
+      // player bought did nothing at all.
+      const loomRegenMul = this.ctx.loom?.getRegenMul?.() ?? 1;
+      state.player.hp = Math.min(maxHp, state.player.hp + (CFG.player.regenPerSec + charmRegen(state)) * regenMul * loomRegenMul * dt);
     }
     this.updateTowers(dt);
     this.updatePhase(dt);
@@ -169,10 +173,11 @@ export class CombatSystem {
     const loomMods = this.ctx.loom?.ensureMods?.();
     if (loomMods) {
       const floorAdd = loomMods.dmgRollFloor ?? 0;
-      if (loomMods.glassEcho) {
-        // Glass Echo: remap roll from [0.3, 1.5] to [0.9, 1.5]
-        dmgMul = 0.90 + (dmgMul - 0.30) * (0.60 / 1.20);
-      }
+      // B3.a: this used to carry its own copy of the Glass Echo remap, identical to
+      // loom.getDmgRollTransform() — which nothing called. Two copies of one rule
+      // is the shape that produced the levelOf drift bug (§17): the copies agreed
+      // right up until one of them was edited.
+      dmgMul = this.ctx.loom.getDmgRollTransform(dmgMul);
       // dmgRollFloor: shift the floor up (additive to D5 band minimum)
       dmgMul = Math.max(0.30, Math.min(1.50, dmgMul + floorAdd));
     }
@@ -257,8 +262,8 @@ export class CombatSystem {
     }
     if (landed) {
       // X1: lifesteal — Void gear drinks a share of the damage dealt
-      if (fx.has('lifesteal') && dealtTotal > 0 && state.player.hp < CFG.player.maxHp) {
-        state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + dealtTotal * 0.12);
+      if (fx.has('lifesteal') && dealtTotal > 0 && state.player.hp < playerMaxHp(state)) {
+        state.player.hp = Math.min(playerMaxHp(state), state.player.hp + dealtTotal * 0.12);
       }
       Sound.play('hit');
       const net = this.ctx.net;
@@ -330,8 +335,14 @@ export class CombatSystem {
           shrineRange = Math.max(shrineRange, s.rangeAdd);
         }
       }
-      const range = (def.tower.rangeTiles + auraRangeAdd + shrineRange) * TILE;
-      const dmg = Math.round(def.tower.dmg * auraDmgMul) + shrineDmg;
+      // B3.a: towerDmgPct and towerRange had no consumers, so Siege Engineer,
+      // Longshot, Keep Lord and Stone Mason were placebo — and Deep Roots' "towers
+      // +1 range" was never wired at all. Both fold in here, the one place range
+      // and damage are computed for every tower role below.
+      const loomRangeAdd = this.ctx.loom?.getTowerRangeAdd?.() ?? 0;
+      const loomDmgMul = this.ctx.loom?.getTowerDmgMul?.() ?? 1;
+      const range = (def.tower.rangeTiles + auraRangeAdd + shrineRange + loomRangeAdd) * TILE;
+      const dmg = Math.round((Math.round(def.tower.dmg * auraDmgMul) + shrineDmg) * loomDmgMul);
 
       // C5: sniper towers prefer highest-HP target (execute priority)
       if (def.towerRole === 'sniper') {
@@ -453,12 +464,18 @@ export class CombatSystem {
     }
     let taken = Math.max(1, dmg - armorDef(state)); // armor softens, never fully negates
     // S1: resolve-zero = +50% damage taken
-    taken = Math.round(taken * (this.ctx.vitals?.getDmgTakenMult?.() ?? 1.0));
+    // B3.a: ...and the Loom's armorPct ranks soften it, diminishing so they can
+    // never reach immunity. This key had no consumer, so 'Iron Resolve' and
+    // 'Bulwark' were both placebo.
+    taken = Math.round(taken
+      * (this.ctx.vitals?.getDmgTakenMult?.() ?? 1.0)
+      * (this.ctx.loom?.getIncomingDmgMul?.() ?? 1.0));
+    taken = Math.max(1, taken);   // the floor survives the multipliers
     state.player.hp -= taken;
     player.flash();
     Sound.play('hurt');
     this.ctx.cam.shake?.(Math.min(11, 3 + taken * 0.25));
-    this.ctx.log?.push('combat', `${source ?? 'Something'} hits you for ${taken} (${Math.max(0, Math.ceil(state.player.hp))}/${CFG.player.maxHp} hp left)`, state.clock);
+    this.ctx.log?.push('combat', `${source ?? 'Something'} hits you for ${taken} (${Math.max(0, Math.ceil(state.player.hp))}/${playerMaxHp(state)} hp left)`, state.clock);
     // M3.5: Action-gated network probe — taking damage routes through the shield network
     this.ctx.net?.probeAction?.('damage');
     // M3.6: Passive effectiveType snapshot — connection tier at hit time, zero HTTP
@@ -476,7 +493,7 @@ export class CombatSystem {
     // down — drop gold and the connection scatters you far into the wilds
     const lost = Math.floor(state.player.gold * CFG.player.deathGoldLossPct);
     state.player.gold -= lost;
-    state.player.hp = CFG.player.maxHp;
+    state.player.hp = playerMaxHp(state);
     const spot = this.randomRespawn();
     state.player.x = spot.x;
     state.player.y = spot.y;
