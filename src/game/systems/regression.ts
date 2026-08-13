@@ -1168,6 +1168,106 @@ async function testLoomKeystones(nw: any) {
   ok(!loom.canAllocate('keystone_glass'), 'a keystone cannot be taken twice');
 }
 
+/** B3.c — slaying a domain lord pays out, on every path it advertises.
+ *
+ *  §B3 asks for exactly this: "verify the echo-grant and relic-drop paths actually
+ *  fire end-to-end once a boss is killable — the ROADMAP records that
+ *  `worldbosses.hurt()` was missing its `scoreboard.onKill()` call for the entire
+ *  life of the project until L1 found it. That code path has had very little real
+ *  exercise."
+ *
+ *  It had less than that. Mutating the boss death branch one line at a time, three
+ *  of its five payouts were completely unpinned — the suite stayed green with the
+ *  scoreboard call deleted, with the Loom grant deleted, and with the combat xp
+ *  deleted. **The scoreboard line is the one that was already lost once**, for the
+ *  project's entire history, and nothing would have caught losing it again.
+ *
+ *  Killing is done through `hurt()` rather than by fighting: the payout branch is
+ *  what is under test, not the AI or the damage pipeline. */
+async function testBossDeathPaysOut(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+
+  const saved = {
+    bosses: state.worldBosses.map((b: any) => ({ ...b })),
+    gold: state.player.gold,
+    inv: { ...state.player.inv },
+    xp: { ...state.player.xp },
+    echoes: { ...(state.player.echoes ?? {}) },
+    relic: state.player.relic,
+    points: state.player.loomPoints,
+    slain: sys.scoreboard.bossesSlain,
+    god: state.god,
+    gameOver: state.gameOver,
+  };
+  try {
+    state.god = false;
+    state.gameOver = false;
+
+    // Any lord will do; revive one if they are all re-forming.
+    let boss = sys.worldbosses.alive()[0];
+    if (!boss && state.worldBosses.length) {
+      boss = state.worldBosses[0];
+      boss.reviveAt = 0;
+      boss.hp = boss.maxHp;
+    }
+    ok(boss !== undefined, 'a domain lord exists to be slain');
+    if (!boss) return;
+
+    const invSum = () => Object.values(state.player.inv as Record<string, number>)
+      .reduce((s: number, n: number) => s + n, 0);
+    const before = {
+      echoes: Object.keys(state.player.echoes ?? {}).length,
+      gold: state.player.gold,
+      inv: invSum(),
+      combatXp: state.player.xp.combat ?? 0,
+      points: state.player.loomPoints ?? 0,
+      slain: sys.scoreboard.bossesSlain,
+    };
+
+    sys.worldbosses.hurt(boss, boss.hp * 2 + 100, true);
+
+    ok(boss.hp <= 0, `${boss.name} falls`);
+    ok(boss.reviveAt > state.clock, '...and is scheduled to re-form, not deleted');
+
+    // C1 — the echo clings to the slayer.
+    ok(Object.keys(state.player.echoes ?? {}).length > before.echoes,
+      `the lord's echo is granted (${before.echoes} → ${Object.keys(state.player.echoes ?? {}).length})`);
+
+    // C4 — the relic table rolls. Bosses are the only relic source in the game.
+    ok(invSum() > before.inv,
+      `the lord's hoard drops (${before.inv} → ${invSum()} items)`);
+    ok(state.player.gold > before.gold,
+      `gold drops (${before.gold} → ${state.player.gold})`);
+
+    // The three that nothing pinned before this test existed.
+    eq(sys.scoreboard.bossesSlain, before.slain + 1,
+      'scoreboard.onKill(true) fires — the line that was missing for the whole project');
+    eq((state.player.loomPoints ?? 0) - before.points, CFG.loom.pointsPerBossKill,
+      `the Loom drinks: +${CFG.loom.pointsPerBossKill} points, the run's second income source`);
+    ok((state.player.xp.combat ?? 0) > before.combatXp,
+      `combat xp is awarded (${before.combatXp} → ${state.player.xp.combat})`);
+
+    // A lord already re-forming cannot be farmed for a second payout.
+    const afterFirst = sys.scoreboard.bossesSlain;
+    sys.worldbosses.hurt(boss, 99999, true);
+    eq(sys.scoreboard.bossesSlain, afterFirst,
+      'a re-forming lord pays out once, not once per swing');
+  } finally {
+    state.worldBosses.length = 0;
+    for (const b of saved.bosses) state.worldBosses.push(b);
+    state.player.gold = saved.gold;
+    state.player.inv = saved.inv;
+    state.player.xp = saved.xp;
+    state.player.echoes = saved.echoes;
+    state.player.relic = saved.relic;
+    state.player.loomPoints = saved.points;
+    sys.scoreboard.bossesSlain = saved.slain;
+    state.god = saved.god;
+    state.gameOver = saved.gameOver;
+  }
+}
+
 /** B3.b — the tree's shape, pinned as a rule rather than as a snapshot.
  *
  *  Three properties, each of which the old 40-node tree broke:
@@ -4300,6 +4400,7 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Game log', fn: testLogEntries },
   { name: 'XP & leveling', fn: testXpAndLeveling },
   { name: 'XP curve — gates at 5/10/15/20/30 vs recipe levelReqs', fn: testXpCurve },
+  { name: 'Boss death pays out on every path', fn: testBossDeathPaysOut },
   { name: 'Loom tree shape: reachable, granted, no placebo', fn: testLoomTreeShape },
   { name: 'Loom is reachable by a player (panel + click)', fn: testLoomPanelIsReachable },
   { name: 'Loom payoff layer is real, not advertising', fn: testLoomPayoffLayerIsReal },
