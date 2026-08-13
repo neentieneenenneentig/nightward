@@ -177,7 +177,11 @@ export const CFG = {
     nightMarketWakeDiv: 2,        // "Gold rouses bosses at HALF the threshold"
 
     // The Long Thread — breadth of skill, converted to weave.
-    longThreadLevelsPerPoint: 10, // "+1 Loom point per 10 total skill levels"
+    // B3.b: was 10. On B1's curve a full run reaches ~71 total skill levels, so /10
+    // paid 7 points for a 4-point keystone — a faucet that made the opening forced.
+    // /12 pays ~5: a sidegrade that trades a rule-warp for flexible points arriving
+    // early enough to spend. This is the number most likely to want a feel verdict.
+    longThreadLevelsPerPoint: 12, // "+1 Loom point per 12 total skill levels"
   },
 
   audio: {

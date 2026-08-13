@@ -325,6 +325,14 @@ async function boot() {
     startBuild: () => build.start(),
     cycleBuild: (dir: number) => build.cycle(dir),
     craft: (id: string) => { const ok = craft(state, id, ctx.toast, log, net, loom); if (ok) vitals.markAction(); ui.rebuildPanel(); },
+    // B3.b: the Loom's first production caller. Until this line existed the tree
+    // was unreachable — points accrued and could never be spent.
+    allocateLoom: (id: string) => loom.allocate(id),
+    loomView: () => ({
+      points: loom.points,
+      allocated: loom.allocated,
+      canAllocate: (id: string) => loom.canAllocate(id),
+    }),
     useItem: (id: string) => { useItem(id); ui.rebuildPanel(); },
     equip: (id: string) => { equipItem(id); ui.rebuildPanel(); },
     feedSoul: (itemId: string, count: number, targetSlot: import('./game/data/soulgear').SoulSlot) => {

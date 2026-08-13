@@ -1048,7 +1048,9 @@ async function testWaystoneDisconnect(nw: any) {
 async function testLoomAllocation(nw: any) {
   const { state } = nw;
   const { LOOM_NODES, computeModifiers, DEFAULT_MODIFIERS } = await import('../data/loom');
-  ok(LOOM_NODES.length >= 40, `Loom has ${LOOM_NODES.length} nodes (expected ≥40)`);
+  // B3.b resized the tree from 40 nodes to 15 for the 15-minute run. The shape is
+  // pinned properly in testLoomTreeShape; this only needs a tree to walk.
+  ok(LOOM_NODES.length >= 12, `Loom has ${LOOM_NODES.length} nodes to walk`);
 
   // Give some points to spend
   state.player.loomPoints = 5;
@@ -1164,6 +1166,158 @@ async function testLoomKeystones(nw: any) {
 
   ok(state.player.loomPoints > 0, 'points remain, so the next check is about rank not funds');
   ok(!loom.canAllocate('keystone_glass'), 'a keystone cannot be taken twice');
+}
+
+/** B3.b — the tree's shape, pinned as a rule rather than as a snapshot.
+ *
+ *  Three properties, each of which the old 40-node tree broke:
+ *
+ *  1. Every keystone is reachable at the same cost. The old depths were 5 (Long
+ *     Thread), 8 (Glass Echo) and 9 (Night Market, Deep Roots) against a run that
+ *     affords ~6 points — so exactly one keystone was ever takeable, and it was the
+ *     one that paid for itself. That is a forced opening, not a build.
+ *  2. Every stat key the modifier map declares is granted by at least one node.
+ *     This is the structural half of B3.a: that test proves each key is CONSUMED by
+ *     a system, this one proves each is GRANTED by the tree. A key needs both to
+ *     matter, and the old tree failed the pair in the other direction — nine Ward
+ *     nodes granted only keys nothing read.
+ *  3. No node is inert. A node whose every effect is a key no system consumes is a
+ *     purchasable placebo, and the tree had ten of them.
+ *
+ *  Depth is computed the way `allocate()` actually gates: one rank of each
+ *  prerequisite, transitively, plus the node itself. */
+async function testLoomTreeShape(nw: any) {
+  const { LOOM_NODES, nodeById, DEFAULT_MODIFIERS, computeModifiers } = await import('../data/loom');
+
+  eq(LOOM_NODES.length, 15, `the tree is 15 nodes (got ${LOOM_NODES.length})`);
+  const totalRanks = LOOM_NODES.reduce((s: number, n: any) => s + n.maxRank, 0);
+  ok(totalRanks <= 60,
+    `${totalRanks} total ranks — small enough that a ~6-point run engages a real fraction of it`);
+
+  // --- 1. every keystone costs the same, and that cost is affordable ---
+  const costTo = (id: string, seen = new Set<string>()): number => {
+    if (seen.has(id)) return 0;
+    seen.add(id);
+    const n = nodeById(id);
+    if (!n) return 0;
+    return 1 + (n.req ?? []).reduce((s, r) => s + costTo(r, seen), 0);
+  };
+  const keystones = LOOM_NODES.filter((n: any) => n.keystone);
+  eq(keystones.length, 4, 'four keystones');
+  const depths = keystones.map((k: any) => ({ id: k.id, name: k.name, cost: costTo(k.id) }));
+  for (const d of depths) {
+    eq(d.cost, 4, `${d.name} costs ${d.cost} points to reach (all keystones sit at 4)`);
+  }
+  // A 900s run spans 2.65 cycles, so 2 nights + ~2 lords ≈ 6 points.
+  const { CFG } = await import('../data/config');
+  const reachablePoints = 2 * 1 + 2 * CFG.loom.pointsPerBossKill;
+  ok(Math.max(...depths.map((d) => d.cost)) < reachablePoints,
+    `a ~${reachablePoints}-point run can afford any keystone AND spend the remainder on ranks`);
+  ok(Math.min(...depths.map((d) => d.cost)) * 2 > reachablePoints - 2,
+    'but not so cheap that a run trivially takes all four');
+
+  // --- 2. every declared modifier key is granted by some node ---
+  const statKeys = Object.keys(DEFAULT_MODIFIERS).filter(
+    (k) => typeof (DEFAULT_MODIFIERS as any)[k] === 'number');
+  const granted = new Set<string>();
+  for (const n of LOOM_NODES) for (const k of Object.keys(n.effects)) granted.add(k);
+  const ungranted = statKeys.filter((k) => !granted.has(k));
+  eq(ungranted.length, 0,
+    `every stat key is granted by some node${ungranted.length ? ` — orphaned: ${ungranted.join(', ')}` : ''}`);
+
+  // Keystone flags come from the flag branch of computeModifiers, not from effects.
+  const flagKeys = Object.keys(DEFAULT_MODIFIERS).filter(
+    (k) => typeof (DEFAULT_MODIFIERS as any)[k] === 'boolean');
+  for (const k of flagKeys) {
+    const owner = keystones.find((ks: any) => (computeModifiers({ [ks.id]: 1 }) as any)[k] === true);
+    ok(owner !== undefined, `keystone flag '${k}' is raised by a real keystone (${owner?.name ?? 'NONE'})`);
+  }
+
+  // --- 3. no node is inert ---
+  // A node is inert when allocating one rank of it changes nothing in the map.
+  const inert = LOOM_NODES.filter((n: any) => {
+    if (n.keystone) return false;
+    const m = computeModifiers({ [n.id]: 1 });
+    return statKeys.every((k) => (m as any)[k] === (DEFAULT_MODIFIERS as any)[k]);
+  });
+  eq(inert.length, 0,
+    `no node is a placebo${inert.length ? ` — inert: ${inert.map((n: any) => n.name).join(', ')}` : ''}`);
+
+  // --- prerequisites are all real, and nothing is orphaned behind a typo ---
+  for (const n of LOOM_NODES) {
+    for (const r of n.req ?? []) {
+      ok(nodeById(r) !== undefined, `${n.name}'s prerequisite '${r}' is a real node`);
+    }
+  }
+}
+
+/** B3.b — the Loom is reachable by a player.
+ *
+ *  It was not. `LoomSystem.allocate()` shipped with C3 and had **zero production
+ *  call sites**: no panel, no tab, no key binding, no mention of the Loom anywhere
+ *  in `ui/` except the end-of-run scorecard's point total. A player earned points,
+ *  was toasted about each one, saw them counted on their scorecard, and could never
+ *  spend a single one. Forty nodes, 132 ranks and four keystones were unreachable
+ *  by any means the game offered.
+ *
+ *  §12 Q3 asked whether a 40-node tree is the right size for a 15-minute run. The
+ *  honest answer was that its size did not matter yet — nobody could open it.
+ *
+ *  This drives the real DOM: opens the panel, clicks a node, and checks that a
+ *  point left the bank and a modifier the game reads actually moved. */
+async function testLoomPanelIsReachable(nw: any) {
+  const { state, ui, sys } = nw;
+  const { LOOM_NODES } = await import('../data/loom');
+  const saved = {
+    nodes: { ...(state.player.loomNodes ?? {}) },
+    points: state.player.loomPoints,
+    rebuild: (sys.loom as any)._rebuildNeeded,
+  };
+  try {
+    state.player.loomNodes = {};
+    state.player.loomPoints = 4;
+    (sys.loom as any)._rebuildNeeded = true;
+
+    ui.open('loom');
+    ok(ui.isOpen(), 'the Loom panel opens at all');
+    eq(document.querySelector('.nw-phead h2')?.textContent, 'THE LOOM',
+      'the panel that opens is the Loom');
+    eq(document.querySelectorAll('.nw-loomcol').length, 3, 'all three branches are drawn');
+    eq(document.querySelectorAll('.nw-loomnode').length, LOOM_NODES.length,
+      `every one of the ${LOOM_NODES.length} nodes is on screen`);
+    ok(document.querySelectorAll('.nw-loomnode.keystone').length === 4,
+      'the four keystones are drawn and marked as keystones');
+
+    const affordable = [...document.querySelectorAll('.nw-loomnode.can')] as HTMLElement[];
+    ok(affordable.length > 0, `${affordable.length} nodes are allocatable with 4 points in hand`);
+
+    const pointsBefore = state.player.loomPoints;
+    const modsBefore = { ...sys.loom.ensureMods() };
+    affordable[0].click();
+    eq(state.player.loomPoints, pointsBefore - 1,
+      'clicking a node spends a real point — the panel is wired to LoomSystem');
+    eq(Object.keys(state.player.loomNodes).length, 1, '...and records the rank on the run');
+
+    // The click has to reach the modifier map, not just the bookkeeping.
+    const modsAfter = sys.loom.ensureMods();
+    const moved = Object.keys(modsAfter).filter(
+      (k) => typeof (modsAfter as any)[k] === 'number' && (modsAfter as any)[k] !== (modsBefore as any)[k]);
+    ok(moved.length > 0,
+      `...and moves a modifier the game reads (${moved.join(', ')})`);
+
+    // Spending down to nothing closes the tree again — no free ranks.
+    state.player.loomPoints = 0;
+    ui.open('loom');
+    eq(document.querySelectorAll('.nw-loomnode.can').length, 0,
+      'with no points, nothing is allocatable');
+  } finally {
+    ui.close();
+    state.player.loomNodes = saved.nodes;
+    state.player.loomPoints = saved.points;
+    (sys.loom as any)._rebuildNeeded = true;
+    sys.loom.ensureMods();
+    (sys.loom as any)._rebuildNeeded = saved.rebuild;
+  }
 }
 
 /** B3.a — the Loom's payoff layer is real, not advertising.
@@ -1336,7 +1490,14 @@ async function testLoomPayoffLayerIsReal(nw: any) {
         if (!a) return -1;
         const before = Object.values(state.player.inv as Record<string, number>)
           .reduce((s: number, n: number) => s + n, 0);
-        (sys.gather as any).finish(a);
+        // rollLoot() is random per entry, so an unpinned second roll can legitimately
+        // yield nothing and the probe reads "2 → 2 items". Pinning random to 0 makes
+        // every entry drop at its minimum, identically for both harvests, so the
+        // doubled one is exactly twice the plain one. (This flaked RED twice in three
+        // runs before the stub — caught here rather than in someone else's commit.)
+        const realRandom = Math.random;
+        Math.random = () => 0;
+        try { (sys.gather as any).finish(a); } finally { Math.random = realRandom; }
         sys.gather.active = null;
         return Object.values(state.player.inv as Record<string, number>)
           .reduce((s: number, n: number) => s + n, 0) - before;
@@ -1777,20 +1938,26 @@ async function testLongThreadCurve(nw: any) {
   state.player._longThreadPoints = 0;
   const atGate = state.player.loomPoints;
   loom.onSkillLevelUp();
-  eq(state.player.loomPoints - atGate, 4,
-    '8 skills on the L5 gate (286 xp) = 40 levels = 4 Long Thread points');
-  eq(state.player._longThreadPoints, 4, 'the grant is banked so it is not paid twice');
+  // Written down, not derived: 8 skills x level 5 = 40 total levels, and B3.b set
+  // the divisor to 12, so floor(40/12) = 3. Under B1's /10 this was 4; under the
+  // pre-B2 private xp curve the same xp read level 4 apiece = 32 levels = 3.
+  eq(state.player.loomPoints - atGate, 3,
+    '8 skills on the L5 gate (286 xp) = 40 levels = 3 Long Thread points at /12');
+  eq(state.player._longThreadPoints, 3, 'the grant is banked so it is not paid twice');
 
   loom.onSkillLevelUp();
-  eq(state.player.loomPoints - atGate, 4, 'a second call with no new levels grants nothing');
+  eq(state.player.loomPoints - atGate, 3, 'a second call with no new levels grants nothing');
 
-  // One xp short of the gate is one level short on every skill: 32 levels → 3.
+  // One xp short of the gate is one level short on every skill: 32 levels, and
+  // floor(32/12) = 2. The pair of assertions is the point — 285 and 286 xp must
+  // land on different grants, which is what caught loom.ts's private xp curve
+  // in the first place (§17): it read both as level 4.
   for (const s of SKILLS) state.player.xp[s.id] = 285;
   state.player._longThreadPoints = 0;
   const belowGate = state.player.loomPoints;
   loom.onSkillLevelUp();
-  eq(state.player.loomPoints - belowGate, 3,
-    '8 skills one xp below the gate (285) = 32 levels = 3 points');
+  eq(state.player.loomPoints - belowGate, 2,
+    '8 skills one xp below the gate (285) = 32 levels = 2 points at /12');
 
   state.player.xp = saved.xp;
   state.player.loomNodes = saved.nodes;
@@ -4133,6 +4300,8 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Game log', fn: testLogEntries },
   { name: 'XP & leveling', fn: testXpAndLeveling },
   { name: 'XP curve — gates at 5/10/15/20/30 vs recipe levelReqs', fn: testXpCurve },
+  { name: 'Loom tree shape: reachable, granted, no placebo', fn: testLoomTreeShape },
+  { name: 'Loom is reachable by a player (panel + click)', fn: testLoomPanelIsReachable },
   { name: 'Loom payoff layer is real, not advertising', fn: testLoomPayoffLayerIsReal },
   { name: 'Run starts at dawn, not at the wall clock', fn: testRunStartsAtDawn },
   { name: 'Night credit requires entering the night', fn: testNightCreditRequiresEntry },

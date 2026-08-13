@@ -35,10 +35,14 @@ export class LoomSystem {
     this.ctx.log?.push('loom', `+${bonus} Loom point (night ${state.nightsSurvived})`, state.clock);
   }
 
-  /** L1: a second Loom-point income source — nights-survived alone (1/night)
-   *  is too thin for a hard 15-minute run to meaningfully spend across a
-   *  40-node/4-keystone tree. Called from worldbosses.hurt()'s death branch,
-   *  any killer. */
+  /** L1: a second Loom-point income source — nights-survived alone (1/night) is
+   *  too thin for a hard 15-minute run, which can only reach two dawns. Called from
+   *  worldbosses.hurt()'s death branch, any killer.
+   *
+   *  B3.b left this at 2 deliberately. A 900s run yields 2 nights + ~2 lords = ~6
+   *  points against keystones that now cost 4, which is one keystone plus a couple
+   *  of ranks — B3's stated goal. Retuning income AND the tree's shape in the same
+   *  change would make a playtest verdict impossible to attribute. */
   onBossSlain() {
     const { state } = this.ctx;
     const bonus = CFG.loom.pointsPerBossKill;
