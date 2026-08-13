@@ -38,7 +38,7 @@ import { activeEffects } from './game/systems/effects';
 import { toggleEquip, invAdd } from './game/rules';
 import { BUILDINGS } from './game/data/buildings';
 import { NET_GAME_MAP, NET_METRICS, BEACON_INSPECT, LENS_SECTION_INSPECT, allBeacons, type NetInspect } from './game/data/network';
-import { phase, tintAt } from './game/systems/daynight';
+import { phase, tintAt, startClock } from './game/systems/daynight';
 import { Fog } from './game/world/fog';
 import { domainAt, regionOf, regionKey } from './game/world/domains';
 import { Sound } from './engine/audio';
@@ -436,18 +436,20 @@ async function boot() {
   window.addEventListener('pointerdown', startAudio);
   window.addEventListener('keydown', startAudio);
 
-  // D2: set initial clock phase to real time-of-day once; game then runs at
-  // its own speed — no per-tick nudge toward wall clock.
+  // B2.1: every run starts at dawn — see daynight.startClock() for why this
+  // overturns D2. The real clock still colours the run through the witching-hours
+  // resolveNightMult; it no longer decides how much of the run is night.
   //
-  // B2: this MUST happen before `wasNight` is seeded below. It used to run ~35
-  // lines later, so wasNight was read off the un-initialised clock (0 = day)
-  // and the first sim tick of any run that booted into the night saw a
-  // day→night edge that had not happened. That synthetic dusk called
-  // hordes.onDusk() — spawning a full night's wave on top of a player with a
-  // flint axe and no walls (§4) — and armed the free-night credit that survived
-  // even the gate below, because a dusk edge genuinely had fired (§5).
-  const cy = CFG.time.daySec + CFG.time.nightSec;
-  state.clock = net.snap.timeOfDay * cy;
+  // B2.2: this MUST stay above the `wasNight` seed below. It used to run ~35 lines
+  // later, so wasNight was read off the un-initialised clock (0 = day) and the first
+  // sim tick of any run that booted into the night saw a day→night edge that had not
+  // happened. That synthetic dusk called hordes.onDusk() — spawning a full night's
+  // wave on top of a player with a flint axe and no walls (§4) — and armed the
+  // free-night credit that survived even the gate below, because a dusk edge
+  // genuinely had fired (§5). Starting at dawn makes that unreachable in practice;
+  // the ordering stays correct on purpose rather than by luck.
+  state.clock = startClock(net.snap.timeOfDay);
+  state.bootClock = state.clock;
 
   // ---- the loop ----
   let acc = STEP;

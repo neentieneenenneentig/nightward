@@ -37,6 +37,11 @@ export interface GameState {
   v: 1;
   seed: number;
   clock: number;                      // game seconds since world start
+  /** B2.1: the clock this run actually booted at, recorded once by main(). Exists so
+   *  a test can pin the start-at-dawn rule against the live boot and not only against
+   *  daynight.startClock() — the seam that reintroduces the real-clock lottery is
+   *  main()'s call site, not the function. */
+  bootClock: number;
   nextUid: number;
   player: {
     x: number; y: number;
@@ -120,6 +125,7 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     v: 1,
     seed,
     clock: 0,
+    bootClock: 0,
     nextUid: 1,
     player: { x: spawn.x, y: spawn.y, hp: CFG.player.maxHp, gold: 0, inv, xp: {}, equip: {}, soulItems, echoes: {}, vigor: CFG.vitals.vigorMax, resolve: CFG.vitals.resolveMax, lastActionT: 0, loomPoints: 0, loomNodes: {}, age: CFG.lifespan.startAge },
     depleted: {},

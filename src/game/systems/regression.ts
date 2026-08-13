@@ -1166,6 +1166,46 @@ async function testLoomKeystones(nw: any) {
   ok(!loom.canAllocate('keystone_glass'), 'a keystone cannot be taken twice');
 }
 
+/** B2.1 — every run starts at dawn, whatever the wall clock says.
+ *
+ *  D2 set the opening clock to `net.snap.timeOfDay * cycleLen()`. On a 15-minute
+ *  scored run that is 2.65 cycles long, that made the real local time of page load
+ *  a large uncontrolled input to the score — boot at 16:50 for ~6 s of daylight,
+ *  boot at 16:56–23:59 (29.4% of the real day) and start inside the night.
+ *
+ *  The pin has two halves because there are two ways to lose this:
+ *    - `startClock()` itself could start reading its argument again. Checked across
+ *      the exact time-of-day fractions that used to produce night starts.
+ *    - main() could stop calling it. Checked against `state.bootClock`, which main()
+ *      records from the value it actually used.
+ *
+ *  Note on the second half: it is only decisive when the machine running the suite
+ *  is not within a few minutes of local midnight, since tod≈0 makes the old rule and
+ *  the new one agree. The first half has no such hole, which is why both are here. */
+async function testRunStartsAtDawn(nw: any) {
+  const { state } = nw;
+  const { startClock, phase, cycleLen } = await import('./daynight');
+  const cy = cycleLen();
+
+  // The fractions below are the §4 table's own rows: dawn, midday, one second
+  // before dusk, deep inside the night, and one second before the next dawn.
+  for (const tod of [0, 0.25, 0.5, 0.706, 0.85, 0.99999]) {
+    const c = startClock(tod);
+    eq(c, 0, `time-of-day ${tod} still starts the run at clock 0 (D2 would give ${(tod * cy).toFixed(0)})`);
+    ok(!phase(c).isNight, `...and clock 0 is daylight, not night`);
+  }
+
+  // Full daylight, not merely "not night": the run must get the whole preparation
+  // window, so the leaderboard compares runs that were asked the same question.
+  const { CFG } = await import('../data/config');
+  const { phaseRemaining } = await import('./daynight');
+  eq(phaseRemaining(startClock(0.85)), CFG.time.daySec,
+    `a run booted at 20:24 local still gets the full ${CFG.time.daySec}s day before its first night`);
+
+  // And this run — the live boot behind the suite — actually used it.
+  eq(state.bootClock, 0, 'this run booted at dawn');
+}
+
 /** B2 — a night can only be survived if it was entered.
  *
  *  Two paths handed out free nights, each worth CFG.legacy.weights.nightSurvived
@@ -3653,6 +3693,7 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Game log', fn: testLogEntries },
   { name: 'XP & leveling', fn: testXpAndLeveling },
   { name: 'XP curve — gates at 5/10/15/20/30 vs recipe levelReqs', fn: testXpCurve },
+  { name: 'Run starts at dawn, not at the wall clock', fn: testRunStartsAtDawn },
   { name: 'Night credit requires entering the night', fn: testNightCreditRequiresEntry },
   { name: 'Long Thread counts levels on the real xp curve', fn: testLongThreadCurve },
   { name: 'State immutability', fn: testStateImmutabilityPattern },
