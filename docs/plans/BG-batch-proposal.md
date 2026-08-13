@@ -1422,6 +1422,219 @@ against the plan's closed form, in a second place.
 
 ---
 
+## 18. Review log — review 5 (B2.1 implementation + the B3 brief), 2026-08-13
+
+Two things happened here. B2's remaining half shipped, which required answering **§12 Q2**.
+And the B3 brief was written, which required answering **§12 Q3** — a question this document
+explicitly refused to answer, leaving it to "whoever writes B3's brief."
+
+Both answers are recorded below with the measurements behind them. **Both are reversible
+data/design calls, not architecture, and the reviewer is invited to overturn either.**
+
+---
+
+### Q2 — answered: yes, start every run at dawn. The premise of the counter-argument was false.
+
+Q2 asked whether the run should still start at a real-clock-derived phase, and floated a
+third option: real clock picks the phase, but the run is guaranteed a fixed preparation
+window. **The third option is unnecessary, because the trade-off Q2 assumed does not
+exist.**
+
+Q2's counter-argument was that starting-phase-from-real-clock is "a genuinely characterful
+piece of the *your world is your connection* concept, and the fix costs some of that."
+Grepping every consumer of `timeOfDay` shows it costs none of it:
+
+| site | what it drives | live? |
+|---|---|---|
+| `data/network.ts:669` "Resolve Night" | `resolveNightMult` — 2.5× resolve drain at 2–5am local (the witching hours), consumed at `vitals.ts:34` | **yes** |
+| `data/network.ts:493` "Day/Night Sync" | `dayPhase` — **zero consumers anywhere in `src/`** | no, dead |
+| `main.ts:450` | the run's starting clock | this is the one B2.1 removes |
+
+The real clock keeps a live gameplay voice, and it is the better-shaped one: a texture
+across the whole run rather than a dice roll at second zero. Only the *competitive* coupling
+was removed. Pillar 7's bridge survives intact.
+
+#### B2.2 inverted this bug rather than closing it
+
+Worth recording, because it means §4 needed fixing even after review 4 and the reason is
+not obvious. Post-B2.2, a run booting mid-night sees no dusk edge, so **nothing spawns**,
+and it still receives a full 240 s day afterwards. The evening player therefore got an
+*easier* run than the midday player — the opposite polarity of §4's original complaint, and
+the same defect. §4's table now reads:
+
+| local time at load | pre-B2.2 | post-B2.2, pre-B2.1 | post-B2.1 |
+|---|---|---|---|
+| 00:05 | full 240 s day | full 240 s day | full 240 s day |
+| 12:00 | ~120 s | ~120 s | full 240 s day |
+| 16:50 | **~6 s, then a wave** | ~6 s, then a wave | full 240 s day |
+| 16:56–23:59 (29.4%) | **start inside a spawning horde** | **first night skipped free** | full 240 s day |
+
+#### Measured live
+
+At **21:25:46 local**, on the machine that ran the suite — inside §4's own problem window:
+
+```
+timeOfDay 0.8929  →  D2 boot clock 303.6      (night is 240–340)
+```
+
+After B2.1, the same boot:
+
+```
+bootClock 0 | clock 2.5 | isNight false | nightsSurvived 0
+loomPoints 0 | toSpawn 0 | foes 1
+```
+
+The single foe is a `dayMob` roamer (`hordes.ts:32` — intended daylight prey); `toSpawn: 0`
+confirms no siege wave is armed.
+
+#### Shape of the fix
+
+The rule lives in `systems/daynight.ts` as `startClock(realTimeOfDay)`, which returns 0 and
+ignores its argument. The argument is deliberately kept: it is the seam the old rule read
+from, and keeping it visible makes this a decision rather than a forgotten constant. `main()`
+calls it and records `state.bootClock`.
+
+The test has two halves because there are two ways to lose the rule — the function could
+start reading its argument again, or `main()` could stop calling it. Mutation-proved
+separately:
+
+| mutation | result |
+|---|---|
+| `startClock` returns `realTimeOfDay * cycleLen()` (restore D2) | RED — `time-of-day 0.25 still starts the run at clock 0 (D2 would give 85)` (expected 0, got 85) |
+| `main()` bypasses `startClock`, assigns `timeOfDay * cy` directly | RED — `this run booted at dawn` (expected 0, got **303.0504409722222**) |
+| shipped | GREEN |
+
+The second mutation's failure value *is* the finding: 303.05 is inside the night band.
+
+**Caveat, stated because it matters:** the `bootClock` half is only decisive away from local
+midnight, since `tod ≈ 0` makes the old and new rules agree. That is exactly why the
+`startClock` half — which has no such hole — is also there.
+
+#### Left alone deliberately
+
+The dead `dayPhase` net mapping (`data/network.ts:493`) was not deleted, to keep B2.1's diff
+to one decision. It is now actively misleading — a reader will assume it is how the real
+clock sets the phase — so it belongs in the next hygiene pass.
+
+---
+
+### Q3 — answered: option (a), and the measurements make it much less close than Q3 implies
+
+Q3 offered: **(a)** resize the tree AND retune Long Thread, **(b)** delete Long Thread's
+point grant and make it a pure cap-raiser, **(c)** accept Long Thread as the "tree access"
+keystone and rebalance the other three as expensive terminal picks.
+
+**(b) is not viable.** It proposes converting Long Thread into a cap-raiser, but the cap it
+would raise is `CFG.xp.maxLevel`, and post-B1 that is 40 against a run whose best skill
+reaches ~18 (§3.1's own budget). A cap-raiser in a 15-minute run is a node that does
+nothing — which, as the audit below shows, is a defect this tree already has ten of.
+
+**(c) is cheap but enshrines the forced opening.** It keeps a 40-node/132-rank tree in a
+2.65-cycle run and accepts "rush Long Thread" as the intended line. That is the opposite of
+"each run is a build."
+
+**(a) it is** — and the audit below shows the tree needs more than resizing anyway, so (a)'s
+extra cost over (c) is smaller than Q3 assumed.
+
+#### The finding that decides it: a third of the tree is placebo
+
+`LoomModifiers` declares 14 stat keys. Counting production consumers (excluding
+`data/loom.ts`, which only declares them, and `regression.ts`):
+
+| modifier | consumers | |
+|---|---:|---|
+| `meleeDmgPct`, `swingSpeedPct`, `arcWidthPct`, `dmgRollFloor` | 1–3 each | live |
+| `gatherSpeedPct`, `doubleYieldChance`, `moveSpeedPct`, `territoryIncomePct` | 1 each | live |
+| `craftCostReduction` | **0** | **dead** |
+| `armorPct` | **0** | **dead** |
+| `regenPct` | **0** | **dead** |
+| `buildingHpPct` | **0** | **dead** |
+| `towerDmgPct` | **0** | **dead** |
+| `towerRange` | **0** | **dead** |
+
+Six of fourteen are read by nothing. Propagated to nodes — a node is *inert* when every
+modifier it grants is dead:
+
+| branch | nodes | ranks | fully inert |
+|---|---:|---:|---|
+| War | 12 | 40 | 0 |
+| Field | 12 | 44 | 1 node, 5 ranks (`f4` Efficiency) |
+| **Ward** | 12 | 44 | **9 nodes, 33 ranks** (`d1 d2 d4 d5 d6 d7 d9 d10 d12`) |
+| **total** | **36** | **128** | **10 nodes, 38 ranks** |
+
+**Nine of the Ward branch's twelve nodes do literally nothing.** Fortify, Iron Resolve,
+Hearty, Siege Engineer, Stone Mason, Longshot, Bulwark, Keep Lord and Warden's Oath are all
+purchasable, all described in the UI, and all placebo. The branch's entire live output is
+`territoryIncomePct` from three nodes.
+
+So the tree is not merely "too big for a 15-minute run" (§3.6) or "badly shaped" (Q3's
+revision-3 framing). Most of the part a player cannot reach would not have done anything if
+they had reached it.
+
+#### The keystones advertise more than they do
+
+| keystone | advertised | reality |
+|---|---|---|
+| **Glass Echo** | damage rolls use the top half of the D5 band | **live** — but implemented *inline* at `combat.ts:174`, duplicating `loom.getDmgRollTransform()`, which nothing calls. Same two-copies-of-one-rule shape as the `levelOf` bug in §17; the copies currently agree. |
+| | Max HP halved | **not implemented** (carried over from §17) |
+| **Deep Roots** | buildings +50% HP | `loom.getBuildingHpMul()` exists and is **called by nothing** |
+| | towers +1 range | `towerRange` has no consumer |
+| | you move 12% slower | **not implemented** |
+| **Night Market** | gold rate +40% | **live** (`economy.ts:23`) |
+| | gold rouses bosses at half threshold | `loom.getBossWakeGold()` exists and is **called by nothing** |
+| **Long Thread** | +1 Loom point per 10 total skill levels | **live** |
+
+**Deep Roots does nothing whatsoever.** All three of its advertised clauses are unwired.
+`getBuildingHpMul`, `getBossWakeGold` and `getDmgRollTransform` have **zero production call
+sites between them** — the only caller of any of them is the regression test added in §17.
+
+This also explains, retroactively, why tautology #5 (§17) went unnoticed for so long: a test
+that never allocated a keystone was pinning a payoff layer that largely was not there.
+
+#### Reachability, measured
+
+Minimum points to reach each keystone (one rank per prerequisite, plus the keystone):
+
+| keystone | chain | cost |
+|---|---|---:|
+| The Long Thread | f1 → f3 → f6 → f9 → ks | **5** |
+| Glass Echo | w1 → w3 → w7 / w2 → w4 → w8 → w11 → ks | 8 |
+| Night Market | f1 → f2 → f5 → f8 / f3 → f6 → f9 → f11 → ks | 9 |
+| Deep Roots | d1 → d3 → d6 → d8 / d2 → d5 → d9 → d11 → ks | 9 |
+
+Against income: a 900 s run spans 2.65 cycles, so **at most 2 nights** can be survived
+(dawns fall at clock 340 and 680; the third is at 1020 > 900). At 1 point per night plus
+`CFG.loom.pointsPerBossKill: 2`, a strong run with two bosses down has **6 points**. Long
+Thread at 5 is the only keystone that fits, and it repays 7 — §3.6 and §B1.b, confirmed
+numerically.
+
+#### The brief
+
+**B3.a — make the payoff layer real.** Wire the six dead modifiers; implement the five
+unimplemented keystone clauses; collapse the duplicated Glass Echo formula onto the single
+helper. Explicitly *not* a balance change in intent — the goal is that the tree does what it
+already claims. It will nonetheless move the numbers, because effects that were zero stop
+being zero, which is why it lands before the retune and not after.
+
+**B3.b — resize.** ~15 nodes, all four keystones at depth 4, every remaining modifier
+wired. Proposed shape: War 3 nodes → Glass Echo; Ward 3 nodes → Deep Roots; Field a shared
+root forking to Night Market and to The Long Thread. Retune Long Thread so it is a sidegrade
+(flexible points, arriving early) rather than a faucet, and set `CFG.loom` income so a good
+run affords one keystone and a great run can gamble on two.
+
+**B3.c — bosses, echoes, relics.** Verify end-to-end as §B3 already specifies.
+
+**The feel of B3.b is a playtest question, not a measurement question.** WORKFLOW's playtest
+gate applies to it, as it does to B1.
+
+---
+
+### Suite size
+
+**76 test functions / 1345 assertions**, up from 75 / 1331.
+
+---
+
 ## Appendix A — reproducing the measurements
 
 No test framework is involved. The driver pattern is: `vite` on port 5199, Chrome with
