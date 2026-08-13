@@ -1635,6 +1635,178 @@ gate applies to it, as it does to B1.
 
 ---
 
+## 19. Review log — review 6 (B3.a + B3.b implementation), 2026-08-13
+
+§18 answered Q3 and wrote B3's brief. Implementing that brief turned up something
+neither this document nor its five previous reviews had noticed, and it invalidates
+the premise of the question Q3 was asking.
+
+---
+
+### The Loom had no user interface. At all.
+
+`LoomSystem.allocate()` shipped with C3 and has, until this batch, had **zero
+production call sites**:
+
+```
+$ grep -rn "\.allocate(\|canAllocate(" src/ --include=*.ts | grep -v "systems/loom.ts"
+    ... 13 hits, every one of them in systems/regression.ts
+```
+
+There was no Loom panel, no tab, no key binding. The `Panel` union was
+`'bag' | 'craft' | 'skills' | 'log' | 'leaderboard' | null`. The string "Loom"
+appeared nowhere in `src/game/ui/` except one line of the end-of-run scorecard
+printing `loomPointsEarned`. Confirmed against the live game, not only by grep:
+
+```json
+{"tabs":[],"bodyHasLoom":false,"loomPoints":0,"allocated":{}}
+```
+
+So a player earned Loom points, was toasted about each one — *"The Loom strengthens
+— 1 point"* — watched them counted on the scorecard at `CFG.legacy.weights.loomPoint`
+= 150 apiece, and **could never spend a single one**. Forty nodes, 132 ranks and four
+keystones were unreachable by any means the game offered.
+
+#### What this does to Q3
+
+**§12 Q3 asks whether a 40-node Loom is the right size for a 15-minute run. The
+honest answer was that its size did not matter yet.** Every measurement about
+keystone depth in §3.6, §B1.b and §18 — including the reachability table this
+document computed one review ago — was measuring the shape of a tree nobody could
+open. The tree was not "too big", or "badly shaped", or a "points faucet". It was
+inert, in the same way and for a longer time than the nine Ward nodes were.
+
+The answer §18 gave (option (a), resize and retune) survives, because the resize is
+what makes the tree usable *once there is a door*. But it is now the second half of
+B3.b, not the first.
+
+It also explains two earlier findings retroactively:
+
+- **Tautology #5** (§17) — a keystone test that never allocated a keystone — sat
+  unnoticed for the life of the project because nothing else was allocating one
+  either. The test was the only code path that could have.
+- **B3.a's six unconsumed modifiers.** A stat that no system reads is normally
+  caught the first time somebody buys it and notices nothing happened. Nobody
+  could buy it.
+
+---
+
+### B3.a — the payoff layer, made real *(commit `dca8d67`)*
+
+The audit from §18 was implemented in full: all six unconsumed stat keys wired,
+all five unimplemented keystone clauses implemented, and combat.ts's inline copy of
+the Glass Echo remap collapsed onto `loom.getDmgRollTransform()`. Every keystone
+magnitude is now a `CFG.loom` number rather than a literal or an absence.
+
+Two design notes worth recording, because they are the kind of thing that gets
+re-litigated later:
+
+- **`armorPct` is diminishing** — `1 / (1 + pct/100)` — so no stack of ranks
+  reaches immunity, and the pre-existing 1-damage floor is re-applied *after* the
+  multipliers rather than before.
+- **Deep Roots' movement penalty is multiplicative** on whatever speed you have
+  built, so two ranks of Swift Feet cannot simply cancel the keystone's cost.
+- **`playerMaxHp(state)` is a pure function of state**, not a LoomSystem method.
+  Max HP had been `CFG.player.maxHp` read directly at fourteen call sites across
+  systems, UI and the debug verbs; a pure function is callable from all three
+  without threading the LoomSystem through any of them.
+
+#### The mutation sweep found four modifiers that were wired but unpinned
+
+This is the part worth generalising from. B3.a's test was written, went green
+first try, and *then* 22 mutations were run against it. Four of them stayed green:
+
+| mutation | why it escaped |
+|---|---|
+| Glass Echo roll transform bypassed | the probe called `loom.getDmgRollTransform()` directly — a helper test, not a wiring test |
+| `moveSpeedPct` unwired | the probe was accessor-only; the composition lives inside `sim()` |
+| `meleeDmgPct` unwired | nothing in the suite pinned it, and it had been wired since C3 |
+| `swingSpeedPct` unwired | **flaky** — RED on one sweep, GREEN on the next, no code change between |
+
+All four now have probes that drive the real system: a swing at a real foe, real
+distance covered with the input axis driven, the real attack envelope. The final
+sweep is **22/22 RED**.
+
+**The lesson is not "write more tests."** It is that a test which passes on the
+first try against code you just wrote has proved nothing yet. Three of those four
+holes were in assertions that read as if they were checking the game.
+
+---
+
+### B3.b — the panel, and the resize *(commit `ec43723`)*
+
+**The panel.** `fillLoom` lays the tree out from the `col`/`row` position hints the
+node rows have carried since C3 and that nothing had ever read. Each node shows its
+per-rank effects in words, its rank, and why it is or is not takeable. Bound to
+**M**. `allocateLoom` in main.ts is `LoomSystem.allocate()`'s first production
+caller.
+
+**The resize**, 40 nodes / 132 ranks → **15 / 47**, every keystone at depth 4.
+Walked live through the real DOM by clicking each keystone's own prerequisite chain
+with 6 points banked:
+
+| keystone | path clicked | spent | left |
+|---|---|---:|---:|
+| Glass Echo | Sharpened Edge → Whirling Guard → Executioner → ks | 4 | 2 |
+| Night Market | Harvester → Lucky Find → Master Crafter → ks | 4 | 2 |
+| The Long Thread | Harvester → Swift Feet → Wind Walker → ks | 4 | 2 |
+| Deep Roots | Fortify → Siege Engineer → Golden Age → ks | 4 | 2 |
+
+Against the old depths of 5, 8, 9 and 9.
+
+**Long Thread retuned** `10 → 12` levels per point. **Income deliberately left
+alone** at 1/night + 2/boss: changing the tree's shape and its income in one commit
+would make a playtest verdict impossible to attribute to either.
+
+#### `testLoomTreeShape` pins rules, not a snapshot
+
+Three properties, each of which the old tree broke: every keystone costs the same
+and that cost is affordable but not trivial; every declared stat key is granted by
+some node; no node is inert. It is the structural mirror of B3.a's consumption
+test — that one proves each key is *consumed* by a system, this one proves each is
+*granted* by the tree, and a key needs both to matter. The old tree failed the pair
+in both directions at once.
+
+---
+
+### Two flaky assertions, one of them newly written
+
+- **Mine.** The `doubleYieldChance` probe read *"2 → 2 items"* on two runs of three:
+  `rollLoot()` rolls each table entry independently, so an unpinned second roll can
+  legitimately yield nothing. Fixed by pinning `Math.random` to 0 across both
+  `finish()` calls.
+- **Pre-existing, and left alone.** `N/12 systems exercised` in the extended
+  playthrough gave **5/12 once and 10/12 twice** across three identical runs with no
+  code change between them. Same nondeterminism class as the night-count variance
+  recorded in §17 (1, 4 and 6 nights across three identical runs). It is a soft
+  assertion on a nondeterministic playthrough and it will keep producing false REDs.
+  **Not fixed here** — it is unrelated to B3 and fixing it properly means making the
+  playthrough deterministic, which is its own piece of work. Recorded so the next
+  RED on it is recognised rather than investigated from scratch.
+
+---
+
+### What is verified, and what is not
+
+Everything claimed above is mechanical and measured: the panel opens, the clicks
+land, the points leave the bank, the modifiers move, the keystones are affordable,
+every advertised effect fires, 26 mutations across the two commits go RED.
+
+**None of it establishes that the Loom is fun.** Whether six points across this tree
+feels like building something is a playtest question, and
+`CFG.loom.longThreadLevelsPerPoint` is the single number most likely to want a feel
+verdict. WORKFLOW's playtest gate applies to B3.b exactly as it does to B1.
+
+---
+
+### Suite size
+
+**79 test functions / 1327 assertions.** The assertion count is *lower* than review
+5's 1345 despite three new tests, because several existing tests iterate the node
+list and the tree lost 25 nodes.
+
+---
+
 ## Appendix A — reproducing the measurements
 
 No test framework is involved. The driver pattern is: `vite` on port 5199, Chrome with
