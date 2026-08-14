@@ -10,6 +10,47 @@
 Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions PASSED**
 (live-verified 3× consecutively via headless Chrome + raw CDP at `?gl&seed=1234`, zero flakes).
 
+---
+
+> ## Direction update (2026-08-14) — playtest verdicts + a new milestone
+>
+> **Sound: rolled back, verdict IN.** The user asked to restore the pre-X2 soundtrack. All
+> audio drift since the 2026-07-07 baseline came from a single commit, `944adb8`, which added
+> a `combat` mood, per-lord `BOSS_MOODS`, and a `deathWhistle` SFX. The `combat` mood was the
+> culprit: it triggered whenever any foe came within 10 tiles, which with night hordes and day
+> roamers is most of a run — so drums were effectively always on and the ambient soundtrack
+> stopped existing. Reverted on `fix/sound-rollback` (`db343c1`); `audio.ts` is byte-identical
+> to the pre-change version. Verified in a real (headed) browser by instrumenting the live
+> synth: day = triangle / night = sine / **0 kicks, 0 hats even while under attack**, boss =
+> sawtooth + 11 kicks + 11 hats, then back to ambient after. Playtest verdict: *"feels more or
+> less guchi."* **Standing rule from this: drums and sawtooth are for world bosses only. Do not
+> key music off ordinary combat or foe proximity.**
+>
+> **New user direction — loot must land on the floor.** Verbatim: *"we need drops … for timber,
+> berries, etc etc. need to drop on the floor and then we pick it up by walking over it. makes
+> it feel more real"* and *"when i kill a boss its gotta drop stuff, the random mobs as well."*
+> All three loot sources, not just gathering. Briefed as **B5 — Ground Drops**
+> (`docs/plans/B5-ground-drops.md`). It is cheap because all three sites are already the same
+> `invAdd`/`acquireGear` loop over a `Stack[]`, and every item already has a 16×16 procgen icon
+> that doubles as its world sprite — **no new art, no render-pipeline change.**
+>
+> ⚠️ **The B5 trap, recorded here so it is not rediscovered:** the Gauntlet's gather tests never
+> assert inventory gain (`testGathering:105`, `testGatherEveryFeature:434`,
+> `testFullPlaythrough:1904` — none read `player.inv` after a gather). B5 could break the entire
+> gather→bag pipeline and the suite would stay green at 1249/1249. This is the §B1.a finding
+> repeating in a different system. **B5 owns five new tests; a green Gauntlet is not evidence
+> for it otherwise.** Exactly one existing test is expected to go red —
+> `regression.ts:1169`'s boss-relic assertion — and that failure is correct.
+>
+> **Also raised, deliberately NOT bundled:** a WoW-style level-up flourish. Skill xp feedback
+> itself is confirmed fine as-is. Specced as optional **B6** at the bottom of the B5 brief;
+> needs a yes/no. Kept separate so its playtest verdict isn't tangled with B5's.
+>
+> **Merge order (all three are unmerged and unpushed):**
+> `fix/sound-rollback` → Batch B (`feat/b-reachable-run`, gated on the B1/B3.b playtest) → B5.
+> B5 touches `gather.ts`/`hordes.ts`/`worldbosses.ts`/`config.ts`/`main.ts`/`regression.ts` —
+> a near-complete overlap with Batch B's file set, so do not parallelise them.
+
 **L1 — The Lifespan: a hard 15-minute "perfect run" loop (2026-07-31).** User's direction
 overnight: turn the open-ended survival loop into a bounded, replayable run — "a hard 15 minute
 game loop... hard lifespan for players, like 10 years per minute... they simply fall over and die
