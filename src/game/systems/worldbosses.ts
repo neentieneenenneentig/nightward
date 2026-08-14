@@ -38,19 +38,6 @@ export class WorldBossSystem {
     return best;
   }
 
-  /** Lord ID of the nearest hunting boss, or null — drives per-boss music. */
-  nearestThreatLordId(): string | null {
-    const p = this.ctx.state.player;
-    let best: number | null = null;
-    let bestLord: string | null = null;
-    for (const b of this.alive()) {
-      if (!b.hunting) continue;
-      const d = Math.hypot(b.x - p.x, b.y - p.y) / TILE;
-      if (best == null || d < best) { best = d; bestLord = b.lordId; }
-    }
-    return bestLord;
-  }
-
   // ---- spawning / reviving ------------------------------------------------
   private seedBosses() {
     const { state } = this.ctx;
