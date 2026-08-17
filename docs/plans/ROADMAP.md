@@ -137,6 +137,67 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 > now has a gate). Blocking: merge `fix/sound-rollback`; nothing has ever been pushed, so the
 > deploy workflow has never actually run; the Firefox lane is written but not yet exercised.
 
+---
+
+> ## Direction update (2026-08-17, later) — the Wire gets real instrumentation
+>
+> **User direction, verbatim:** *"lets work on the networking panel … side cart style, the game
+> itself is a network testing tool right, it tries to determine as much information as possible
+> about the environment it is in — whether local stuff executed in the browser execution space
+> we running, or whether it hits some api that provides additional information about the caller
+> (itself in this case). in addition and on top of the previous is the tests that are run over
+> time, the stats in regards to changes in pings, latency, download, upload, etc. … our immediate
+> todos are networking expansion then linking new networking stuff into the game loop somehow"*
+>
+> Planned as **N4 — The Deep Wire** (`docs/plans/N4-deep-wire.md`). Seven phases, each
+> independently shippable. Nothing implemented yet.
+>
+> **The audit that motivated it.** The mapping layer (`NET_METRICS` → `NET_GAME_MAP`, data rows,
+> live-editable) is good and N4 does not change its shape. The **measurement** layer underneath
+> it is thinner than GDD §4.2 claims: "downlink" is `navigator.connection.downlink`, which Chrome
+> caps at 10 Mbps and Firefox/Safari do not implement; **upload has never been measured at all**;
+> `jitter` is derived from an RTT value Chrome quantises to 25 ms buckets, so it is usually 0 or
+> 25; "beacon latency" is `fetch()` wall-clock including handshakes and main-thread scheduling;
+> DNS timing was specced in this document at N1 and never implemented; and `drawSparkline()`
+> exists but **is never called** — the 60-sample history buffers are written and never read.
+>
+> **Finding — `Server-Timing: cfL4` hands us the edge kernel's TCP socket state.** Verified
+> against the live endpoint (headers quoted in the brief). `https://speed.cloudflare.com/__down`
+> returns `access-control-allow-origin: *`, **`timing-allow-origin: *`**, `server-timing` in
+> `access-control-expose-headers`, and a `cfL4` entry carrying
+> `rtt`/`min_rtt`/`rtt_var`/`lost`/`retrans`/`delivery_rate`/`cwnd` — microsecond RTT, real
+> kernel-measured jitter, **packet loss and retransmissions**, and an uncapped throughput
+> estimate. Readable two independent ways (`headers.get()` and
+> `PerformanceResourceTiming.serverTiming`). ⚠️ **This corrects this document:** the
+> *"What we CANNOT get from a browser"* section implies packet loss needs the optional local
+> agent. For any Cloudflare-terminated path it does not. ICMP/pcap/ARP/LAN/WiFi-dBm remain
+> correctly listed as impossible.
+>
+> **Also verified live:** `__up` accepts a POST body and accounts for it (`recv_bytes=200983` on a
+> 200 KB upload) — real upload measurement; both DoH resolvers are CORS-open
+> (`cloudflare-dns.com/dns-query` with `Accept: application/dns-json`, and `dns.google/resolve`)
+> — real DNS, resolver races, PTR on our own IP, DNSSEC `AD`, TTLs; `cf-meta-ip` returns the
+> public IP, so **`api.ipify.org` is redundant** and `ipapi.co` (the endpoint whose **429** has
+> already failed a QA run) is likely droppable too. And a TAO check across the current beacon
+> pool: **none of the fourteen favicon beacons set `Timing-Allow-Origin`**, so they can never
+> yield a DNS/TCP/TLS breakdown no matter how they are timed — they stay useful for geographic
+> discovery, but precise instrumentation has to route through TAO-enabled hosts.
+>
+> **The game-loop link.** New signals mostly arrive as new `NET_GAME_MAP` rows — packet loss as
+> **Fray** (horde aggression), bufferbloat (`rtt` − `min_rtt` under load) as **Silt** (the world
+> thickens), `cwnd` as **Aperture** (carrying capacity), measured throughput replacing the capped
+> `downlink` for gold rate. Two things are more than rows: a **Sounding Stone** the player builds
+> and activates to run a real throughput/latency/DNS burst — which makes the measurement a game
+> *verb* and makes its cooldown double as the data budget and the rate limit — and **change
+> detection** feeding the existing rift/omen machinery, which finally gives rifts a trigger that
+> fires on desktop (they currently key off `connection.type`, which desktop browsers never report).
+>
+> **The hard constraint:** throughput testing spends the player's data. Never on boot, honour
+> `saveData`, adaptive sizing from 256 KB, a visible session cap, and a `NW_NO_NET` stub mode so
+> CI never runs a real bandwidth test. Open questions (data budget, `ipapi.co`, whether
+> `RTCPeerConnection`/STUN is acceptable, and whether to land only N4.1+N4.2 first) are listed at
+> the end of the brief and need a decision.
+
 **L1 — The Lifespan: a hard 15-minute "perfect run" loop (2026-07-31).** User's direction
 overnight: turn the open-ended survival loop into a bounded, replayable run — "a hard 15 minute
 game loop... hard lifespan for players, like 10 years per minute... they simply fall over and die
