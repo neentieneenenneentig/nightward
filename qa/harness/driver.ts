@@ -24,6 +24,14 @@ export interface Snap {
   bossHunting: boolean;
   nearestBoss: number | null;  // px
   bossDir: { x: number; y: number } | null;
+  /**
+   * worldbosses.nearestThreatTiles() — the exact call main.ts:597 uses to
+   * compute `bossNear`, which is what actually drives the boss soundtrack.
+   * `bossHunting` is NOT the same thing: a boss can be inside threat range
+   * without hunting, and that still swaps the mood.
+   */
+  bossThreatTiles: number | null;
+  warnTiles: number;
   /** px from the spawn point, for profiles that are meant to stay put or leave */
   homeDist: number;
   homeDir: { x: number; y: number };
@@ -293,6 +301,9 @@ export class Nightward {
         if (nb === null || d < nb) { nb = d; bd = unit(dx, dy); }
       }
 
+      let threat: number | null = null;
+      try { threat = nw.sys.worldbosses?.nearestThreatTiles?.() ?? null; } catch { /* ignore */ }
+
       const home = w.__qaHome ?? { x: p.x, y: p.y };
       const hdx = home.x - p.x, hdy = home.y - p.y;
 
@@ -316,6 +327,8 @@ export class Nightward {
         bossHunting: hunting,
         nearestBoss: nb,
         bossDir: bd,
+        bossThreatTiles: threat === null ? null : +threat.toFixed(1),
+        warnTiles: CFG?.worldBoss?.warnTiles ?? 0,
         homeDist: Math.hypot(hdx, hdy),
         homeDir: unit(hdx, hdy),
         gatherTarget: g?.target?.def?.name ?? null,

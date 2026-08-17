@@ -97,6 +97,31 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 > release. The QA console-error gate now attributes errors by origin so third-party 429s and
 > blocks are recorded but never fail a run.
 >
+> **Finding 4 — below ~10 fps the world clock and the lifespan clock diverge. NEEDS A DECISION.**
+> Only a real-time browser test can see this; the Gauntlet cannot, because `__nw.step()` bypasses
+> the frame loop entirely. PixiJS's ticker caps `deltaMS` at `maxElapsedMS` (default **100 ms**,
+> never overridden in this codebase), so each frame feeds at most 100 ms into the fixed-timestep
+> accumulator in `main.ts:483`. Below 10 fps the game world therefore advances at roughly
+> `fps × 0.1 ×` wall-clock. Measured at 2.6 fps: **14 s of game world in 60 s of real time
+> (0.23×)** — matching the predicted 0.26×. Meanwhile L1 ages the character off
+> `lifespan.updateReal(performance.now())`, which is true wall-clock **by deliberate design**
+> (so the cap survives `simSpeed` drift). Consequence: on a machine that cannot hold 10 fps, the
+> 15-minute life still expires in 15 real minutes, but the player experiences roughly a quarter
+> of the world. For a bounded "perfect run" game going onto Pages for arbitrary hardware, that is
+> a fairness question, not just a performance one. Options: leave it; raise `maxElapsedMS`; or
+> detect sustained low fps and degrade quality rather than time.
+>
+> **Finding 5 — the rollback fixes the mood table, but the trigger radius is the real dial.**
+> The boss soundtrack keys off `worldbosses.nearestThreatTiles() < CFG.worldBoss.warnTiles`, and
+> `warnTiles` is **22 tiles (704 px)** with `count: 3` lords roaming. That radius is comparable
+> to the whole visible viewport, so the drums start well before the lord is on screen, engaged,
+> or even hunting. Measured on the *fixed* build, `explorer` profile, seed 777: the player walked
+> from 42 tiles out down to 4.1, and **26 of 39 sampled seconds sat inside the radius** — boss
+> music for roughly two thirds of the session. Caveat: that profile walks a straight line and
+> happened to beeline toward a lord, so this is not a general statistic; it needs a multi-seed
+> sweep before acting on it. But if the drums still feel too frequent after `fix/sound-rollback`
+> merges, **the dial is `NW.CFG.worldBoss.warnTiles` (live-tweakable), not the MOODS table.**
+>
 > **Confirmed: Gauntlet 72 functions / 1249 assertions pass in a real browser against the
 > production bundle** — the first time that has been demonstrated rather than assumed.
 >
