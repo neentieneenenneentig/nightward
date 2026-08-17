@@ -194,9 +194,40 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 >
 > **The hard constraint:** throughput testing spends the player's data. Never on boot, honour
 > `saveData`, adaptive sizing from 256 KB, a visible session cap, and a `NW_NO_NET` stub mode so
-> CI never runs a real bandwidth test. Open questions (data budget, `ipapi.co`, whether
-> `RTCPeerConnection`/STUN is acceptable, and whether to land only N4.1+N4.2 first) are listed at
-> the end of the brief and need a decision.
+> CI never runs a real bandwidth test.
+>
+> ⚠️ **Finding — the endpoint-permission liability is in the shipped code, not in N4.** User
+> raised it; checked rather than assumed. Everything N4 *adds* is sanctioned: Cloudflare
+> publishes **`@cloudflare/speedtest`** on npm (MIT, `vasco@cloudflare.com`, Cloudflare-staff
+> maintainers) driving the exact `__down`/`__up` endpoints — we should depend on that package
+> rather than hand-roll fetches; both DoH resolvers and both STUN servers exist precisely to
+> answer unsolicited requests from strangers. But **the fourteen favicon beacons were never
+> invited**, and two say so: BBC's `robots.txt` — *"Please use our site like a human, not a
+> robot"*; Le Monde's — *"il est interdit d'utiliser des robots d'indexation Web **ou d'autres
+> méthodes automatiques de feuilletage ou de navigation** sur ce site Web"*, citing art. L 342-1
+> CPI. `ipapi.co` is a **1,000/day "free trial"** and has already 429'd a QA run.
+>
+> **And the volume is worse than it looks.** `ACTION_COOLDOWNS.attack = 0`, so every swing fires
+> an echo, plus a 3-beacon all-pool volley every 1.5 s. With a `0.64 s` swing envelope
+> (`0.32 s` at `attackSpeedFloor`) sustained combat emits **~3.6–5 requests/second — on the
+> order of 1,000+ third-party requests per 15-minute run**, each with `cache: 'no-store'` so it
+> is a real origin hit, and `probeSingleEndpoint()` has **no failure backoff** (only the
+> unrelated `pollEndpoint()` does). The sharp risk is not to us: these come from *the player's*
+> IP, and a machine on a corporate or school network beaconing at a fixed 3/s cadence to
+> `yandex.ru`/`baidu.com`/`naver.com` is a textbook **C2 signature**. We can get a player
+> flagged by their own IT department. Practical risk today is near zero — the game had never
+> been pushed until this afternoon — but it is cheap to fix now, expensive after launch, and
+> applies at n = 1.
+>
+> **The fix is also the technical upgrade,** which is why it goes first as **N4.0**: §2.4
+> already established none of those fourteen hosts set `Timing-Allow-Origin`, so they can never
+> yield a timing breakdown anyway — they are the most legally dubious *and* least informative
+> thing we do. Retire the fetches; rebuild route discovery on **DoH** (sanctioned, never touches
+> their servers, yields real DNS latency, and returns the host's actual IP so the geography
+> stops being a hardcoded `detail: 'London, GB'` string); add a same-origin baseline beacon;
+> rate-limit the attack path. Open questions — data budget, `ipapi.co`, whether STUN is
+> acceptable, whether to land only N4.0–N4.2 first, and sign-off on changing the shipped beacon
+> mechanic — are at the end of the brief and need a decision.
 
 **L1 — The Lifespan: a hard 15-minute "perfect run" loop (2026-07-31).** User's direction
 overnight: turn the open-ended survival loop into a bounded, replayable run — "a hard 15 minute

@@ -444,12 +444,105 @@ connection that is a genuine harm, not a nuisance. Non-negotiables:
 - The existing boot-time endpoint disclosure (`logEndpointDisclosure()`) is good practice
   and must be extended to cover every new endpoint.
 
-### 6.2 Being a good citizen
+### 6.2 Permission to speak — are these endpoints OK with us?
 
-These are free public endpoints and we are pointing a game at them. Throttle, back off
-exponentially on error (the existing backoff chain is a good model), never parallel-flood,
-set a sane `AbortController` timeout on everything, and keep the total request rate
-comfortably below what a single browsing session would generate.
+Checked properly on 2026-08-17 rather than assumed. The answer splits cleanly, and **the
+liability is in the code that ships today, not in anything N4 proposes.**
+
+#### Tier 1 — endpoints that exist to be called by strangers
+
+| Endpoint | Standing |
+|---|---|
+| `speed.cloudflare.com/__down`, `/__up` | **Cloudflare publishes `@cloudflare/speedtest` on npm** (MIT, v1.13.0, authored `vasco@cloudflare.com`, maintained by `@cloudflare.com` / `workers-devprod@cloudflare.com` accounts, keywords *"bandwidth, latency, packet loss"*). It drives these exact endpoints. Shipping a library so third parties can embed your speed test is about as explicit a sanction as exists short of a ToS clause. **We should depend on that package rather than hand-rolling fetches** — same endpoints, but we're then a documented consumer instead of an unknown one. |
+| `cloudflare-dns.com/dns-query`, `dns.google/resolve` | Documented public DoH resolvers. Answering unsolicited queries from arbitrary clients *is the service*. |
+| `stun.l.google.com:19302`, `stun.cloudflare.com:3478` | Public STUN. Receiving unsolicited binding requests from arbitrary clients is the entire protocol. |
+| `cloudflare.com/cdn-cgi/trace` | Cloudflare's own public diagnostic endpoint. |
+| `api.ipify.org` | Explicitly a free public API. (Being dropped anyway — `cf-meta-ip` makes it redundant.) |
+
+#### Tier 2 — endpoints that have said no
+
+**`ipapi.co`** — the pricing page states **1,000 lookups/day** and calls the free tier a
+*"free trial"*, with commercial use licensed separately. We have already been **429'd** in a
+QA run. Drop it (§2.5).
+
+**The fourteen favicon beacons** — these are not APIs. Nobody invited us. Two say so outright:
+
+> **BBC** (`robots.txt`): *"In short: Please use our site like a human, not a robot. That
+> means: No scraping, crawling, or systematic extraction of content…"*
+
+> **Le Monde** (`robots.txt`): *"Il est interdit d'utiliser des robots d'indexation Web **ou
+> d'autres méthodes automatiques de feuilletage ou de navigation** sur ce site Web… Nous vous
+> invitons à nous contacter pour contracter une licence d'utilisation."* — forbidding not
+> just crawling but *automated browsing generally*, and citing French database-producer law
+> (art. L 342-1 CPI).
+
+Baidu and Microsoft carry ordinary crawler directives with no blanket automation ban. But
+"only some of them forbid it" is not a position worth defending.
+
+#### The volume problem — this is the actual finding
+
+`probeAction('attack')` has **no cooldown** (`ACTION_COOLDOWNS.attack = 0`). Every swing
+fires an echo, plus a 3-beacon volley from *all* pools every 1.5 s. The swing envelope is
+`0.22 + 0.12 + 0.30 = 0.64 s`, compressible to `0.32 s` via `attackSpeedFloor`.
+
+Sustained combat therefore generates **≈3.6 requests/second, up to ~5/s** at high attack
+speed. Across a 15-minute run that is **on the order of 1,000+ third-party requests per
+player per run**, ~100 per host — and every one uses `cache: 'no-store'`, which
+deliberately defeats caching so each is a real origin hit. `probeSingleEndpoint()` also has
+**no failure backoff at all**; only the unrelated `pollEndpoint()` path does.
+
+Two consequences, one of which matters much more than the other:
+
+1. **At scale it is unsolicited distributed load** on a dozen major sites from many client
+   IPs — structurally indistinguishable from a small DDoS, however innocent the intent.
+2. **The sharper risk is to individual players, and it is not hypothetical.** These requests
+   originate from *the player's* IP, not ours. A machine on a corporate, school or
+   government network emitting steady 3/s beacons to `yandex.ru`, `baidu.com` and
+   `naver.com` on a fixed cadence is a textbook **C2 beaconing signature** — it is close to
+   exactly what network IDS products are tuned to catch. We can get a *player* flagged,
+   rate-limited, or asked hard questions by their IT department. That is a real harm we'd be
+   exporting to users, and it is reason enough on its own.
+
+**Calibration, honestly:** at today's scale — a game that had never been pushed until this
+afternoon — the practical risk of anyone noticing is near zero. Nothing here is an
+emergency. The reasons to fix it now are that it is cheap now and expensive after launch,
+that item 2 applies at *n = 1*, and that Le Monde's terms are unambiguous.
+
+#### The fix, which is also a technical upgrade
+
+The good-citizenship fix and the correct engineering happen to be the same change, which is
+the strongest possible argument for it: **§2.4 already established that none of the fourteen
+favicon hosts set `Timing-Allow-Origin`, so they can never yield a timing breakdown no
+matter how we probe them.** They are simultaneously the most legally dubious and the least
+informative thing we do.
+
+1. **Retire favicon fetches as a measurement mechanism entirely.**
+2. **Keep the discovery mechanic — re-implement it on DoH.** Instead of *fetching*
+   `bbc.co.uk/favicon.ico`, *resolve* `bbc.co.uk` through Cloudflare or Google DoH. This is
+   strictly better on every axis: it is a sanctioned API; it never touches the BBC's servers
+   at all (the resolver answers, usually from cache); it yields a **real** measurement (DNS
+   resolution latency) instead of a scheduling-polluted fetch duration; and it returns the
+   host's actual IP, which makes the geographic story *true* rather than a hardcoded
+   `detail: 'London, GB'` string. **This promotes N4.4 (Scrying) from optional to
+   load-bearing.**
+3. **Add a same-origin baseline beacon.** GitHub Pages is our own origin: full timing data,
+   zero third-party exposure, a clean control against which every other route is compared.
+4. **Rate-limit the attack path.** No game action should be able to drive network requests
+   at swing frequency. Beacon cadence should be wall-clock-governed and human-scale.
+5. **Global failure backoff and `Retry-After` compliance** on every outbound path, not just
+   `pollEndpoint()`.
+6. **Self-identify.** Custom headers are impossible under `no-cors` and the UA is not ours to
+   set, but a query param (`?_nw=probe`) costs nothing and lets anyone reading their logs see
+   what this is. Do it on anything third-party that remains.
+7. **Stop defeating the cache** where a fresh hit is not the point of the measurement.
+8. **`NW_NO_NET` for CI.** The QA suite currently drives the real beacons on every run and
+   every playthrough profile — we are our own traffic multiplier. Already planned in §6.4;
+   this raises its priority.
+
+Net effect: third-party contact drops from ~1,000 requests/run against a dozen unconsenting
+hosts to a small number of DNS queries against two public resolvers plus a metered,
+player-initiated conversation with Cloudflare's own speed test — all of it against
+endpoints that publish client libraries inviting exactly this.
 
 ### 6.3 Failure is the normal case
 
@@ -489,6 +582,7 @@ already be the largest single upgrade to the game's premise since N1.**
 
 | Phase | Contents | Why this order |
 |---|---|---|
+| **N4.0 — Right of way** | Retire the favicon-fetch beacons; rate-limit the attack path; global backoff + `Retry-After`; same-origin baseline beacon; `NW_NO_NET`; drop `ipapi.co` + `ipify`. | **Goes first.** Removes the only part of the system that contacts hosts which have not invited us (§6.2), and removes ~1,000 requests/run of traffic that N4's own measurements would otherwise be layered on top of. Deletes code; adds none. |
 | **N4.1 — The Deep Wire** | `cfL4` parsing, TAO waterfalls, `PerformanceObserver` on resources, real `min_rtt`/`rtt_var`/loss. Identity consolidated onto Cloudflare; `ipify` dropped, `ipapi.co` decided per §2.5. | Highest value, lowest risk, **zero new bandwidth cost** — it reads headers on requests we already make. Also retires the 429-flaky endpoint. |
 | **N4.2 — The Side Cart** | Drawer, five tabs, Chronicle strip, honesty tags, export. Extract `updateObservatory()` into `ui/lens/`. | The user asked for the panel first. It also makes everything after it *visible*, which is how we'll know the measurements are right. |
 | **N4.3 — The Chronicle** | `ChronicleStore`, tiered retention, scheduled jittered probes, change detection. | Needs N4.1's signals and N4.2's surface to be worth anything. |
@@ -512,10 +606,17 @@ already be the largest single upgrade to the game's premise since N1.**
 3. **STUN.** Any objection to `RTCPeerConnection`? It creates no data channel, requests no
    media, and prompts for nothing — but it *is* a new kind of connection and the
    geolocation precedent says to ask rather than assume.
-4. **Scope.** Is the whole N4.1–N4.7 arc the intent, or should this land as N4.1 + N4.2
-   (the deep signals and the panel) and be re-evaluated with something playable in hand?
-   *(My recommendation: the latter. §7's first two phases are ~60% of the value and carry
-   almost none of the risk.)*
+4. **Scope.** Is the whole N4.0–N4.7 arc the intent, or should this land as N4.0 + N4.1 +
+   N4.2 (right-of-way, the deep signals, and the panel) and be re-evaluated with something
+   playable in hand? *(My recommendation: the latter. Those three are ~60% of the value and
+   carry almost none of the risk.)*
+6. **The favicon beacons.** §6.2 recommends retiring them as a fetch target and rebuilding
+   discovery on DoH. This changes a shipped mechanic — routes are currently *discovered* by
+   playing, and the fiction ("your blade resonates through its weave") is written against
+   fourteen named world beacons. The DoH rebuild keeps all of that and makes the geography
+   *real* instead of hardcoded, but it is a behaviour change to something you have already
+   playtested, so it needs an explicit yes. *(My recommendation: yes — it is the one change
+   here that is simultaneously the legal fix, the technical fix, and a content upgrade.)*
 5. **Sequencing against the existing queue.** `fix/sound-rollback`, Batch B and B5 are all
    unmerged. N4 does not touch their files, so it can run in parallel — but it should not
    jump the merge queue ahead of a fix that is already verified.
