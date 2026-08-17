@@ -1,7 +1,7 @@
 import { test as base, expect } from '@playwright/test';
 import { Nightward } from './driver';
 
-type BootOpts = { seed?: number; gl?: boolean; extra?: string };
+type BootOpts = { seed?: number; gl?: boolean; net?: boolean; extra?: string };
 
 export const test = base.extend<{ launch: (o?: BootOpts) => Promise<Nightward> }>({
   launch: async ({ page }, use, testInfo) => {

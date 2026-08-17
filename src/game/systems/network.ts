@@ -12,10 +12,95 @@ import {
   type NetworkSnapshot, type NetMapping, type NetGameMapping,
   type TraceHop, type BeaconEcho, type BeaconTarget,
   ACTION_ECHO_POOLS, ACTION_COOLDOWNS, allBeacons,
+  DOH_RESOLVERS, WIRE_BUDGET,
 } from '../data/network';
 import { biomeForConnection, biomeForProfile, BIOMES, type BiomeDef } from '../data/biomes';
 
+function noNet(): boolean {
+  try {
+    if ((globalThis as any).__NW_NO_NET) return true;
+    return new URLSearchParams(location.search).has('nonet');
+  } catch { return false; }
+}
+
+class NetGate {
+  private tokens = WIRE_BUDGET.burst;
+  private lastRefill = 0;
+  private inflight = 0;
+  private hostNext: Map<string, number> = new Map();
+  private globalUntil = 0;
+  readonly off = noNet();
+  granted = 0;
+  denied = 0;
+
+  private refill(now: number) {
+    if (!this.lastRefill) { this.lastRefill = now; return; }
+    const gained = ((now - this.lastRefill) / 60000) * WIRE_BUDGET.ratePerMin;
+    if (gained <= 0) return;
+    this.tokens = Math.min(WIRE_BUDGET.burst, this.tokens + gained);
+    this.lastRefill = now;
+  }
+
+  take(host: string, spacingSec = WIRE_BUDGET.hostSpacingSec): boolean {
+    if (this.off) return false;
+    const now = performance.now();
+    if (now < this.globalUntil) { this.denied++; return false; }
+    if (this.inflight >= WIRE_BUDGET.maxInflight) { this.denied++; return false; }
+    if (now < (this.hostNext.get(host) ?? 0)) { this.denied++; return false; }
+    this.refill(now);
+    if (this.tokens < 1) { this.denied++; return false; }
+    this.tokens -= 1;
+    this.inflight++;
+    this.granted++;
+    this.hostNext.set(host, now + spacingSec * 1000);
+    return true;
+  }
+
+  release() { this.inflight = Math.max(0, this.inflight - 1); }
+
+  /** Honour 429/503 + Retry-After, and back a host off on hard failure. */
+  penalise(host: string, resp?: Response | null) {
+    const now = performance.now();
+    let waitMs = 0;
+    if (resp) {
+      const ra = resp.headers.get('retry-after');
+      if (ra) {
+        const secs = Number(ra);
+        waitMs = Number.isFinite(secs) ? secs * 1000 : Math.max(0, Date.parse(ra) - Date.now());
+      }
+      if (resp.status === 429 || resp.status === 503) {
+        if (!waitMs) waitMs = 60000;
+        this.globalUntil = now + waitMs;
+      }
+    }
+    this.hostNext.set(host, now + Math.max(waitMs, 120000));
+  }
+}
+
 export class NetworkSystem {
+  private gate = new NetGate();
+  private baseHref = (() => {
+    try { return new URL(document.baseURI).href; } catch { return '/'; }
+  })();
+  private selfHost = (() => {
+    try { return location.hostname || 'origin'; } catch { return 'origin'; }
+  })();
+  private lastBeaconMs = 0;
+  private nextBeaconGap = WIRE_BUDGET.beaconIntervalSec * 1000;
+  private lastBaselineMs = 0;
+  private lastTraceMs = 0;
+  private actionBias: string[] = [];
+  private resolverTurn = 0;
+  /** Per-resolver latency samples — the resolver race. */
+  resolverStats: Map<string, { n: number; total: number; best: number }> = new Map();
+  /** Same-origin control probe: full timing, zero third-party exposure. */
+  baseline: { ms: number; dns: number; tcp: number; tls: number; ttfb: number; proto: string } | null = null;
+  /** TLS version / key exchange / HTTP protocol, from Cloudflare trace. */
+  tlsVersion = '';
+  kex = '';
+  httpProto = '';
+  /** Local clock minus server clock (ms). */
+  clockSkewMs = 0;
   snap: NetworkSnapshot;
   mappings: Record<string, NetMapping> = {};
   gameMappings: NetGameMapping[] = NET_GAME_MAP;
@@ -34,12 +119,8 @@ export class NetworkSystem {
   /** Per-beacon echo samples keyed by URL. Used for echoJitter (same-beacon successive deltas). */
   private echoSamples: Map<string, number[]> = new Map();
   private lastPollMs = 0;
-  private lastEndpointMs = 0;
   private lastConnectionType = '';
   private lastOnline = true;
-  private endpointFetching = false; // guard against overlapping fetches
-  private endpointFailStreak = 0;   // consecutive all-beacons-unreachable
-  private endpointBackoffUntil = 0; // ms timestamp — skip polls until this time
 
   // transition debouncing
   private pendingTransition: { from: string; to: string; since: number } | null = null;
@@ -54,10 +135,7 @@ export class NetworkSystem {
   private lastHistorySampleMs = 0;
 
   // ---- M3.5: IP/geo refresh throttling ----
-  private lastIpFetchMs = 0;
   private ipFetching = false;
-  private lastGeoFetchMs = 0;
-  private geoFetching = false;
   /** Whether identity probes (IP/geo) have been fetched at least once. */
   private identityFetched = false;
 
@@ -66,10 +144,6 @@ export class NetworkSystem {
   discoveredEndpoints: Set<string> = new Set();
   /** Per-action-type cooldown timestamps (ms). */
   private actionCooldowns: Map<string, number> = new Map();
-  /** Per-action-type last probed label (avoid same endpoint twice in a row). */
-  private lastProbedLabel: Map<string, string> = new Map();
-  /** Guard against probing the same URL concurrently. */
-  private activeProbes: Set<string> = new Set();
 
   // ---- M3.6v2: Sync RTT → Damage + Resonance Crits ----
   /** Sync RTT at the moment of the last swing (ms). */
@@ -140,21 +214,20 @@ export class NetworkSystem {
 
   /** Boot-time disclosure of every external endpoint the game contacts. */
   private logEndpointDisclosure() {
-    const endpoints = new Set<string>();
-    for (const pool of Object.values(ACTION_ECHO_POOLS)) {
-      for (const ep of pool) endpoints.add(ep.url);
+    if (this.gate.off) {
+      console.log('[NIGHTWARD] Network probing DISABLED (?nonet / __NW_NO_NET). All Wire metrics use neutral fallbacks.');
+      return;
     }
-    // Also the identity endpoints
-    endpoints.add('https://api.ipify.org');
-    endpoints.add('https://ipapi.co/json/');
-    endpoints.add('https://cloudflare.com/cdn-cgi/trace');
-    // Also the hardcoded poll endpoints
-    endpoints.add('https://www.google.com/generate_204');
-    endpoints.add('https://www.microsoft.com/favicon.ico');
-
-    const list = [...endpoints].sort().join(', ');
-    console.log('[NIGHTWARD] External endpoints this game may contact (discovery gated behind in-game actions): '
-      + list + '. No data leaves the browser except the implicit IP in HTTP requests to these listed public endpoints; nothing is stored server-side.');
+    const contacted = [...DOH_RESOLVERS.map(r => r.url), 'https://cloudflare.com/cdn-cgi/trace', this.baseHref];
+    const resolved = allBeacons().map(b => b.host).sort();
+    console.log(
+      '[NIGHTWARD] Endpoints this game CONTACTS: ' + contacted.join(', ')
+      + ' — all public services that exist to answer unsolicited requests, rate-limited to '
+      + WIRE_BUDGET.ratePerMin + ' req/min total.'
+      + '\n[NIGHTWARD] Hostnames this game RESOLVES via those resolvers (never contacted directly): '
+      + resolved.join(', ')
+      + '\nNo data leaves the browser except the implicit IP in requests to the listed endpoints; nothing is stored server-side.',
+    );
   }
 
   // ---- public API ----
@@ -163,15 +236,12 @@ export class NetworkSystem {
   update(nowMs: number) {
     this.pollConnection(nowMs);
     this.pollSensors(nowMs);
-    this.pollEndpoint(nowMs);
+    this.pollBeacons(nowMs);
+    this.pollBaseline(nowMs);
     this.computeJitter();
     this.snap.timeOfDay = this.realTimeOfDay();
     this.detectTransitions(nowMs);
-    // N2: decay rift stability over time
     this.decayStability(nowMs);
-    // M3.5: periodically refresh deep network data (IP/geo every 5 min)
-    // NOTE: endpoint probes are NO LONGER auto-polled here — they are gated
-    // behind in-game actions via probeAction().
     this.pollIpInfo(nowMs);
   }
 
@@ -423,61 +493,147 @@ export class NetworkSystem {
     }
   }
 
-  /** Fire-and-forget beacon ping. Non-blocking — update() does NOT await.
-   *  Uses exponential backoff when all beacons are unreachable:
-   *  10s → 20s → 40s → ... → max 5 min between attempts. */
-  private pollEndpoint(nowMs: number) {
-    // Respect backoff after consecutive failures
-    if (this.endpointBackoffUntil > 0 && nowMs < this.endpointBackoffUntil) return;
-    if (nowMs - this.lastEndpointMs < 10000) return;
-    this.lastEndpointMs = nowMs;
-    if (this.endpointFetching) return;
-    this.endpointFetching = true;
-    const t0 = performance.now();
-    const endpoints = [
-      'https://cloudflare.com/cdn-cgi/trace',
-      'https://www.google.com/generate_204',
-      'https://www.microsoft.com/favicon.ico',
-    ];
-    this.netLog('resonance-echo', `probing ${new URL(endpoints[0]).hostname}...`);
-    this.tryEndpoints(endpoints, 0, t0);
+  /** Wall-clock beacon scheduler. Resolves ONE hostname per tick via DoH.
+   *  Nothing in the game loop can raise this rate — only real time can. */
+  private pollBeacons(nowMs: number) {
+    if (this.gate.off || !this.snap.online) return;
+    if (nowMs - this.lastBeaconMs < this.nextBeaconGap) return;
+    this.lastBeaconMs = nowMs;
+    const j = WIRE_BUDGET.beaconJitter;
+    this.nextBeaconGap = WIRE_BUDGET.beaconIntervalSec * 1000 * (1 - j + Math.random() * 2 * j);
+    const target = this.pickBeacon();
+    if (target) this.resolveBeacon(target);
   }
 
-  private tryEndpoints(endpoints: string[], idx: number, t0: number) {
-    if (idx >= endpoints.length) {
-      // All beacons unreachable — apply exponential backoff
-      this.endpointFailStreak++;
-      const delay = Math.min(10000 * Math.pow(2, this.endpointFailStreak), 300_000);
-      this.endpointBackoffUntil = performance.now() + delay;
-      this.netLog('resonance-echo',
-        `All beacons unreachable — backing off ${(delay / 1000).toFixed(0)}s (streak ${this.endpointFailStreak})`);
-      this.endpointFetching = false;
+  /** Undiscovered beacons from recently-played action pools come first, so
+   *  "playing reveals the map" survives with zero coupling to action rate. */
+  private pickBeacon(): BeaconTarget | null {
+    const pools: BeaconTarget[] = [];
+    for (const a of this.actionBias) {
+      const p = ACTION_ECHO_POOLS[a];
+      if (p) pools.push(...p);
+    }
+    const all = allBeacons();
+    const biased = pools.length ? pools : all;
+    const fresh = biased.filter(b => !this.discoveredEndpoints.has(b.label));
+    const pick = (xs: BeaconTarget[]) => xs.length ? xs[(Math.random() * xs.length) | 0] : null;
+    return pick(fresh) ?? pick(all.filter(b => !this.discoveredEndpoints.has(b.label))) ?? pick(biased) ?? pick(all);
+  }
+
+  private async resolveBeacon(t: BeaconTarget) {
+    const r = await this.resolveHost(t.host);
+    if (!r) return;
+    if (r.ms < 0) {
+      this.mergeProbeResult({ host: t.host, label: t.label, rtt: -1, detail: 'no answer', region: t.region, countryCode: t.countryCode });
+      this.discoveredEndpoints.add(t.label);
+      this.netLog('resonance-echo', `${t.label}: no answer`);
       return;
     }
-    const url = endpoints[idx];
-    const host = new URL(url).hostname;
-    // Use AbortController timeout instead of no-cors so that blocked/aborted
-    // requests actually reject and trigger the backoff chain.
+    const wasWarm = this.warmedRoutes.has(t.host);
+    this.warmedRoutes.add(t.host);
+    this.snap.endpointLatency = r.ms;
+    this.trackEchoSample(t.host, r.ms);
+    this.mergeProbeResult({
+      host: t.host, label: t.label, rtt: r.ms, region: t.region, countryCode: t.countryCode,
+      detail: r.ip, ip: r.ip, ttl: r.ttl, resolver: r.resolver, ad: r.ad,
+    });
+    this.discoveredEndpoints.add(t.label);
+
+    const samples = this.echoSamples.get(t.host) ?? [];
+    const jitterAtBirth = samples.length >= 2
+      ? Math.abs(samples[samples.length - 1] - samples[samples.length - 2]) : 0;
+    const regions = new Set<string>();
+    for (const p of this.snap.endpointProbes) if (p.rtt > 0) regions.add(p.region);
+    regions.add(t.region);
+    this.distinctRegionsProbed = regions.size;
+    this.lastEcho = {
+      ms: r.ms, cold: !wasWarm, jitterAtBirth,
+      route: { label: t.label, region: t.region, countryCode: t.countryCode },
+      tsMs: performance.now(),
+    };
+    this.netLog('resonance-echo',
+      `${t.label} → ${r.ip} in ${r.ms.toFixed(0)}ms via ${r.resolver} (ttl ${r.ttl}${r.ad ? ' · dnssec' : ''})${wasWarm ? '' : ' — route discovered'}`);
+  }
+
+  /** One DoH query. Alternates resolvers so both get raced over a session. */
+  private async resolveHost(host: string, type = 'A'): Promise<{ ms: number; ip: string; ttl: number; ad: boolean; resolver: string } | null> {
+    const res = DOH_RESOLVERS[this.resolverTurn++ % DOH_RESOLVERS.length];
+    const rHost = new URL(res.url).hostname;
+    if (!this.gate.take(host, WIRE_BUDGET.hostSpacingSec)) return null;
     const ctl = new AbortController();
     const tm = setTimeout(() => ctl.abort(), 5000);
-    fetch(url, { cache: 'no-store', signal: ctl.signal })
-      .then(() => {
-        clearTimeout(tm);
-        const lat = performance.now() - t0;
-        this.snap.endpointLatency = lat;
-        this.trackEchoSample(url, lat);
-        // Success resets the fail streak
-        this.endpointFailStreak = 0;
-        this.endpointBackoffUntil = 0;
-        this.netLog('resonance-echo',
-          `${host} echoed in ${lat.toFixed(0)}ms`);
-        this.endpointFetching = false;
-      })
-      .catch(() => {
-        clearTimeout(tm);
-        this.netLog('resonance-echo', `${host} unreachable — trying next beacon...`);
-        this.tryEndpoints(endpoints, idx + 1, t0);
+    const t0 = performance.now();
+    try {
+      const resp = await fetch(`${res.url}?name=${encodeURIComponent(host)}&type=${type}`, {
+        signal: ctl.signal,
+        headers: res.accept ? { Accept: res.accept } : undefined,
       });
+      if (!resp.ok) { this.gate.penalise(rHost, resp); return { ms: -1, ip: '', ttl: 0, ad: false, resolver: res.label }; }
+      const data = await resp.json();
+      const ms = performance.now() - t0;
+      const ans = (data?.Answer ?? []).filter((a: any) => a.type === 1 || a.type === 28 || a.type === 12);
+      const st = this.resolverStats.get(res.label) ?? { n: 0, total: 0, best: Infinity };
+      st.n++; st.total += ms; st.best = Math.min(st.best, ms);
+      this.resolverStats.set(res.label, st);
+      return {
+        ms, resolver: res.label,
+        ip: ans[0]?.data ?? '',
+        ttl: ans[0]?.TTL ?? 0,
+        ad: !!data?.AD,
+      };
+    } catch {
+      this.gate.penalise(rHost, null);
+      return { ms: -1, ip: '', ttl: 0, ad: false, resolver: res.label };
+    } finally {
+      clearTimeout(tm);
+      this.gate.release();
+    }
+  }
+
+  /** Same-origin control probe. Full PerformanceResourceTiming breakdown, and
+   *  the only host we have unambiguous right to talk to. */
+  private async pollBaseline(nowMs: number) {
+    if (this.gate.off || !this.snap.online) return;
+    if (nowMs - this.lastBaselineMs < WIRE_BUDGET.baselineIntervalSec * 1000) return;
+    this.lastBaselineMs = nowMs;
+    const url = `${this.baseHref}${this.baseHref.includes('?') ? '&' : '?'}_nw=baseline&t=${Date.now()}`;
+    if (!this.gate.take(this.selfHost, 5)) return;
+    const ctl = new AbortController();
+    const tm = setTimeout(() => ctl.abort(), 5000);
+    const t0 = performance.now();
+    try {
+      const resp = await fetch(url, { signal: ctl.signal, cache: 'no-store' });
+      const ms = performance.now() - t0;
+      if (!resp.ok) { this.gate.penalise(this.selfHost, resp); return; }
+      await resp.arrayBuffer();
+      this.readClockSkew(resp, ms);
+      const e = performance.getEntriesByType('resource')
+        .filter((x: any) => x.name.includes('_nw=baseline')).pop() as any;
+      this.baseline = e ? {
+        ms,
+        dns: Math.max(0, e.domainLookupEnd - e.domainLookupStart),
+        tcp: Math.max(0, e.connectEnd - e.connectStart),
+        tls: e.secureConnectionStart > 0 ? Math.max(0, e.connectEnd - e.secureConnectionStart) : 0,
+        ttfb: Math.max(0, e.responseStart - e.requestStart),
+        proto: e.nextHopProtocol || '',
+      } : { ms, dns: 0, tcp: 0, tls: 0, ttfb: 0, proto: '' };
+      this.trackEchoSample(this.selfHost, ms);
+      this.netLog('resonance-echo',
+        `origin baseline ${ms.toFixed(0)}ms · dns ${this.baseline.dns.toFixed(0)} · tcp ${this.baseline.tcp.toFixed(0)} · tls ${this.baseline.tls.toFixed(0)} · ttfb ${this.baseline.ttfb.toFixed(0)}${this.baseline.proto ? ` · ${this.baseline.proto}` : ''}`);
+    } catch {
+      this.gate.penalise(this.selfHost, null);
+    } finally {
+      clearTimeout(tm);
+      this.gate.release();
+    }
+  }
+
+  private readClockSkew(resp: Response, rttMs: number) {
+    const d = resp.headers.get('date');
+    if (!d) return;
+    const server = Date.parse(d);
+    if (!Number.isFinite(server)) return;
+    this.clockSkewMs = Date.now() - (server + rttMs / 2);
   }
 
   private computeJitter() {
@@ -641,20 +797,11 @@ export class NetworkSystem {
 
   /** Periodic refresh for IP info (ipify + Cloudflare trace) and geo (ipapi.co). */
   private pollIpInfo(nowMs: number) {
-    // Review fix: this must stay dark until the player has explored at least
-    // once (F8 design law — "scrying reveals who you are", Lens shows
-    // "unrevealed (explore to reveal)" until then). Previously this ran
-    // unconditionally off real uptime alone, so identity requests could fire
-    // — and `snap.publicIp` etc. got populated — before the player ever
-    // explored, while the UI kept claiming nothing had been revealed yet.
-    if (!this.identityFetched) return;
-    // Refresh IP + Cloudflare trace every 5 minutes
-    if (nowMs - this.lastIpFetchMs > 300_000) {
-      this.fetchIpInfo();
-    }
-    // Refresh geo info every 5 minutes
-    if (nowMs - this.lastGeoFetchMs > 300_000) {
-      this.fetchGeoInfo();
+    // F8 design law: stays dark until the player's first explore action.
+    if (!this.identityFetched || this.gate.off) return;
+    if (nowMs - this.lastTraceMs > WIRE_BUDGET.traceIntervalSec * 1000) {
+      this.lastTraceMs = nowMs;
+      this.fetchCloudflareTrace();
     }
   }
 
@@ -671,153 +818,33 @@ export class NetworkSystem {
    * SPECIAL CASE — attack: fires a volley of 3 pings drawn from ALL pools
    * (not just the attack pool), with NO cooldown. Every swing sends echoes.
    */
+  /**
+   * Game actions no longer emit packets. They bias which beacon the wall-clock
+   * scheduler resolves next, and — for attack — CONSUME the freshest existing
+   * measurement to arm a resonance crit. Swing rate is fully decoupled from
+   * request rate.
+   */
   probeAction(action: string) {
-    // Attack: one echo per swing (always), full volley at most once per 1.5s (F3)
-    if (action === 'attack') {
-      const now = performance.now();
-      // Always fire a single echo to a random attack-pool beacon
-      const pool = ACTION_ECHO_POOLS['attack'];
-      if (pool && pool.length > 0) {
-        const lastLabel = this.lastProbedLabel.get('attack');
-        const candidates = pool.filter(p => p.label !== lastLabel);
-        const ep = candidates.length > 0
-          ? candidates[(Math.random() * candidates.length) | 0]
-          : pool[(Math.random() * pool.length) | 0];
-        this.lastProbedLabel.set('attack', ep.label);
-        this.probeSingleEndpoint(ep.url, ep.label, ep.detail, ep.region, ep.countryCode, 'attack');
-      }
-      // Full volley (3 echoes from all pools) only every 1.5s
-      if (now - this.lastAttackVolleyMs >= 1500) {
-        this.lastAttackVolleyMs = now;
-        this.probeAttackVolley(3);
-      }
-      return;
-    }
+    this.actionBias = [action, ...this.actionBias.filter(a => a !== action)].slice(0, 3);
+    if (action === 'attack') this.armResonance();
+  }
 
-    const pool = ACTION_ECHO_POOLS[action];
-    if (!pool || pool.length === 0) return;
-
-    // Check cooldown
-    const cooldownMs = (ACTION_COOLDOWNS[action] ?? 20) * 1000;
+  /** Arm a crit from the most recent fresh echo on a warmed route. */
+  private armResonance() {
     const now = performance.now();
-    const lastProbe = this.actionCooldowns.get(action) ?? 0;
-    if (now - lastProbe < cooldownMs) return;
-
-    // Mark the cooldown
-    this.actionCooldowns.set(action, now);
-
-    // Pick a random beacon from the pool (avoid the same one twice in a row if pool > 1)
-    let ep: BeaconTarget;
-    if (pool.length === 1) {
-      ep = pool[0];
-    } else {
-      const lastLabel = this.lastProbedLabel.get(action);
-      const candidates = pool.filter(p => p.label !== lastLabel);
-      ep = candidates.length > 0
-        ? candidates[(Math.random() * candidates.length) | 0]
-        : pool[(Math.random() * pool.length) | 0];
-      this.lastProbedLabel.set(action, ep.label);
+    if (now - this.lastAttackVolleyMs < 1500) return;
+    this.lastAttackVolleyMs = now;
+    if (this.pendingResonance) return;
+    let best: BeaconEcho | null = null;
+    for (const p of this.snap.endpointProbes) {
+      if (p.rtt <= 0 || p.rtt >= 30) continue;
+      if (!p.ts || now - p.ts > WIRE_BUDGET.freshMs) continue;
+      if (!this.warmedRoutes.has(p.host)) continue;
+      if (!best || p.rtt < best.rtt) best = p;
     }
-
-    // Fire the echo
-    this.probeSingleEndpoint(ep.url, ep.label, ep.detail, ep.region, ep.countryCode, action);
-  }
-
-  /**
-   * Fire N echoes to random beacons drawn from ALL pools. Used by the attack
-   * action — every swing sends echoes, picking random global beacons.
-   * Fast echoes (<30ms) trigger resonance crits.
-   */
-  private probeAttackVolley(count: number) {
-    const all = allBeacons();
-    if (all.length === 0) return;
-    // Shuffle and pick `count` unique beacons
-    const picked: BeaconTarget[] = [];
-    const pool = [...all];
-    for (let i = 0; i < count && pool.length > 0; i++) {
-      const idx = (Math.random() * pool.length) | 0;
-      picked.push(pool[idx]);
-      pool.splice(idx, 1);
-    }
-    for (const ep of picked) {
-      this.probeSingleEndpoint(ep.url, ep.label, ep.detail, ep.region, ep.countryCode, 'attack');
-    }
-  }
-
-  /**
-   * Ping a single beacon. Results are merged into snap.endpointProbes,
-   * replacing any previous result for the same label. The beacon is marked
-   * as "discovered".
-   *
-   * When action is 'attack' and echo < 30ms, sets pendingResonance
-   * for the combat system to consume as a resonance crit on the current swing.
-   */
-  private probeSingleEndpoint(url: string, label: string, detail: string, region: string, countryCode: string, action?: string) {
-    // Don't ping the same URL concurrently
-    if (this.activeProbes.has(url)) return;
-    this.activeProbes.add(url);
-    this.netLog('resonance-echo', `Echo: ${label} (${detail}) ...`);
-
-    const t0 = performance.now();
-    fetch(url, { mode: 'no-cors', cache: 'no-store' })
-      .then(() => {
-        const rtt = Math.round(performance.now() - t0);
-        this.mergeProbeResult({ host: url, label, rtt, detail, region, countryCode });
-        this.discoveredEndpoints.add(label);
-        this.activeProbes.delete(url);
-        this.trackEchoSample(url, rtt); // F1: per-beacon echo tracking for echoJitter
-
-        // F3: route warmth — first contact is "discovery" (never crits),
-        // second+ contact warms the route (crit-eligible)
-        const wasWarm = this.warmedRoutes.has(url);
-        if (!wasWarm) {
-          this.warmedRoutes.add(url);
-          this.netLog('resonance-echo', `${label}: ${rtt}ms (${region}) — route discovered`);
-        } else {
-          this.netLog('resonance-echo', `${label}: ${rtt}ms (${region})`);
-        }
-
-        // N2a: record last echo for mob birth stats
-        const sameUrlSamples = this.echoSamples.get(url) ?? [];
-        const jitterAtBirth = sameUrlSamples.length >= 2
-          ? Math.abs(sameUrlSamples[sameUrlSamples.length - 1] - sameUrlSamples[sameUrlSamples.length - 2])
-          : 0;
-        const cold = !wasWarm; // cold = first contact that paid DNS+TCP+TLS handshake
-        const prevRegions = new Set<string>();
-        for (const p of this.snap.endpointProbes) {
-          if (p.rtt > 0) prevRegions.add(p.region);
-        }
-        prevRegions.add(region);
-        this.distinctRegionsProbed = prevRegions.size;
-        this.lastEcho = {
-          ms: rtt, cold,
-          jitterAtBirth,
-          route: { label, region, countryCode },
-          tsMs: performance.now(),
-        };
-
-        // fast echo → resonance crit ONLY from warmed routes (F3)
-        if (action === 'attack' && rtt > 0 && rtt < 30 && wasWarm) {
-          this.pendingResonance = { rtt, label, multiplier: 1.5 };
-          this.netLog('resonance',
-            `⚡ Resonance: ${label} @ ${rtt}ms → crit ready!`);
-        }
-      })
-      .catch(() => {
-        this.mergeProbeResult({ host: url, label, rtt: -1, detail: 'unreachable', region, countryCode });
-        this.discoveredEndpoints.add(label);
-        this.activeProbes.delete(url);
-        this.netLog('resonance-echo', `${label}: unreachable`);
-      });
-
-    // Safety timeout: if the fetch hangs >10s, release the guard
-    setTimeout(() => {
-      if (this.activeProbes.has(url)) {
-        this.mergeProbeResult({ host: url, label, rtt: -1, detail: 'timeout', region, countryCode });
-        this.discoveredEndpoints.add(label);
-        this.activeProbes.delete(url);
-      }
-    }, 10000);
+    if (!best) return;
+    this.pendingResonance = { rtt: best.rtt, label: best.label, multiplier: 1.5 };
+    this.netLog('resonance', `⚡ Resonance: ${best.label} @ ${best.rtt}ms → crit ready!`);
   }
 
   /** Merge a single echo result into snap.endpointProbes, replacing any
@@ -1004,8 +1031,8 @@ export class NetworkSystem {
         // F8: first explore action triggers identity probes — "scrying reveals who you are"
         if (!this.identityFetched) {
           this.identityFetched = true;
-          this.fetchIpInfo();
-          this.fetchGeoInfo();
+          this.lastTraceMs = performance.now();
+          this.fetchCloudflareTrace().then(() => this.resolvePtr());
           this.netLog('resonance', 'Scrying: probing connection identity...');
         }
         break;
@@ -1069,76 +1096,72 @@ export class NetworkSystem {
   // and always load on init. Only the endpoint latency probes are action-gated.
 
   /**
-   * Fetch your public IP via ipify.org (proven CORS-enabled, always works).
-   * Then try Cloudflare trace for colo/warp supplemental data.
-   */
-  private async fetchIpInfo() {
-    if (this.ipFetching) return;
-    this.ipFetching = true;
-    this.lastIpFetchMs = performance.now();
-    try {
-      const resp = await fetch('https://api.ipify.org?format=json', { cache: 'no-store' });
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data['ip']) this.snap.publicIp = data['ip'];
-      }
-    } catch {
-      // Silently fall back
-    }
-    this.ipFetching = false;
-    // After getting IP, try Cloudflare trace for colo/warp (may fail on localhost)
-    this.fetchCloudflareTrace();
-  }
-
-  /**
-   * Try Cloudflare's /cdn-cgi/trace for colo, warp status, and HTTP version.
-   * This endpoint is CORS-enabled in production but may fail on localhost.
-   * Failure is silent — colo/warp stay as '...' / false.
+   * Cloudflare's own diagnostic endpoint — the single identity source now that
+   * ipify (redundant) and ipapi.co (1000/day trial, already 429'd us) are gone.
+   * Yields ip, colo, country, warp, HTTP version, TLS version and key exchange.
    */
   private async fetchCloudflareTrace() {
+    if (this.ipFetching || this.gate.off) return;
+    if (!this.gate.take('cloudflare.com', 60)) return;
+    this.ipFetching = true;
+    const ctl = new AbortController();
+    const tm = setTimeout(() => ctl.abort(), 5000);
+    const t0 = performance.now();
     try {
-      const resp = await fetch('https://cloudflare.com/cdn-cgi/trace', { cache: 'no-store' });
-      if (!resp.ok) return;
+      const resp = await fetch('https://cloudflare.com/cdn-cgi/trace', { signal: ctl.signal, cache: 'no-store' });
+      if (!resp.ok) { this.gate.penalise('cloudflare.com', resp); return; }
       const text = await resp.text();
-      const parsed: Record<string, string> = {};
+      const p: Record<string, string> = {};
       for (const line of text.split('\n')) {
         const eq = line.indexOf('=');
-        if (eq > 0) parsed[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+        if (eq > 0) p[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
       }
-      if (parsed['colo']) this.snap.colo = parsed['colo'];
-      if (parsed['warp']) this.snap.warp = parsed['warp'] === 'on';
-      if (parsed['loc'] && this.snap.country === '..') this.snap.country = parsed['loc'];
-      // Build connection chain now that we have colo info
+      if (p['ip']) this.snap.publicIp = p['ip'];
+      if (p['colo']) this.snap.colo = p['colo'];
+      if (p['warp']) this.snap.warp = p['warp'] === 'on';
+      if (p['loc']) this.snap.country = p['loc'];
+      if (p['tls']) this.tlsVersion = p['tls'];
+      if (p['kex']) this.kex = p['kex'];
+      if (p['http']) this.httpProto = p['http'];
+      if (p['ts']) {
+        const server = Number(p['ts']) * 1000;
+        if (Number.isFinite(server)) this.clockSkewMs = Date.now() - (server + (performance.now() - t0) / 2);
+      }
       this.buildTraceChain();
-      this.netLog('net-ep', `Cloudflare: colo ${this.snap.colo} · WARP ${this.snap.warp ? 'on' : 'off'}`);
+      this.netLog('net-ep',
+        `Cloudflare: ${this.snap.publicIp} · colo ${this.snap.colo} · ${this.snap.country} · ${this.tlsVersion} ${this.kex} · ${this.httpProto} · WARP ${this.snap.warp ? 'on' : 'off'}`);
     } catch {
-      // Cloudflare trace not available (e.g. localhost) — colo stays as '...'
+      this.gate.penalise('cloudflare.com', null);
+    } finally {
+      clearTimeout(tm);
+      this.gate.release();
+      this.ipFetching = false;
     }
   }
 
-  /**
-   * Fetch geo-IP info from ipapi.co (free tier, no key needed for non-commercial).
-   * Returns JSON: { ip, city, country_code, org, asn, ... }
-   * Fully CORS-enabled.
-   */
-  private async fetchGeoInfo() {
-    if (this.geoFetching) return;
-    this.geoFetching = true;
-    this.lastGeoFetchMs = performance.now();
-    try {
-      const resp = await fetch('https://ipapi.co/json/', { cache: 'no-store' });
-      if (!resp.ok) { this.geoFetching = false; return; }
-      const data = await resp.json();
-      if (data['ip'] && this.snap.publicIp === '...') this.snap.publicIp = data['ip'];
-      if (data['org'])          this.snap.isp = data['org'];
-      if (data['city'])         this.snap.city = data['city'];
-      if (data['country_code']) this.snap.country = data['country_code'];
-      if (data['asn'])          this.snap.asn = data['asn'];
-      this.netLog('net-ep', `Geo-IP: ${this.snap.city}, ${this.snap.country} · ${this.snap.isp} · ${this.snap.asn}`);
-    } catch {
-      // Silently fall back
+  /** Reverse-DNS our own public IP. Real ISP naming, no geo-IP vendor needed. */
+  private async resolvePtr() {
+    const ip = this.snap.publicIp;
+    if (!ip || ip === '...' || ip.includes(':')) return;
+    const parts = ip.split('.');
+    if (parts.length !== 4) return;
+    const r = await this.resolveHost(`${parts.reverse().join('.')}.in-addr.arpa`, 'PTR');
+    if (r && r.ms >= 0 && r.ip) {
+      this.snap.isp = r.ip.replace(/\.$/, '');
+      this.netLog('net-ep', `Reverse DNS: ${ip} → ${this.snap.isp}`);
     }
-    this.geoFetching = false;
+  }
+
+  /** Snapshot of outbound request accounting — the Lens shows this verbatim. */
+  wireStats() {
+    return {
+      granted: this.gate.granted,
+      denied: this.gate.denied,
+      off: this.gate.off,
+      resolvers: [...this.resolverStats.entries()].map(([label, s]) => ({
+        label, n: s.n, avg: s.total / Math.max(1, s.n), best: s.best === Infinity ? 0 : s.best,
+      })),
+    };
   }
 
   /**

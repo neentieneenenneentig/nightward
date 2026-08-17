@@ -220,11 +220,17 @@ export class Nightward {
    * failure mode produced a false PASS during the 2026-08-14 audio
    * verification. Launch flags reduce the risk; only this check rules it out.
    */
-  static async boot(page: Page, opts: { seed?: number; gl?: boolean; extra?: string } = {}) {
+  /**
+   * `net: true` opts INTO real outbound probing. Default is off: CI must be
+   * hermetic, and the suite should never be a traffic multiplier against the
+   * public resolvers the game depends on.
+   */
+  static async boot(page: Page, opts: { seed?: number; gl?: boolean; net?: boolean; extra?: string } = {}) {
     const seed = opts.seed ?? 1234;
     const q = new URLSearchParams();
     q.set('seed', String(seed));
     if (opts.gl) q.set('gl', '');
+    if (!opts.net && !process.env.NW_ALLOW_NET) q.set('nonet', '');
     const url = `/?${q.toString()}${opts.extra ? '&' + opts.extra : ''}`;
 
     const nw = new Nightward(page, seed);

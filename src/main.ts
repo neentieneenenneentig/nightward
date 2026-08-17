@@ -442,7 +442,7 @@ async function boot() {
   let frames = 0;
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
-    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals, lifespan, loom, scoreboard }, world, player, gen, chunks,
+    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals, lifespan, loom, scoreboard, net }, world, player, gen, chunks,
     get log() { return log; },  // expose full GameLog (entries + export + download)
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
@@ -791,7 +791,18 @@ async function boot() {
     // ── 3. Routes ──
     html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
     html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">ROUTES</div>';
-    html += `<div ${attr('routes-origin')} style="font-size:9px;cursor:help;"><b>this origin</b> DNS ${s.pageDnsTime.toFixed(0)}ms · TCP — · TLS ${s.pageTlsTime.toFixed(0)}ms · TTFB ${s.pageTtfb.toFixed(0)}ms</div>`;
+    html += `<div ${attr('routes-origin')} style="font-size:9px;cursor:help;"><b>this origin</b> DNS ${s.pageDnsTime.toFixed(0)}ms · TCP — · TLS ${s.pageTlsTime.toFixed(0)}ms · TTFB ${s.pageTtfb.toFixed(0)}ms <span style="color:#585;">measured</span></div>`;
+    const base = (net as any).baseline;
+    if (base) {
+      html += `<div ${attr('routes-baseline')} style="font-size:9px;cursor:help;color:#8c8;">baseline ${base.ms.toFixed(0)}ms · dns ${base.dns.toFixed(0)} · tcp ${base.tcp.toFixed(0)} · tls ${base.tls.toFixed(0)} · ttfb ${base.ttfb.toFixed(0)}${base.proto ? ` · ${escapeHtml(base.proto)}` : ''}</div>`;
+    }
+    const wire = (net as any).wireStats?.();
+    if (wire) {
+      html += `<div ${attr('routes-gate')} style="font-size:8px;color:#667;cursor:help;">gate: ${wire.granted} sent · ${wire.denied} throttled${wire.off ? ' · PROBING OFF' : ''}</div>`;
+      for (const r of wire.resolvers) {
+        html += `<div ${attr('routes-resolver')} style="font-size:8px;color:#778;cursor:help;">resolver ${escapeHtml(r.label)} · n=${r.n} · avg ${r.avg.toFixed(0)}ms · best ${r.best.toFixed(0)}ms</div>`;
+      }
+    }
     const probes = s.endpointProbes ?? [];
     const seen = new Set<string>();
     for (const p of probes) {
@@ -801,9 +812,13 @@ async function boot() {
       const best = route?.length ? Math.min(...route).toFixed(0) : last;
       const med = route?.length ? [...route].sort((a,b)=>a-b)[Math.floor(route.length/2)].toFixed(0) : last;
       const warm = (net as any).warmedRoutes?.has(p.host ?? p.label) ? '🔥' : '';
-      html += `<div ${attr(p.label)} style="font-size:9px;cursor:help;">${warm} ${p.label} · ${p.detail ?? ''} · last ${last}ms · best ${best}ms · med ${med}ms · n=${route?.length ?? 0}</div>`;
+      const ip = (p as any).ip ? escapeHtml((p as any).ip) : (p.detail ? escapeHtml(p.detail) : '—');
+      const ttl = (p as any).ttl ? ` · ttl ${(p as any).ttl}` : '';
+      const dnssec = (p as any).ad ? ' · 🔒' : '';
+      const via = (p as any).resolver ? ` · via ${escapeHtml((p as any).resolver)}` : '';
+      html += `<div ${attr(p.label)} style="font-size:9px;cursor:help;">${warm} ${p.label} → <span style="color:#9bd;">${ip}</span> · ${last}ms · best ${best} · med ${med} · n=${route?.length ?? 0}${ttl}${dnssec}${via}</div>`;
     }
-    if (!probes.length) html += '<div style="font-size:9px;color:#555;">No beacons probed yet — attack to discover routes</div>';
+    if (!probes.length) html += '<div style="font-size:9px;color:#555;">No routes resolved yet — the scheduler resolves one every few seconds</div>';
     html += '</div>';
 
     // ── 4. Identity ──
@@ -814,12 +829,16 @@ async function boot() {
     // JSON (ipapi.co) / text (cloudflare trace) responses with no
     // sanitization, then went straight into innerHTML — escape before
     // interpolating so a markup-bearing registrant/org string can't inject.
-    html += `<div ${attr('identity-ip')} style="font-size:9px;cursor:help;">IP: ${idRevealed && s.publicIp ? escapeHtml(s.publicIp) : '— unrevealed (explore to reveal)'}</div>`;
-    html += `<div ${attr('identity-isp')} style="font-size:9px;cursor:help;">ISP: ${idRevealed && s.isp ? escapeHtml(s.isp) : '— unrevealed (explore to reveal)'}</div>`;
-    html += `<div style="font-size:9px;">City: ${idRevealed && s.city ? escapeHtml(s.city) : '— unrevealed (explore to reveal)'} · Country: ${idRevealed && s.country ? escapeHtml(s.country) : '—'}</div>`;
-    html += `<div style="font-size:9px;">ASN: ${idRevealed && s.asn ? escapeHtml(s.asn) : '— unrevealed (explore to reveal)'}</div>`;
-    html += `<div ${attr('identity-colo')} style="font-size:9px;cursor:help;">CF colo: ${s.colo ? escapeHtml(s.colo) : '—'} · warp: ${s.warp ? 'yes' : 'no'}</div>`;
-    html += `<div style="font-size:9px;color:#887;">local gateway — not observable from a browser</div>`;
+    const unrev = '— unrevealed (explore to reveal)';
+    html += `<div ${attr('identity-ip')} style="font-size:9px;cursor:help;">IP: ${idRevealed && s.publicIp !== '...' ? escapeHtml(s.publicIp) : unrev}</div>`;
+    html += `<div ${attr('identity-isp')} style="font-size:9px;cursor:help;">PTR: ${idRevealed && s.isp !== '...' ? escapeHtml(s.isp) : unrev}</div>`;
+    html += `<div style="font-size:9px;">Country: ${idRevealed && s.country !== '..' ? escapeHtml(s.country) : '—'} · <span style="color:#887;">city/ASN need a geo-IP vendor — none is contacted</span></div>`;
+    html += `<div ${attr('identity-colo')} style="font-size:9px;cursor:help;">CF colo: ${s.colo !== '...' ? escapeHtml(s.colo) : '—'} · warp: ${s.warp ? 'yes' : 'no'}</div>`;
+    const tls = (net as any).tlsVersion, kex = (net as any).kex, proto = (net as any).httpProto;
+    html += `<div ${attr('identity-tls')} style="font-size:9px;cursor:help;">TLS: ${tls ? escapeHtml(tls) : '—'} · kex: ${kex ? escapeHtml(kex) : '—'} · proto: ${proto ? escapeHtml(proto) : '—'}</div>`;
+    const skew = (net as any).clockSkewMs ?? 0;
+    html += `<div ${attr('identity-skew')} style="font-size:9px;cursor:help;">Clock drift: ${skew > 0 ? '+' : ''}${(skew / 1000).toFixed(2)}s vs internet time</div>`;
+    html += `<div style="font-size:9px;color:#887;">local gateway / LAN — not observable from a browser</div>`;
     html += '</div>';
 
     // ── 5. Vessel ──

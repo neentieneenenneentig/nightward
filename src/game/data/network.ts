@@ -33,17 +33,25 @@ export interface TraceHop {
   detail?: string;
 }
 
-/** A single beacon echo result. */
+/** A single beacon echo result — now a DoH resolution, not a fetch. */
 export interface BeaconEcho {
   host: string;
   label: string;
-  /** Echo time (ms). -1 = unreachable. */
+  /** Resolution time (ms). -1 = failed. */
   rtt: number;
   detail?: string;
   region: string;
   countryCode: string;
   /** Timestamp when this echo was recorded (performance.now() ms). */
   ts?: number;
+  /** Resolved address — the real one, not a hardcoded string. */
+  ip?: string;
+  /** Record TTL as returned. Near-max implies an authoritative walk. */
+  ttl?: number;
+  /** Which resolver answered. */
+  resolver?: string;
+  /** DNSSEC-authenticated answer. */
+  ad?: boolean;
 }
 
 // Backwards-compat alias
@@ -55,8 +63,8 @@ export type EndpointProbe = BeaconEcho;
 
 /** A single beacon target — reusable across action pools. */
 export interface BeaconTarget {
-  /** URL to ping (no-cors fire-and-forget). */
-  url: string;
+  /** Hostname to RESOLVE via DoH. The game never fetches these hosts. */
+  host: string;
   label: string;
   detail: string;
   region: string;
@@ -70,9 +78,40 @@ export interface BeaconTarget {
 // Backwards-compat alias
 export type EndpointTarget = BeaconTarget;
 
-/** Cooldown (seconds) per action type before the next echo can fire. */
+/** DoH resolvers. Both are documented public services that exist to answer
+ *  unsolicited queries; both send Access-Control-Allow-Origin: *. */
+export const DOH_RESOLVERS: { id: string; label: string; url: string; accept?: string }[] = [
+  { id: 'cf', label: '1.1.1.1', url: 'https://cloudflare-dns.com/dns-query', accept: 'application/dns-json' },
+  { id: 'gg', label: '8.8.8.8', url: 'https://dns.google/resolve' },
+];
+
+/** Wall-clock cadence for the beacon scheduler. Beacon traffic is governed by
+ *  real time, never by action frequency — a swing can no longer emit a packet. */
+export const WIRE_BUDGET = {
+  /** Seconds between scheduled DoH resolutions. */
+  beaconIntervalSec: 6,
+  /** Jitter fraction applied to the interval so probes never phase-lock. */
+  beaconJitter: 0.4,
+  /** Seconds between same-origin baseline probes. */
+  baselineIntervalSec: 20,
+  /** Seconds between Cloudflare trace refreshes (identity + TLS/colo). */
+  traceIntervalSec: 300,
+  /** Token bucket: sustained requests per minute across ALL outbound paths. */
+  ratePerMin: 20,
+  /** Token bucket depth. */
+  burst: 6,
+  /** Max concurrent outbound requests. */
+  maxInflight: 2,
+  /** Per-host minimum spacing (seconds). */
+  hostSpacingSec: 30,
+  /** Echo is "fresh" for resonance purposes within this window (ms). */
+  freshMs: 12000,
+};
+
+/** Passive-sample cooldowns (seconds). These gate zero-request browser reads
+ *  and the scheduler's action bias — not network traffic. */
 export const ACTION_COOLDOWNS: Record<string, number> = {
-  attack: 0,   // no cooldown — every swing sends an echo volley
+  attack: 2,
   gather: 20,
   build: 20,
   craft: 25,
@@ -91,69 +130,69 @@ export const ACTION_COOLDOWNS: Record<string, number> = {
 export const ACTION_ECHO_POOLS: Record<string, BeaconTarget[]> = {
   // ---- ⚔ Attack ----
   attack: [
-    { url: 'https://www.yandex.ru/favicon.ico',     label: 'Yandex',        detail: 'Moscow, RU',       region: 'Europe',        countryCode: 'RU', discoveryHint: 'A distant sentinel in the frozen east — your strikes echo across the tundra' },
-    { url: 'https://www.naver.com/favicon.ico',      label: 'Naver',         detail: 'Seoul, KR',        region: 'Asia-Pacific',  countryCode: 'KR', discoveryHint: 'A watchtower on the eastern peninsula — blades sing through mountain passes' },
-    { url: 'https://www.baidu.com/favicon.ico',      label: 'Baidu',         detail: 'Beijing, CN',      region: 'Asia-Pacific',  countryCode: 'CN', discoveryHint: 'The great fortress of the east — your war-cry reaches the Jade Palace' },
-    { url: 'https://www.yahoo.co.jp/favicon.ico',    label: 'Yahoo JP',      detail: 'Tokyo, JP',        region: 'Asia-Pacific',  countryCode: 'JP', discoveryHint: 'An island shrine across the eastern sea — battle-hymns on the wind' },
-    { url: 'https://cloudflare.com/cdn-cgi/trace',   label: 'Cloudflare',    detail: 'anycast CDN',      region: 'Global Anycast', countryCode: '',  discoveryHint: 'A shimmering ward that spans the globe — your blade resonates through its weave' },
-    { url: 'https://www.microsoft.com/favicon.ico',  label: 'Microsoft',     detail: 'Redmond, US',      region: 'Americas',      countryCode: 'US', discoveryHint: 'A grand citadel in the western forests — combat-hymns route through its halls' },
+    { host: 'www.yandex.ru',     label: 'Yandex',        detail: 'Moscow, RU',       region: 'Europe',        countryCode: 'RU', discoveryHint: 'A distant sentinel in the frozen east — your strikes echo across the tundra' },
+    { host: 'www.naver.com',      label: 'Naver',         detail: 'Seoul, KR',        region: 'Asia-Pacific',  countryCode: 'KR', discoveryHint: 'A watchtower on the eastern peninsula — blades sing through mountain passes' },
+    { host: 'www.baidu.com',      label: 'Baidu',         detail: 'Beijing, CN',      region: 'Asia-Pacific',  countryCode: 'CN', discoveryHint: 'The great fortress of the east — your war-cry reaches the Jade Palace' },
+    { host: 'www.yahoo.co.jp',    label: 'Yahoo JP',      detail: 'Tokyo, JP',        region: 'Asia-Pacific',  countryCode: 'JP', discoveryHint: 'An island shrine across the eastern sea — battle-hymns on the wind' },
+    { host: 'cloudflare.com',   label: 'Cloudflare',    detail: 'anycast CDN',      region: 'Global Anycast', countryCode: '',  discoveryHint: 'A shimmering ward that spans the globe — your blade resonates through its weave' },
+    { host: 'www.microsoft.com',  label: 'Microsoft',     detail: 'Redmond, US',      region: 'Americas',      countryCode: 'US', discoveryHint: 'A grand citadel in the western forests — combat-hymns route through its halls' },
   ],
 
   // ---- 🪓 Gather ----
   gather: [
-    { url: 'https://www.bbc.co.uk/favicon.ico',      label: 'BBC',           detail: 'London, GB',       region: 'Europe',        countryCode: 'GB', discoveryHint: 'An ancient archive in the old world — timber routes through misty isles' },
-    { url: 'https://www.baidu.com/favicon.ico',      label: 'Baidu',         detail: 'Beijing, CN',      region: 'Asia-Pacific',  countryCode: 'CN', discoveryHint: 'Quarries beneath the eastern mountains — stone sings with ancient power' },
-    { url: 'https://timesofindia.indiatimes.com/favicon.ico', label: 'Times of India', detail: 'Mumbai, IN', region: 'Asia-Pacific',  countryCode: 'IN', discoveryHint: 'A silk-loom across the subcontinent — threads of gold and spice' },
-    { url: 'https://www.abc.net.au/favicon.ico',     label: 'ABC Australia',  detail: 'Sydney, AU',       region: 'Asia-Pacific',  countryCode: 'AU', discoveryHint: 'A sun-scorched beacon in the far south — raw bounty from the red earth' },
-    { url: 'https://www.news24.com/favicon.ico',     label: 'News24',        detail: 'Cape Town, ZA',    region: 'Africa',        countryCode: 'ZA', discoveryHint: 'A watchfire at the southern tip — riches from beneath the Table Mountain' },
-    { url: 'https://www.lemonde.fr/favicon.ico',     label: 'Le Monde',      detail: 'Paris, FR',        region: 'Europe',        countryCode: 'FR', discoveryHint: 'A gallery of light in the heart of the continent — harvests blessed by old gods' },
+    { host: 'www.bbc.co.uk',      label: 'BBC',           detail: 'London, GB',       region: 'Europe',        countryCode: 'GB', discoveryHint: 'An ancient archive in the old world — timber routes through misty isles' },
+    { host: 'www.baidu.com',      label: 'Baidu',         detail: 'Beijing, CN',      region: 'Asia-Pacific',  countryCode: 'CN', discoveryHint: 'Quarries beneath the eastern mountains — stone sings with ancient power' },
+    { host: 'timesofindia.indiatimes.com', label: 'Times of India', detail: 'Mumbai, IN', region: 'Asia-Pacific',  countryCode: 'IN', discoveryHint: 'A silk-loom across the subcontinent — threads of gold and spice' },
+    { host: 'www.abc.net.au',     label: 'ABC Australia',  detail: 'Sydney, AU',       region: 'Asia-Pacific',  countryCode: 'AU', discoveryHint: 'A sun-scorched beacon in the far south — raw bounty from the red earth' },
+    { host: 'www.news24.com',     label: 'News24',        detail: 'Cape Town, ZA',    region: 'Africa',        countryCode: 'ZA', discoveryHint: 'A watchfire at the southern tip — riches from beneath the Table Mountain' },
+    { host: 'www.lemonde.fr',     label: 'Le Monde',      detail: 'Paris, FR',        region: 'Europe',        countryCode: 'FR', discoveryHint: 'A gallery of light in the heart of the continent — harvests blessed by old gods' },
   ],
 
   // ---- 🏗 Build ----
   build: [
-    { url: 'https://www.microsoft.com/favicon.ico',  label: 'Microsoft',     detail: 'Redmond, US',      region: 'Americas',      countryCode: 'US', discoveryHint: 'A grand citadel in the western forests — your walls draw strength from its foundations' },
-    { url: 'https://www.google.com/generate_204',    label: 'Google',        detail: 'anycast 204',      region: 'Global Anycast', countryCode: '',  discoveryHint: 'A world-lens that sees all — your fortress rests on ancient keystones' },
-    { url: 'https://cloudflare.com/cdn-cgi/trace',   label: 'Cloudflare',    detail: 'anycast CDN',      region: 'Global Anycast', countryCode: '',  discoveryHint: 'A shimmering ward — your battlements are etched into its weave' },
-    { url: 'https://www.elmundo.es/favicon.ico',     label: 'El Mundo',      detail: 'Madrid, ES',       region: 'Europe',        countryCode: 'ES', discoveryHint: 'A sun-baked fortress in Iberia — fortification songs through the sierra' },
-    { url: 'https://www.uol.com.br/favicon.ico',     label: 'UOL',           detail: 'São Paulo, BR',    region: 'Americas',      countryCode: 'BR', discoveryHint: 'A green beacon in the southern jungles — your walls echo through the canopy' },
+    { host: 'www.microsoft.com',  label: 'Microsoft',     detail: 'Redmond, US',      region: 'Americas',      countryCode: 'US', discoveryHint: 'A grand citadel in the western forests — your walls draw strength from its foundations' },
+    { host: 'www.google.com',    label: 'Google',        detail: 'anycast 204',      region: 'Global Anycast', countryCode: '',  discoveryHint: 'A world-lens that sees all — your fortress rests on ancient keystones' },
+    { host: 'cloudflare.com',   label: 'Cloudflare',    detail: 'anycast CDN',      region: 'Global Anycast', countryCode: '',  discoveryHint: 'A shimmering ward — your battlements are etched into its weave' },
+    { host: 'www.elmundo.es',     label: 'El Mundo',      detail: 'Madrid, ES',       region: 'Europe',        countryCode: 'ES', discoveryHint: 'A sun-baked fortress in Iberia — fortification songs through the sierra' },
+    { host: 'www.uol.com.br',     label: 'UOL',           detail: 'São Paulo, BR',    region: 'Americas',      countryCode: 'BR', discoveryHint: 'A green beacon in the southern jungles — your walls echo through the canopy' },
   ],
 
   // ---- ⚒ Craft ----
   craft: [
-    { url: 'https://www.lemonde.fr/favicon.ico',     label: 'Le Monde',      detail: 'Paris, FR',        region: 'Europe',        countryCode: 'FR', discoveryHint: 'A gallery of light — artisan souls resonate through its halls' },
-    { url: 'https://www.bbc.co.uk/favicon.ico',      label: 'BBC',           detail: 'London, GB',       region: 'Europe',        countryCode: 'GB', discoveryHint: 'An ancient archive — old-world craftsmanship echoes within' },
-    { url: 'https://www.elmundo.es/favicon.ico',     label: 'El Mundo',      detail: 'Madrid, ES',       region: 'Europe',        countryCode: 'ES', discoveryHint: 'A Mediterranean forge — steel tempered by sea winds' },
-    { url: 'https://www.naver.com/favicon.ico',      label: 'Naver',         detail: 'Seoul, KR',        region: 'Asia-Pacific',  countryCode: 'KR', discoveryHint: 'A precision forge on the peninsula — blades folded a thousand times' },
+    { host: 'www.lemonde.fr',     label: 'Le Monde',      detail: 'Paris, FR',        region: 'Europe',        countryCode: 'FR', discoveryHint: 'A gallery of light — artisan souls resonate through its halls' },
+    { host: 'www.bbc.co.uk',      label: 'BBC',           detail: 'London, GB',       region: 'Europe',        countryCode: 'GB', discoveryHint: 'An ancient archive — old-world craftsmanship echoes within' },
+    { host: 'www.elmundo.es',     label: 'El Mundo',      detail: 'Madrid, ES',       region: 'Europe',        countryCode: 'ES', discoveryHint: 'A Mediterranean forge — steel tempered by sea winds' },
+    { host: 'www.naver.com',      label: 'Naver',         detail: 'Seoul, KR',        region: 'Asia-Pacific',  countryCode: 'KR', discoveryHint: 'A precision forge on the peninsula — blades folded a thousand times' },
   ],
 
   // ---- 💥 Damage ----
   damage: [
-    { url: 'https://cloudflare.com/cdn-cgi/trace',   label: 'Cloudflare',    detail: 'anycast CDN',      region: 'Global Anycast', countryCode: '',  discoveryHint: 'A shimmering ward — your wounds are soothed by its weave' },
-    { url: 'https://www.google.com/generate_204',    label: 'Google',        detail: 'anycast 204',      region: 'Global Anycast', countryCode: '',  discoveryHint: 'A world-lens — pain absorbed by ancient wards' },
-    { url: 'https://www.yandex.ru/favicon.ico',      label: 'Yandex',        detail: 'Moscow, RU',       region: 'Europe',        countryCode: 'RU', discoveryHint: 'A distant sentinel — blows land softly in the frozen east' },
+    { host: 'cloudflare.com',   label: 'Cloudflare',    detail: 'anycast CDN',      region: 'Global Anycast', countryCode: '',  discoveryHint: 'A shimmering ward — your wounds are soothed by its weave' },
+    { host: 'www.google.com',    label: 'Google',        detail: 'anycast 204',      region: 'Global Anycast', countryCode: '',  discoveryHint: 'A world-lens — pain absorbed by ancient wards' },
+    { host: 'www.yandex.ru',      label: 'Yandex',        detail: 'Moscow, RU',       region: 'Europe',        countryCode: 'RU', discoveryHint: 'A distant sentinel — blows land softly in the frozen east' },
   ],
 
   // ---- 💰 Economy ----
   economy: [
-    { url: 'https://www.uol.com.br/favicon.ico',     label: 'UOL',           detail: 'São Paulo, BR',    region: 'Americas',      countryCode: 'BR', discoveryHint: 'A green beacon — trade winds through southern canopies' },
-    { url: 'https://timesofindia.indiatimes.com/favicon.ico', label: 'Times of India', detail: 'Mumbai, IN', region: 'Asia-Pacific',  countryCode: 'IN', discoveryHint: 'A silk-loom — spice and gold flow across the subcontinent' },
-    { url: 'https://www.lemonde.fr/favicon.ico',     label: 'Le Monde',      detail: 'Paris, FR',        region: 'Europe',        countryCode: 'FR', discoveryHint: 'A gallery of light — continental trade routes blessed by old gods' },
-    { url: 'https://www.microsoft.com/favicon.ico',  label: 'Microsoft',     detail: 'Redmond, US',      region: 'Americas',      countryCode: 'US', discoveryHint: 'A grand citadel — gold flows through its ancient halls' },
+    { host: 'www.uol.com.br',     label: 'UOL',           detail: 'São Paulo, BR',    region: 'Americas',      countryCode: 'BR', discoveryHint: 'A green beacon — trade winds through southern canopies' },
+    { host: 'timesofindia.indiatimes.com', label: 'Times of India', detail: 'Mumbai, IN', region: 'Asia-Pacific',  countryCode: 'IN', discoveryHint: 'A silk-loom — spice and gold flow across the subcontinent' },
+    { host: 'www.lemonde.fr',     label: 'Le Monde',      detail: 'Paris, FR',        region: 'Europe',        countryCode: 'FR', discoveryHint: 'A gallery of light — continental trade routes blessed by old gods' },
+    { host: 'www.microsoft.com',  label: 'Microsoft',     detail: 'Redmond, US',      region: 'Americas',      countryCode: 'US', discoveryHint: 'A grand citadel — gold flows through its ancient halls' },
   ],
 
   // ---- 🧭 Explore ----
   explore: [
-    { url: 'https://www.yahoo.co.jp/favicon.ico',    label: 'Yahoo JP',      detail: 'Tokyo, JP',        region: 'Asia-Pacific',  countryCode: 'JP', discoveryHint: 'An island shrine — discovery reaches the rising sun' },
-    { url: 'https://www.naver.com/favicon.ico',      label: 'Naver',         detail: 'Seoul, KR',        region: 'Asia-Pacific',  countryCode: 'KR', discoveryHint: 'A watchtower — new frontiers open on the peninsula' },
-    { url: 'https://www.abc.net.au/favicon.ico',     label: 'ABC Australia',  detail: 'Sydney, AU',       region: 'Asia-Pacific',  countryCode: 'AU', discoveryHint: 'A sun-scorched beacon — southern discoveries await' },
-    { url: 'https://www.news24.com/favicon.ico',     label: 'News24',        detail: 'Cape Town, ZA',    region: 'Africa',        countryCode: 'ZA', discoveryHint: 'A watchfire — uncharted lands at the southern tip' },
+    { host: 'www.yahoo.co.jp',    label: 'Yahoo JP',      detail: 'Tokyo, JP',        region: 'Asia-Pacific',  countryCode: 'JP', discoveryHint: 'An island shrine — discovery reaches the rising sun' },
+    { host: 'www.naver.com',      label: 'Naver',         detail: 'Seoul, KR',        region: 'Asia-Pacific',  countryCode: 'KR', discoveryHint: 'A watchtower — new frontiers open on the peninsula' },
+    { host: 'www.abc.net.au',     label: 'ABC Australia',  detail: 'Sydney, AU',       region: 'Asia-Pacific',  countryCode: 'AU', discoveryHint: 'A sun-scorched beacon — southern discoveries await' },
+    { host: 'www.news24.com',     label: 'News24',        detail: 'Cape Town, ZA',    region: 'Africa',        countryCode: 'ZA', discoveryHint: 'A watchfire — uncharted lands at the southern tip' },
   ],
 
   // ---- 🌅 Survive Night ----
   survive_night: [
-    { url: 'https://www.news24.com/favicon.ico',     label: 'News24',        detail: 'Cape Town, ZA',    region: 'Africa',        countryCode: 'ZA', discoveryHint: 'A watchfire — dawn report from the southern tip' },
-    { url: 'https://www.abc.net.au/favicon.ico',     label: 'ABC Australia',  detail: 'Sydney, AU',       region: 'Asia-Pacific',  countryCode: 'AU', discoveryHint: 'A sun-scorched beacon — southern watch through the long night' },
-    { url: 'https://www.yandex.ru/favicon.ico',      label: 'Yandex',        detail: 'Moscow, RU',       region: 'Europe',        countryCode: 'RU', discoveryHint: 'A distant sentinel — cold-night vigilance in the frozen east' },
+    { host: 'www.news24.com',     label: 'News24',        detail: 'Cape Town, ZA',    region: 'Africa',        countryCode: 'ZA', discoveryHint: 'A watchfire — dawn report from the southern tip' },
+    { host: 'www.abc.net.au',     label: 'ABC Australia',  detail: 'Sydney, AU',       region: 'Asia-Pacific',  countryCode: 'AU', discoveryHint: 'A sun-scorched beacon — southern watch through the long night' },
+    { host: 'www.yandex.ru',      label: 'Yandex',        detail: 'Moscow, RU',       region: 'Europe',        countryCode: 'RU', discoveryHint: 'A distant sentinel — cold-night vigilance in the frozen east' },
   ],
 };
 
@@ -181,20 +220,20 @@ export const allEndpoints = allBeacons;
 
 /** Inspect metadata for each unique beacon (keyed by label). */
 export const BEACON_INSPECT: Record<string, NetInspect> = {
-  'Yandex':       { api: 'fetch() to yandex.ru/favicon.ico — cross-origin, duration only', action: 'fired by attacking or taking damage', flowsInto: 'damage modifier · realm profile median' },
-  'Naver':        { api: 'fetch() to naver.com/favicon.ico — cross-origin, duration only', action: 'fired by attacking, gathering, or exploring', flowsInto: 'damage modifier · realm profile median' },
-  'Baidu':        { api: 'fetch() to baidu.com/favicon.ico — cross-origin, duration only', action: 'fired by attacking or gathering', flowsInto: 'damage modifier · realm profile median' },
-  'Yahoo JP':     { api: 'fetch() to yahoo.co.jp/favicon.ico — cross-origin, duration only', action: 'fired by attacking or exploring', flowsInto: 'damage modifier · realm profile median' },
-  'Cloudflare':   { api: 'fetch() to cloudflare.com/cdn-cgi/trace — cross-origin, duration only', action: 'fired by attacking, building, or taking damage', flowsInto: 'damage modifier · realm profile median' },
-  'Microsoft':    { api: 'fetch() to microsoft.com/favicon.ico — cross-origin, duration only', action: 'fired by attacking, building, or economy ticks', flowsInto: 'damage modifier · realm profile median' },
-  'BBC':          { api: 'fetch() to bbc.co.uk/favicon.ico — cross-origin, duration only', action: 'fired by gathering or crafting', flowsInto: 'damage modifier · realm profile variance' },
-  'Times of India': { api: 'fetch() to timesofindia.com/favicon.ico — cross-origin, duration only', action: 'fired by gathering or economy ticks', flowsInto: 'realm profile variance' },
-  'ABC Australia':  { api: 'fetch() to abc.net.au/favicon.ico — cross-origin, duration only', action: 'fired by gathering, exploring, or surviving night', flowsInto: 'realm profile variance' },
-  'News24':       { api: 'fetch() to news24.com/favicon.ico — cross-origin, duration only', action: 'fired by gathering, exploring, or surviving night', flowsInto: 'realm profile variance' },
-  'Le Monde':     { api: 'fetch() to lemonde.fr/favicon.ico — cross-origin, duration only', action: 'fired by gathering, crafting, or economy ticks', flowsInto: 'realm profile variance' },
-  'Google':       { api: 'fetch() to google.com/generate_204 — cross-origin, duration only', action: 'fired by building or taking damage', flowsInto: 'damage modifier · realm profile median' },
-  'El Mundo':     { api: 'fetch() to elmundo.es/favicon.ico — cross-origin, duration only', action: 'fired by building or crafting', flowsInto: 'realm profile variance' },
-  'UOL':          { api: 'fetch() to uol.com.br/favicon.ico — cross-origin, duration only', action: 'fired by building or economy ticks', flowsInto: 'realm profile variance' },
+  'Yandex':       { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8 — the host itself is never contacted', action: 'scheduled resolution, biased toward attack/damage play', flowsInto: 'damage modifier · realm profile median' },
+  'Naver':        { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8 — the host itself is never contacted', action: 'scheduled resolution, biased toward attack/gather/explore play', flowsInto: 'damage modifier · realm profile median' },
+  'Baidu':        { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8 — the host itself is never contacted', action: 'scheduled resolution, biased toward attack/gather play', flowsInto: 'damage modifier · realm profile median' },
+  'Yahoo JP':     { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8 — the host itself is never contacted', action: 'scheduled resolution, biased toward attack/explore play', flowsInto: 'damage modifier · realm profile median' },
+  'Cloudflare':   { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8 — the host itself is never contacted', action: 'scheduled resolution, biased toward attack/build/damage play', flowsInto: 'damage modifier · realm profile median' },
+  'Microsoft':    { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8 — the host itself is never contacted', action: 'scheduled resolution, biased toward attack/build/economy play', flowsInto: 'damage modifier · realm profile median' },
+  'BBC':          { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8 — the host itself is never contacted', action: 'scheduled resolution, biased toward gather/craft play', flowsInto: 'damage modifier · realm profile variance' },
+  'Times of India': { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8 — the host itself is never contacted', action: 'scheduled resolution, biased toward gather/economy play', flowsInto: 'realm profile variance' },
+  'ABC Australia':  { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8 — the host itself is never contacted', action: 'scheduled resolution, biased toward gather/explore/night play', flowsInto: 'realm profile variance' },
+  'News24':       { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8 — the host itself is never contacted', action: 'scheduled resolution, biased toward gather/explore/night play', flowsInto: 'realm profile variance' },
+  'Le Monde':     { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8 — the host itself is never contacted', action: 'scheduled resolution, biased toward gather/craft/economy play', flowsInto: 'realm profile variance' },
+  'Google':       { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8 — the host itself is never contacted', action: 'scheduled resolution, biased toward build/damage play', flowsInto: 'damage modifier · realm profile median' },
+  'El Mundo':     { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8 — the host itself is never contacted', action: 'scheduled resolution, biased toward build/craft play', flowsInto: 'realm profile variance' },
+  'UOL':          { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8 — the host itself is never contacted', action: 'scheduled resolution, biased toward build/economy play', flowsInto: 'realm profile variance' },
 };
 
 /** Static inspect metadata for Lens sections that aren't metric rows or beacons. */
@@ -204,14 +243,19 @@ export const LENS_SECTION_INSPECT: Record<string, NetInspect> = {
   'connection-jitter': { api: 'Computed from rtt sample deltas (N=30 ring buffer). Not a browser API.', action: 'always active (recomputed on poll)', flowsInto: 'move speed' },
   'realm-profile':     { api: 'Beacon echo median + variance → D1 biome classifier. Derived from per-route fetch() timings.', action: 'updated on every completed beacon probe', flowsInto: 'biome name · rift stability · color grading' },
   'realm-stability':   { api: 'Timer: 100% → 0% over 5 minutes since last rift. Purely internal state.', action: 'decays each frame; resets on rift', flowsInto: 'rift visual intensity' },
-  'identity-ip':       { api: 'fetch() to api.ipify.org → public IP. Gated behind first explore action (F8 privacy).', action: 'revealed by your first explore action', flowsInto: 'Vessel identity display' },
-  'identity-isp':      { api: 'fetch() to ipapi.co/json/ → ISP/org/city/country. Gated behind first explore action.', action: 'revealed by your first explore action', flowsInto: 'Vessel identity display' },
+  'identity-ip':       { api: 'cloudflare.com/cdn-cgi/trace → ip field. Gated behind first explore action (F8 privacy).', action: 'revealed by your first explore action', flowsInto: 'Vessel identity display' },
+  'identity-isp':      { api: 'Reverse DNS (PTR) on your own IP via DoH. No geo-IP vendor is contacted.', action: 'revealed by your first explore action', flowsInto: 'Vessel identity display' },
+  'identity-tls':      { api: 'cloudflare.com/cdn-cgi/trace → tls / kex / http fields — the real negotiated TLS version, key exchange and HTTP protocol.', action: 'revealed by your first explore action', flowsInto: 'display only' },
+  'identity-skew':     { api: 'Server Date/ts vs Date.now(), corrected for half the measured RTT.', action: 'updated on every trace and baseline probe', flowsInto: 'display only' },
   'identity-colo':     { api: 'fetch() to cloudflare.com/cdn-cgi/trace → colo/warp fields. Gated behind first explore action.', action: 'revealed by your first explore action', flowsInto: 'Vessel identity display' },
   'vessel-ua':         { api: 'navigator.userAgent — parsed for browser brand only (not the full string). Available everywhere.', action: 'boot page load (static)', flowsInto: 'display only (no mechanics in N2a)' },
   'vessel-gpu':        { api: 'WebGLRenderingContext.getParameter(RENDERER) or WebGPU adapter.info. Available in all modern browsers.', action: 'boot page load (static)', flowsInto: 'display only (no mechanics in N2a)' },
   'vessel-screen':     { api: 'screen.width/height + devicePixelRatio. Available everywhere.', action: 'boot page load (static)', flowsInto: 'display only (no mechanics in N2a)' },
   'routes-origin':     { api: 'PerformanceNavigationTiming — DNS/TCP/TLS/TTFB for this origin\'s page load.', action: 'boot page load (captured once, static)', flowsInto: 'Vessel · ancestral memory' },
-  'routes-beacon':     { api: 'fetch() timing to a public endpoint (no-cors). Cross-origin — duration only, no DNS/TCP/TLS breakdown.', action: 'fired by in-game actions (attack, gather, build, etc.)', flowsInto: 'damage modifier · realm profile' },
+  'routes-beacon':     { api: 'DoH resolution via 1.1.1.1 / 8.8.8.8. The beacon host itself is never contacted — the resolver answers. Yields resolution latency, the real IP, TTL and DNSSEC status.', action: 'wall-clock scheduler (~6s, jittered); play biases WHICH beacon is next, never how many', flowsInto: 'damage modifier · realm profile' },
+  'routes-baseline':   { api: 'Same-origin fetch with PerformanceResourceTiming — full DNS/TCP/TLS/TTFB breakdown and nextHopProtocol. The only host we unambiguously may contact.', action: 'wall-clock scheduler (~20s)', flowsInto: 'control sample for every other route' },
+  'routes-gate':       { api: 'Internal token bucket: 20 req/min sustained, burst 6, max 2 in flight, 30s per-host spacing, Retry-After honoured. Not a browser API.', action: 'governs every outbound request', flowsInto: 'nothing — it is the brake' },
+  'routes-resolver':   { api: 'Per-resolver latency stats accumulated by alternating 1.1.1.1 and 8.8.8.8 across the session.', action: 'updated on every DoH query', flowsInto: 'display only' },
   'feed-entry':        { api: 'Internal log ring-buffer — truth-kind entries from network polling, probes, and transitions.', action: 'generated by NetworkSystem on poll/probe/transition', flowsInto: 'Lens Feed display · debug trace' },
 };
 

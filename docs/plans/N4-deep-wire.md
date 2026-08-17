@@ -1,6 +1,6 @@
 # N4 — The Deep Wire
 
-> **Status:** PLAN — not implemented, nothing merged.
+> **Status:** N4.0 SHIPPED 2026-08-17. N4.1–N4.7 planned, not implemented.
 > **Written:** 2026-08-17
 > **Supersedes nothing.** Extends N1 → N2a → N2b → N3 (all shipped).
 > **Depends on:** nothing. Touches `data/network.ts`, `systems/network.ts`, `main.ts` (Lens),
@@ -593,37 +593,39 @@ already be the largest single upgrade to the game's premise since N1.**
 
 ---
 
-## 8. Open questions — need a decision
+## 8. Decisions (2026-08-17) — Q1–Q4 + Q6 answered
 
-1. **Data budget.** Is a ~20 MB session cap with 256 KB adaptive soundings acceptable, or
-   should throughput testing be strictly opt-in behind a first-run prompt? *(My
-   recommendation: opt-in prompt on first Sounding Stone use, then budgeted. It costs one
-   dialog and removes the entire class of complaint.)*
-2. **`ipapi.co`.** Pending the §2.5 browser check — if the `cf-meta-*` geo fields populate,
-   drop it entirely. If not: keep it for city/ASN/ISP, or lose those fields? *(My
-   recommendation: drop it either way; Cloudflare's colo + country is enough for the
-   fiction, and it removes a rate-limited dependency that already fails QA runs.)*
-3. **STUN.** Any objection to `RTCPeerConnection`? It creates no data channel, requests no
-   media, and prompts for nothing — but it *is* a new kind of connection and the
-   geolocation precedent says to ask rather than assume.
-4. **Scope.** Is the whole N4.0–N4.7 arc the intent, or should this land as N4.0 + N4.1 +
-   N4.2 (right-of-way, the deep signals, and the panel) and be re-evaluated with something
-   playable in hand? *(My recommendation: the latter. Those three are ~60% of the value and
-   carry almost none of the risk.)*
-6. **The favicon beacons.** §6.2 recommends retiring them as a fetch target and rebuilding
-   discovery on DoH. This changes a shipped mechanic — routes are currently *discovered* by
-   playing, and the fiction ("your blade resonates through its weave") is written against
-   fourteen named world beacons. The DoH rebuild keeps all of that and makes the geography
-   *real* instead of hardcoded, but it is a behaviour change to something you have already
-   playtested, so it needs an explicit yes. *(My recommendation: yes — it is the one change
-   here that is simultaneously the legal fix, the technical fix, and a content upgrade.)*
-5. **Sequencing against the existing queue.** `fix/sound-rollback`, Batch B and B5 are all
+- **Q1 data budget: OPT-IN, and it doubles as the difficulty selector.** User's direction:
+  the budget tier *is* the game scaling — easy → normal → hard → super hard → super super
+  hard, expressed as mob damage, mob density/count, and reduced player power/speed. More
+  data spent ⇒ more of the real network drives the sim ⇒ harder run (and, by implication,
+  a higher Legacy Score multiplier). This resolves the consent problem cleanly: the data
+  cost stops being a hidden tax and becomes a chosen, rewarded difficulty. Spec it in N4.5.
+- **Q2 `ipapi.co`: dropped.** Done in N4.0. `api.ipify.org` dropped with it.
+- **Q3 STUN: approved.** Lands in N4.7.
+- **Q4 scope: do the whole arc.** N4.0 first and separately (below).
+- **Q6 favicon beacons: approved for retirement.** Done in N4.0.
+
+**N4.0 shipped 2026-08-17.** Measured: 117 swings in 70 s produced **9 outbound requests**
+(5 `cloudflare-dns.com`, 4 `dns.google`, 3 same-origin) — ~7.7/min against a 20/min gate,
+and **zero** requests to any of the fourteen beacon hosts. Routes now resolve to real
+addresses (`News24 → 104.17.250.6`, `Yandex → 77.88.44.55`, `Yahoo JP → 182.22.16.251`)
+alternating across both resolvers. `qa/specs/wire.spec.ts` asserts all three properties.
+
+## 9. Open questions — remaining
+
+1. **Difficulty tiers.** How many, and what does each cost in data vs. give in Legacy Score?
+   Needs concrete numbers before N4.5.
+2. **City / ASN / ISP.** Dropping `ipapi.co` costs these. Reverse-DNS (PTR) recovers ISP-ish
+   naming for free and now ships. Is country + colo + PTR enough, or is a geo-IP vendor
+   worth re-adding behind the same opt-in as the data budget?
+3. **Sequencing against the existing queue.** `fix/sound-rollback`, Batch B and B5 are all
    unmerged. N4 does not touch their files, so it can run in parallel — but it should not
    jump the merge queue ahead of a fix that is already verified.
 
 ---
 
-## 9. Prior-art corrections to fold into the ROADMAP
+## 10. Prior-art corrections to fold into the ROADMAP
 
 - *"What we CANNOT get from a browser"* lists packet loss implicitly among agent-only data.
   **Wrong** for Cloudflare-terminated paths — `cfL4` gives `lost`, `retrans`, `cwnd`,
