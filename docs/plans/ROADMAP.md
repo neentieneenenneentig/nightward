@@ -51,6 +51,67 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 > B5 touches `gather.ts`/`hordes.ts`/`worldbosses.ts`/`config.ts`/`main.ts`/`regression.ts` —
 > a near-complete overlap with Batch B's file set, so do not parallelise them.
 
+---
+
+> ## Direction update (2026-08-17) — QA becomes a release gate
+>
+> **User direction, verbatim:** *"lets create test cases that is like an actual play through,
+> timed and everything, as close to real player as possible, we can even have different profiles
+> applied to different tests, i dunno, qa needs to be more comprehensive, if a qa run passes game
+> must be ready to release effectively … can we use playwright for testing, that way we can get
+> playwright traces as well for comprehensive data analysis of qa playthroughs?"*
+>
+> **Built: `qa/` — Playwright as layer 3 of the test pyramid.** See `qa/README.md`. The framing
+> that matters: this does **not** replace the Gauntlet, it covers what the Gauntlet structurally
+> cannot. The Gauntlet drives the sim with `__nw.step()` — no rAF, no input, no real time, and
+> only ever against the vite dev server. L3 drives a real browser with real keystrokes in real
+> wall-clock time, **against the built bundle that GitHub Pages actually serves**. Nothing had
+> ever loaded `dist/` in a browser before this.
+>
+> Seven player archetypes (`qa/profiles.ts`), each a pure `act(snapshot, rng)` policy so a given
+> (profile, seed) replays identically: `rusher`, `turtle`, `explorer` (chunk-streaming and heap
+> canary), `hoarder`, `idler`, `flailer` (seeded input fuzz — the crash finder), and `pilgrim`
+> (one entire 15-minute life to the death screen, `NW_MINUTES=99`). Each emits a per-second
+> timeline of hp/gold/foes/inventory/fps/heap as a JSON artifact — a balance dataset, not just a
+> pass/fail.
+>
+> **Finding 1 — the drum regression is live on `main`.** The harness caught it on its first real
+> run, black-box, knowing nothing about the source. Staged scenario, seed 1234, production build:
+> a foe **0.3 tiles** from the player and the nearest world boss **1767.8 tiles** away (threat
+> range 22) — the drum kit played **9 hits in 7.8s**. Across one-minute sessions the counts were
+> 44–89 drum hits with no boss involved. Cause: `main.ts:625`
+> `… : foesNear ? 'combat' : …` plus the `combat` row of `MOODS` carrying `drums: true`.
+> `fix/sound-rollback` (`db343c1`) removes both; rebuilt in a worktree and re-run against the
+> identical staged scenario it reads **hats 0 → 0**, while a hunting boss still reads
+> **hats 1 → 12**. The fix is verified and waiting only on merge sign-off.
+>
+> **Finding 2 — the deploy had no gate.** `.github/workflows/deploy.yml` published `dist/` to
+> Pages on every push to `main` with zero tests in front of it, and `WORKFLOW.md` still said
+> "currently, there's no CI pipeline". Added `.github/workflows/ci.yml` (static trio + Rust tests
+> + typecheck of the QA harness + smoke/Gauntlet on the built bundle) and inserted the QA gate
+> into `deploy.yml` before `upload-pages-artifact`. Traces upload as artifacts on failure.
+>
+> **Finding 3 — the game talks to ~14 third-party endpoints.** By design (`data/network.ts` — the
+> latency-beacon mechanic), including `ipapi.co/json/` which returns ISP/org/city/country, gated
+> behind the first explore action. Not a bug, but a conscious call to make before a public
+> release. The QA console-error gate now attributes errors by origin so third-party 429s and
+> blocks are recorded but never fail a run.
+>
+> **Confirmed: Gauntlet 72 functions / 1249 assertions pass in a real browser against the
+> production bundle** — the first time that has been demonstrated rather than assumed.
+>
+> ⚠️ **Two traps recorded so they are not rediscovered.** (a) rAF throttling: an occluded or
+> backgrounded Chromium stops firing `requestAnimationFrame`, so every frame-derived measurement
+> reads zero while the run reports a pass — this produced a false PASS on 2026-08-14.
+> `playwright.config.ts` sets three anti-throttling flags AND `Nightward.boot()` refuses to
+> proceed unless `__nw.frames` is provably advancing. (b) The `webgl` lane renders through
+> ANGLE/SwiftShader at ~3 fps; that is a statement about the software rasterizer, not the game.
+> It is a **correctness** lane. Frame-rate floors only apply to the headed `webgpu` lane.
+>
+> **Release readiness:** the pipe is laid (`base: './'` is correct, the Pages workflow exists and
+> now has a gate). Blocking: merge `fix/sound-rollback`; nothing has ever been pushed, so the
+> deploy workflow has never actually run; the Firefox lane is written but not yet exercised.
+
 **L1 — The Lifespan: a hard 15-minute "perfect run" loop (2026-07-31).** User's direction
 overnight: turn the open-ended survival loop into a bounded, replayable run — "a hard 15 minute
 game loop... hard lifespan for players, like 10 years per minute... they simply fall over and die

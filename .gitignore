@@ -10,6 +10,10 @@ rust/**/target/
 # worktrees (feature isolation lives here, never committed)
 .claude/worktrees/
 
+# QA harness output: traces, videos, timelines, html report
+qa/.artifacts/
+qa/.report/
+
 # OS
 .DS_Store
 Thumbs.db
