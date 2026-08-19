@@ -53,6 +53,99 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 
 ---
 
+---
+
+> ## Batch G "Depth" — SHIPPED 2026-08-19 (branch `feat/g-terrain-depth`, unmerged)
+>
+> ⚠️ **Naming collision, read this first.** There is an *already-shipped* `G1/G2 — Visual
+> Upgrade & Juice ✅` further down this file, dated 2026-07-18 — screen shake, the 9-kind
+> `ParticleSystem`, `BloomPass`, colour grading, vignette. That is a **different G1/G2**
+> from the Batch G milestones below, which come from `BG-batch-proposal.md`. Reading the
+> ✅ alone would wrongly suggest the terrain work was already done.
+>
+> **The problem this batch existed to fix:** the chunk baker painted colour and never lit
+> it, and the mountain ramp was *darker* than the grass beside it — so a peak read as a
+> pit. Terrain had structure at 1 px (dither) and at 32 px (the tile grid) and nothing in
+> between.
+>
+> **G1 — height-field relief lighting** (`src/game/world/relief.ts`, new). A continuous
+> height field is derived from the discrete material grid — **bilinear over tile centres**,
+> because sampling heightClass per pixel just reproduces the 32px staircase as a hard
+> shading edge — plus world-space fbm micro-relief. Normals come from a **3×3 Sobel** (a
+> 2-tap forward difference is one-sided and paints a directional seam along every step).
+> The result is a 66×66 greyscale texture per chunk, linear-filtered, **multiply**-blended.
+> Multiply can only DARKEN, and that is the deliberate trade: flat ground lands at exactly
+> 1.0 so G2's palette passes through untouched, and the form is read off the shadowed
+> faces. Light direction follows the world clock (east at dawn → west at dusk, altitude
+> peaking mid-phase, half strength at night); the sun is **capped below ~45°** because at
+> 90° every normal returns ~cos(slope) and relief flattens to nothing — the first
+> calibration shipped a near-vertical noon sun and shaded nothing at all.
+> **Toggle: `R` in game, or `?norelief` at boot.** The proposal's Option C, as recommended.
+>
+> **Cost:** ~1 ms per chunk, and it is built **off the bake path** (`RELIEF_BUILD_PER_FRAME`)
+> — a normal field costs about as much as the whole rest of a bake, so a teleport into
+> fresh terrain would otherwise stall on ~25 at once. Chunks arrive unlit and light up over
+> the next frames. Base bake measured at ~6 ms/chunk; **no pre-change baseline was taken**,
+> so the batch's total bake delta is unmeasured.
+>
+> **G2 — palette and value inversion.** All 24 material ramps re-cut from 3 stops to 5
+> (`makeTileVariants` now quantises by ramp length, so a 3-stop ramp behaves exactly as
+> before). Mountain and snow re-ramped light-on-top; the 8 realm-warped materials moved off
+> raw `#cc00cc`/`#00cccc`/`#cc9900`. Measured result: **mountain 165.5 > hill 129.9 >
+> grass 119.1** mean luminance off the baked canvas — monotone with height at last.
+> Two fixes fell out of this: every tile variant is now **re-centred on the same mean**
+> before quantising (each variant carrying its own average brightness is what made the
+> ground read as 32px wallpaper), and cliff shading moved from additive `darken()` to the
+> new proportional `scale()` — an additive −30 is a cliff face on slate and a **no-op on
+> snow**, which was painting "cliffs" lighter than the grass below them.
+>
+> **G3 — the floating planks.** The cliff pass no longer fires into `heightClass 0`; foam
+> already owns the shoreline, and a band there paints a plank of land on the sea. Genuine
+> faces widened (9 px one-step / 20 px steep) with per-column striation hashed on the
+> **world** pixel column and a top edge that undulates on smooth noise — per-pixel white
+> noise there reads as a comb of hair, not broken rock. Measured: shoreline darkens 4.6,
+> a real cliff darkens 71.6.
+>
+> **G4 — silhouette smoothing.** Corner-cut chamfers where two adjacent orthogonal
+> neighbours share a foreign material. The feather pass blends *texture* but never reshapes
+> the *outline*, which is why the staircase survived it. Drawn in three alpha layers like
+> `feather()` does: a single hard-clipped wedge is a **spike** at a high-contrast border
+> (dark water sawing into pale sand looked worse than the staircase it replaced).
+> ⚠️ Cosmetic only — collision still reads the tile grid, so a corner can look ~13 px
+> rounder than it walks.
+>
+> **G5 — verticality.** Mountain and snow appear in **no feature density table**, so the
+> peaks were flat texture fields with nothing standing on them. Added render-only rock
+> crags (never gameplay entities — both materials are impassable, so a real gatherable node
+> up there would be loot the player can never reach), cut from a **shaded-down** mountain
+> ramp: at full brightness a crag is the same value as the rock it stands on and reads as
+> an empty outline. Snow gets bare rock with a snow cap. Trees now build each variant at
+> its own size (0.72×–1.30×) at native resolution — uniform tree size was most of why a
+> forest read as wallpaper.
+>
+> **G6 — dead code.** Deleted the 174-line `bakeSubpix` path (`subpixFactor` had returned a
+> constant 1 since it landed) and the per-tile ambient-occlusion pass, which darkened whole
+> 32px squares and was a direct contributor to the tile grid the relief field now handles
+> properly.
+>
+> **Evidence.** Typecheck clean on both configs. **Gauntlet 1249/1249.** New
+> `qa/specs/relief.spec.ts` — 5/5, every assertion a **matched pair** with a positive
+> control, because a negative claim whose precondition never held is worthless. The
+> anti-tautology guard that matters: a flat grey tint over the whole world would sail
+> through a naive "boundaries are darker" check, so the overlay must reach a true 1.0
+> somewhere *and* average near it. Measured: level ground 0.984, height step 0.799,
+> darkest 0.549, brightest 1.000, overall mean 0.978; 94/221 samples move between dawn
+> and dusk. Two of these tests **failed first** and both failures were real — the cliff
+> control never fired under random wandering (now a directed search), and the
+> level-vs-slope split was reading tile *centres*, where a bilinear field's gradient is at
+> a minimum.
+>
+> **Smoke: 3/4.** The red one is the pre-existing drums-in-ordinary-combat regression —
+> **verified to fail identically on pristine `main`** this session, and fixed on the
+> unmerged `fix/sound-rollback`.
+>
+> **Gate screenshots** (relief noon/dawn/dusk vs flat, three biomes, seeds 1234/7777/4242):
+> `qa/gate-batch-G/` — on disk, gitignored, ~400 KB each. **Awaiting the user's verdict.**
 > ## Direction update (2026-08-17) — QA becomes a release gate
 >
 > **User direction, verbatim:** *"lets create test cases that is like an actual play through,

@@ -14,6 +14,10 @@ rust/**/target/
 qa/.artifacts/
 qa/.report/
 
+# gate evidence: full-resolution before/after screenshots, kept on disk for the
+# playtest verdict but far too heavy to carry in git (~400KB each)
+qa/gate-*/
+
 # OS
 .DS_Store
 Thumbs.db
