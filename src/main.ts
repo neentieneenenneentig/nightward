@@ -595,13 +595,6 @@ async function boot() {
     const ph = phase(state.clock);
     const threat = worldbosses.nearestThreatTiles();
     const bossNear = threat != null && threat < CFG.worldBoss.warnTiles;
-    const bossLordId = bossNear ? worldbosses.nearestThreatLordId() : null;
-
-    // Combat mood: enemies nearby but no boss → combat music; boss near → per-boss or generic boss
-    const foesNear = !bossNear && hordes.foes.some((f: any) => {
-      const d = Math.hypot(f.x - fx, f.y - fy) / TILE;
-      return d < 10; // within ~10 tiles
-    });
 
     // ambient tint = day/night light blended toward the current dream's mood
     const base = tintAt(state.clock);
@@ -622,9 +615,7 @@ async function boot() {
     if (activeEffects(state).has('night_vision')) fogI *= 0.65;
     fog.update(fogI);
 
-    Sound.setMood(state.gameOver ? 'dead' : bossNear ? 'boss' : foesNear ? 'combat' : ph.isNight ? 'night' : 'day');
-    if (bossLordId) Sound.setBossMood(bossLordId);
-    else Sound.setBossMood(null);
+    Sound.setMood(state.gameOver ? 'dead' : bossNear ? 'boss' : ph.isNight ? 'night' : 'day');
     ui.refresh();
     floaters.update(performance.now() / 1000, cam);
 

@@ -758,8 +758,6 @@ export class HordeSystem {
     this.foes = this.foes.filter((x) => x.uid !== f.uid);
     views.removeFoe(f.uid);
     Sound.play('enemyDie');
-    // X2: death whistle — soul-escape overlay, ~30% chance for variety
-    if (Math.random() < 0.3) Sound.play('deathWhistle');
 
     // S1: only player-swing & echo kills feed vitals — tower kills do NOT
     if (feedVitals) {
