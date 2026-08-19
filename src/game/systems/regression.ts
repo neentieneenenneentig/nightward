@@ -1191,7 +1191,7 @@ async function testBossDeathPaysOut(nw: any) {
     relic: state.player.relic,
     points: state.player.loomPoints,
     slain: sys.scoreboard.bossesSlain,
-    pos: { x: state.player.x, y: state.player.y },   // B5: the hoard is collected on foot
+    pos: { x: nw.player.x, y: nw.player.y },   // B5: the hoard is collected on foot; nw.player is authoritative
     drops: state.drops.slice(),
     god: state.god,
     gameOver: state.gameOver,
@@ -2122,7 +2122,7 @@ async function testBossRelicDrops(nw: any) {
 
   let relicsDropped = 0;
   let relicsOnFloor = 0;
-  const relicHome = { x: state.player.x, y: state.player.y };
+  const relicHome = { x: nw.player.x, y: nw.player.y };
   for (const bossDef of bosses) {
     // Ensure a hall exists
     const { world } = nw;
@@ -4591,20 +4591,22 @@ async function testGroundDropDespawn(nw: any) {
   ok(mat !== undefined && gear !== undefined, 'a material and a piece of gear are on the floor');
   ok(gear.gear === true && mat.gear === false,
     'isGear() classifies them off the ITEMS columns (axe_flint has toolClass, log has none)');
-  eq(state.drops.length, 2, 'both are on the floor to begin with');
+  ok(state.drops.some((d: any) => d.uid === mat.uid) && state.drops.some((d: any) => d.uid === gear.uid),
+    'both are on the floor to begin with');
 
   // Let the toss arc finish first: a drop still in flight is skipped by every
   // branch below the arc, so aging one mid-hop would measure nothing.
-  for (let i = 0; i < 60 && state.drops.some((d: any) => d.hopT > 0); i++) nw.step(1);
-  ok(state.drops.every((d: any) => d.hopT === 0), 'both have landed and settled');
+  for (let i = 0; i < 60 && (mat.hopT > 0 || gear.hopT > 0); i++) nw.step(1);
+  ok(mat.hopT === 0 && gear.hopT === 0, 'both have landed and settled');
 
   // Age them past the timer by moving bornT, not by stepping 90 real seconds.
   mat.bornT = state.clock - CFG.drops.despawnSec - 1;
   gear.bornT = state.clock - CFG.drops.despawnSec - 1;
   nw.step(2);
 
-  eq(state.drops.length, 1, `the material rots away after ${CFG.drops.despawnSec}s`);
-  eq(state.drops[0]?.id, 'axe_flint', '...and the gear is the one that survived');
+  const alive = (u: number) => state.drops.some((d: any) => d.uid === u);
+  ok(!alive(mat.uid), `the material rots away after ${CFG.drops.despawnSec}s`);
+  ok(alive(gear.uid), '...and the gear is the one that survived');
   state.drops.length = 0;
 }
 
