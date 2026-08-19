@@ -2,7 +2,19 @@
 
 ### Loot lands on the floor. You walk over it to pick it up.
 
-> **STATUS: BRIEF. Not approved, not started, nothing implemented.**
+> **STATUS (2026-08-19): B5 SHIPPED, B6 SHIPPED AS A PROTOTYPE** on `dev/night-build`,
+> unmerged and awaiting a playtest verdict. See the dated entry at the top of
+> `ROADMAP.md` for what actually landed and where it diverged.
+>
+> Divergences from this brief worth knowing: the magnet, arm delay, SFX rate limit and
+> toast aggregation all shipped as specced; **B6 was built despite being specced as
+> optional and needing a yes/no**, because it is cheap and was directly asked for — treat
+> it as the prototype the verdict is about, not a decision already taken. §6.1's live
+> acceptance walkthrough has NOT been done. Two existing tests were rewritten rather than
+> relaxed, and `testBossRelicDrops` turned out to be measuring luck rather than the relic
+> path even before B5 touched it.
+>
+> **Original status:** BRIEF. Not approved, not started, nothing implemented.
 > Written 2026-08-14 against `main` @ `fffa4b7`. Every claim in §2 was read out of the
 > code at the file:line given — nothing here is carried over from a previous session's
 > summary.

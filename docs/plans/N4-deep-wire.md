@@ -606,6 +606,14 @@ already be the largest single upgrade to the game's premise since N1.**
 - **Q4 scope: do the whole arc.** N4.0 first and separately (below).
 - **Q6 favicon beacons: approved for retirement.** Done in N4.0.
 
+**N4.1 and N4.2 shipped 2026-08-19** on `dev/night-build`, unmerged. N4.2 additionally
+carries the `ChronicleStore`, tiered retention and change detection that §7 assigns to
+N4.3 — the Chronicle strip and the export both needed a real backing store. **N4.3 still
+owes the scheduled jittered probes and the wiring of detected changes into world events.**
+N4.1 did NOT take up the suggestion to depend on `@cloudflare/speedtest`: that package is
+a full throughput engine and N4.1 spends no bandwidth, so it belongs with N4.5.
+See the dated ROADMAP entry for measurements.
+
 **N4.0 shipped 2026-08-17.** Measured: 117 swings in 70 s produced **9 outbound requests**
 (5 `cloudflare-dns.com`, 4 `dns.google`, 3 same-origin) — ~7.7/min against a 20/min gate,
 and **zero** requests to any of the fourteen beacon hosts. Routes now resolve to real

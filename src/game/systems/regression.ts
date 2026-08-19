@@ -1845,7 +1845,11 @@ async function testLoomPayoffLayerIsReal(nw: any) {
       nw.input.axis = savedAxis;
       state.player.x = sx; state.player.y = sy;
       nw.ctx.player.teleport(sx, sy);
-      ok(freeDist > 0, `the player covers real ground in the sim: ${freeDist.toFixed(1)}px / 20 ticks`);
+      const blockedE = !nw.world.canStand(sx + 20, sy);
+      const panelOpen = !!nw.ui?.isOpen?.();
+      ok(freeDist > 0, `the player covers real ground in the sim: ${freeDist.toFixed(1)}px / 20 ticks`
+        + ` (tile ${Math.floor(sx / 32)},${Math.floor(sy / 32)}`
+        + `${blockedE ? ', BLOCKED to the east' : ''}${panelOpen ? ', a UI panel is open so the axis is zeroed' : ''})`);
       ok(rootedDist < freeDist,
         `Deep Roots slows real movement: ${freeDist.toFixed(1)} → ${rootedDist.toFixed(1)}px`);
       ok(fastDist > freeDist,
@@ -4006,6 +4010,32 @@ async function testExhaustivePlaythrough(nw: any) {
   const { FEATURES } = await import('../data/features');
   const { RECIPES } = await import('../data/recipes');
   const { ITEMS } = await import('../data/items');
+
+  // This phase never repositions the player — it gathers whatever happens to be
+  // near wherever the previous test left them. So when it reports zero gathers,
+  // the useful question is "where was the player standing", and answering it
+  // without this line cost an hour of bisecting once already.
+  {
+    const ptx0 = Math.floor(nw.player.x / 32), pty0 = Math.floor(nw.player.y / 32);
+    const kinds = new Map<string, number>();
+    let near = 0;
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+      const f = world.activeFeatureAt(ptx0 + dx, pty0 + dy);
+      if (!f) continue;
+      near++;
+      const id = f.def?.id ?? '?';
+      kinds.set(id, (kinds.get(id) ?? 0) + 1);
+    }
+    // PHASE 0 wipes state.player.xp, so every skill is back to level 1 — a patch
+    // of features whose levelReq is above 1 reads as "features in reach, zero
+    // gathers", which looks like a broken gather system and is not one. Naming
+    // them turns that into a one-line answer.
+    const gated = [...kinds.keys()].map((id) => {
+      const def = FEATURES.find((f: any) => f.id === id);
+      return def && def.levelReq > 1 ? `${id}(lvl${def.levelReq})` : id;
+    }).join(', ');
+    console.log(`  📍 phase 1 starts at tile ${ptx0},${pty0} with ${near} feature(s) in reach: ${gated || 'none'}`);
+  }
 
   // Gather raw materials aggressively for 3 game-minutes
   const gatherPhaseTicks = Math.ceil(180 / dt); // 3 min
