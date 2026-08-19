@@ -1197,6 +1197,8 @@ async function testBossDeathPaysOut(nw: any) {
     relic: state.player.relic,
     points: state.player.loomPoints,
     slain: sys.scoreboard.bossesSlain,
+    pos: { x: state.player.x, y: state.player.y },   // B5: the hoard is collected on foot
+    drops: state.drops.slice(),
     god: state.god,
     gameOver: state.gameOver,
   };
@@ -1235,8 +1237,30 @@ async function testBossDeathPaysOut(nw: any) {
       `the lord's echo is granted (${before.echoes} → ${Object.keys(state.player.echoes ?? {}).length})`);
 
     // C4 — the relic table rolls. Bosses are the only relic source in the game.
-    ok(invSum() > before.inv,
-      `the lord's hoard drops (${before.inv} → ${invSum()} items)`);
+    // B5 rewrite: the hoard now lands on the GROUND, so the old `invSum() > before`
+    // stopped being the behaviour. Asserting only `state.drops.length` up would
+    // leave the collect path unpinned, and calling drops.collectAll() would pass
+    // without ever exercising the magnet — the tautology that has burned this
+    // project three times. So: assert it hit the floor, then walk in and take it.
+    const groundSum = () => state.drops.reduce((t: number, d: any) => t + d.n, 0);
+    ok(groundSum() > 0,
+      `the lord's hoard hits the floor (${state.drops.length} stack(s), ${groundSum()} items)`);
+    const onGround = groundSum();
+    eq(invSum(), before.inv,
+      'and NOT into the bag — B5 loot is earned by walking to it');
+    // the magnet only arms after CFG.drops.armDelaySec, so this must not collect yet
+    nw.step(2);
+    eq(invSum(), before.inv,
+      `nothing is collected inside the ${CFG.drops.armDelaySec}s arm delay`);
+    const pile = state.drops[0];
+    nw.player.teleport(pile.x, pile.y);
+    for (let i = 0; i < 240 && state.drops.length; i++) {
+      nw.player.teleport(state.drops[0].x, state.drops[0].y);
+      nw.step(1);
+    }
+    ok(invSum() >= before.inv + onGround,
+      `walking onto the hoard banks it (${before.inv} → ${invSum()} items)`);
+    eq(state.drops.length, 0, 'and the floor is clear again');
     ok(state.player.gold > before.gold,
       `gold drops (${before.gold} → ${state.player.gold})`);
 
@@ -1263,6 +1287,9 @@ async function testBossDeathPaysOut(nw: any) {
     state.player.relic = saved.relic;
     state.player.loomPoints = saved.points;
     sys.scoreboard.bossesSlain = saved.slain;
+    nw.player.teleport(saved.pos.x, saved.pos.y);
+    state.drops.length = 0;
+    for (const d of saved.drops) state.drops.push(d);
     state.god = saved.god;
     state.gameOver = saved.gameOver;
   }
@@ -1588,8 +1615,14 @@ async function testLoomPayoffLayerIsReal(nw: any) {
         sys.gather.tryStart();
         const a = sys.gather.active;
         if (!a) return -1;
-        const before = Object.values(state.player.inv as Record<string, number>)
-          .reduce((s: number, n: number) => s + n, 0);
+        // B5: the bag is no longer where a harvest lands — the yield is tossed on
+        // the floor first. This test's claim is about how much the WORLD produced,
+        // so it counts bag + ground. Reading only the bag would make it silently
+        // measure the magnet instead of doubleYieldChance.
+        const yieldSum = () => Object.values(state.player.inv as Record<string, number>)
+          .reduce((s: number, n: number) => s + n, 0)
+          + state.drops.reduce((s: number, d: any) => s + d.n, 0);
+        const before = yieldSum();
         // rollLoot() is random per entry, so an unpinned second roll can legitimately
         // yield nothing and the probe reads "2 → 2 items". Pinning random to 0 makes
         // every entry drop at its minimum, identically for both harvests, so the
@@ -1599,8 +1632,7 @@ async function testLoomPayoffLayerIsReal(nw: any) {
         Math.random = () => 0;
         try { (sys.gather as any).finish(a); } finally { Math.random = realRandom; }
         sys.gather.active = null;
-        return Object.values(state.player.inv as Record<string, number>)
-          .reduce((s: number, n: number) => s + n, 0) - before;
+        return yieldSum() - before;
       };
       const plainYield = harvest({});
       const doubledYield = harvest({ doubleYieldChance: 100 });
@@ -2095,6 +2127,8 @@ async function testBossRelicDrops(nw: any) {
   state.god = true; state.player.hp = 100;
 
   let relicsDropped = 0;
+  let relicsOnFloor = 0;
+  const relicHome = { x: state.player.x, y: state.player.y };
   for (const bossDef of bosses) {
     // Ensure a hall exists
     const { world } = nw;
@@ -2127,18 +2161,32 @@ async function testBossRelicDrops(nw: any) {
         `${bossDef.name} kill grants echo '${echoId}' (got level ${state.player.echoes[echoId] ?? 0})`);
     }
 
-    // Check relic in inventory
+    // B5: the relic lands on the FLOOR, ~1.9 tiles out — outside magnetTiles
+    // and inside the arm delay, so the old post-step(5) inventory read was
+    // measuring luck. Assert it hit the ground, then collect it the way a
+    // player would: walk on top of it and let the magnet finish the job.
     const relic = relics.find((r: any) => r.relic === bossDef.id || r.relic === `relic_${bossDef.id}`);
     if (relic) {
-      const count = state.player.inv[relic.id] ?? 0;
-      if (count > 0) relicsDropped++;
+      const onFloor = state.drops.some((d: any) => d.id === relic.id);
+      if (onFloor) relicsOnFloor++;
+      for (let i = 0; i < 200 && state.drops.length; i++) {
+        nw.player.teleport(state.drops[0].x, state.drops[0].y);
+        nw.step(1);
+      }
+      if ((state.player.inv[relic.id] ?? 0) > 0) relicsDropped++;
     }
 
     // Clean up boss
     state.worldBosses = state.worldBosses.filter((b: any) => b.lordId !== bossDef.id);
   }
 
-  ok(relicsDropped >= 1, `${relicsDropped} boss relic(s) dropped into inventory`);
+  // Matched pair: it reached the floor AND it reached the bag. Asserting only
+  // the bag would pass if the loot skipped the ground entirely (a silent B5
+  // revert); asserting only the floor would pass with the magnet broken.
+  ok(relicsOnFloor >= 1, `${relicsOnFloor} boss relic(s) land on the ground`);
+  ok(relicsDropped >= 1, `${relicsDropped} boss relic(s) walked over and banked`);
+  nw.player.teleport(relicHome.x, relicHome.y);
+  state.drops.length = 0;   // leftover gear never despawns; do not leak it into later tests
   state.god = false;
   state.player.echoes = {};
 }
@@ -2155,8 +2203,11 @@ async function testRelicEquip(nw: any) {
   // a relic via acquireGear — clear the slot so toggle means EQUIP here.
   const relic = relics[0];
   state.player.inv[relic.id] = (state.player.inv[relic.id] ?? 0) + 1;
-  state.player.relic = undefined;
   nw.step(1);
+  // B5: clear the slot AFTER stepping. acquireGear auto-equips at PICKUP now,
+  // so a relic collected off the floor during that tick would fill the slot and
+  // turn the toggle below from an equip into an unequip.
+  state.player.relic = undefined;
 
   // Equip it
   const slot = toggleEquip(state, relic.id);
@@ -4380,6 +4431,227 @@ async function testExhaustivePlaythrough(nw: any) {
   state.gameOver = false;
 }
 
+
+// ---------------------------------------------------------------------------
+// B5 — Ground Drops
+// ---------------------------------------------------------------------------
+// The suite these tests join has a specific failure mode, and it is NOT "goes
+// red". Measured against the pre-B5 file, NO gather test read state.player.inv
+// afterwards: testGathering asserts `active` is set then cleared, and
+// testGatherEveryFeature asserts every feature type is gatherable. So B5 could
+// have severed the entire gather → bag pipeline and the Gauntlet would have
+// stayed green at 1337/1337. A green suite is not evidence for this milestone
+// unless these five are in it.
+//
+// Every one therefore asserts a POSITIVE and its matched NEGATIVE, and none of
+// them reaches for drops.collectAll() — that helper exists for debugging, and a
+// test that banked loot through it would pass while the magnet was broken.
+
+/** Put a drop on the floor at a known offset from the player, bypassing the
+ *  loot tables. Returns the drop so a test can watch that exact uid.
+ *
+ *  Math.random is pinned for the spawn: the toss angle and speed are random per
+ *  stack, and an unpinned toss drifts the stack up to ~23 px in an arbitrary
+ *  direction before it settles. That is fine in the game and fatal in a test
+ *  that plants a stack a measured distance from the player — it flaked exactly
+ *  once before this pin, by drifting out of the magnet radius it was placed
+ *  inside. Pinned, every stack tosses due east at tossSpeed[0]. */
+function plantDrop(nw: any, id: string, dx: number, dy: number, n = 1) {
+  const { state } = nw;
+  // nw.player is the authoritative Player instance; state.player is a projection
+  // that main() overwrites from it every sim tick. Tests that assign
+  // state.player.x directly leave the two disagreeing until the next step, and
+  // the magnet reads the instance. Planting relative to the projection put a
+  // stack 55 px from a player it was supposed to be 31 px from — 1 run in 3.
+  const realRandom = Math.random;
+  Math.random = () => 0;
+  try { nw.sys.drops.spawn([{ id, n }], nw.player.x + dx, nw.player.y + dy); }
+  finally { Math.random = realRandom; }
+  return state.drops[state.drops.length - 1];
+}
+
+async function testGroundDropSpawn(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+  const home = { x: nw.player.x, y: nw.player.y };
+  ok(CFG.drops.enabled, 'CFG.drops.enabled — B5 is on (the whole feature is one flag)');
+
+  state.drops.length = 0;
+  const invSum = () => Object.values(state.player.inv as Record<string, number>)
+    .reduce((s: number, n: number) => s + n, 0);
+
+  // Scan for a real node rather than wandering: a blind walk east runs into
+  // water or mountain and the test fails for a reason that has nothing to do
+  // with drops. Same pattern testGatherEveryFeature uses.
+  state.player.inv.axe_flint = (state.player.inv.axe_flint ?? 0) + 10;
+  state.player.inv.pick_flint = (state.player.inv.pick_flint ?? 0) + 10;
+  const ptx = Math.floor(state.player.x / 32), pty = Math.floor(state.player.y / 32);
+  let found = false;
+  outer:
+  for (let r = 1; r <= 20; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (!nw.world.activeFeatureAt(ptx + dx, pty + dy)) continue;
+        nw.player.teleport((ptx + dx + 0.5) * 32 + 20, (pty + dy + 0.5) * 32);
+        nw.step(3);
+        sys.gather.active = null;
+        sys.gather.tryStart();          // returns void; the result is `active`
+        if (sys.gather.active) { found = true; break outer; }
+      }
+    }
+  }
+  ok(found, 'a gatherable node was located');
+  if (!found) { nw.player.teleport(home.x, home.y); return; }
+  state.drops.length = 0;   // the walk above may have crossed loot from an earlier test
+
+  // Snapshot the bag HERE — after the tool grant and after the scan walk, both
+  // of which legitimately move inventory. The claim is about this one harvest.
+  const before = invSum();
+  const a = sys.gather.active;
+  const realRandom = Math.random;
+  Math.random = () => 0;                     // pin every loot roll to its minimum
+  try { (sys.gather as any).finish(a); } finally { Math.random = realRandom; }
+  sys.gather.active = null;
+
+  const onGround = state.drops.reduce((t: number, d: any) => t + d.n, 0);
+  ok(onGround > 0, `the harvest lands on the floor (${state.drops.length} stack(s), ${onGround} items)`);
+  // The matched negative. Without it this test would pass unchanged if B5 were
+  // reverted to instant pickup and something merely pushed a decorative drop.
+  eq(invSum(), before, 'and NOT into the bag at roll time');
+
+  state.drops.length = 0;
+  nw.player.teleport(home.x, home.y);   // the node hunt above wanders; later tests start from the hall
+}
+
+async function testGroundDropPickup(nw: any) {
+  const { state } = nw;
+  const { CFG } = await import('../data/config');
+  // 400 ticks is ~13 game seconds of live sim. Without god the player can be
+  // killed by a passing foe and DEATH-SCATTERED 40-110 tiles away, at which
+  // point the stack is stranded and the magnet assertion below fails for a
+  // reason that has nothing to do with the magnet. That flaked 1 run in 2.
+  const savedGod = state.god;
+  state.god = true;
+  try {
+  state.drops.length = 0;
+  const id = 'log';
+  const had = state.player.inv[id] ?? 0;
+
+  // Just inside the magnet radius, well outside pickupPx — so this measures the
+  // magnet, not a lucky overlap.
+  const reach = CFG.drops.magnetTiles * 32;
+  const at = reach * 0.6;
+  const d = plantDrop(nw, id, at, 0, 3);
+  ok(d !== undefined && d.id === id, `a ${id} stack is on the floor at ${at | 0}px`);
+  ok(at > CFG.drops.pickupPx * 2,
+    `...and well outside pickupPx (${at | 0} > ${CFG.drops.pickupPx}), so only the magnet can fetch it`);
+
+  // 1. the arm delay actually holds
+  nw.step(1);
+  eq(state.player.inv[id] ?? 0, had, `nothing collected on the first tick (arm delay ${CFG.drops.armDelaySec}s)`);
+  eq(state.drops.length, 1, '...and the stack is still on the floor');
+
+  // 2. left alone past the arm delay, the magnet does the rest — no walking.
+  //    Watch the UID: foes dying elsewhere in the sim add drops of their own.
+  const uid = d.uid;
+  for (let i = 0; i < 400 && state.drops.some((x: any) => x.uid === uid); i++) nw.step(1);
+  const stuck = state.drops.find((x: any) => x.uid === uid);
+  ok(!stuck, `the magnet pulls it in once armed${stuck ? ` (still ${Math.hypot(stuck.x - nw.player.x, stuck.y - nw.player.y) | 0}px away, magnet=${stuck.magnet})` : ''}`);
+  eq(state.player.inv[id] ?? 0, had + 3, `and the full stack of 3 reaches the bag (${had} → ${state.player.inv[id] ?? 0})`);
+
+  // 3. the matched negative: a stack outside the radius is NOT collected. Without
+  //    this, a magnet with infinite range would pass every assertion above.
+  const far = plantDrop(nw, id, reach * 6, 0, 1);
+  ok(far !== undefined, 'a second stack is planted far outside the magnet radius');
+  // Watch that UID, not the array length: 400 ticks is ~13 game seconds and foes
+  // genuinely die in that window, dropping loot of their own into state.drops.
+  const farUid = far.uid;
+  for (let i = 0; i < 400; i++) nw.step(1);
+  ok(state.drops.some((x: any) => x.uid === farUid),
+    'a stack beyond magnetTiles is left where it lies');
+  ok(!far.magnet, '...and never latched onto the player');
+  } finally {
+    state.god = savedGod;
+    state.drops.length = 0;
+  }
+}
+
+async function testGroundDropDespawn(nw: any) {
+  const { state } = nw;
+  const { CFG } = await import('../data/config');
+  ok(CFG.drops.gearNeverDespawns, 'gearNeverDespawns is on — nothing rare is lost to a timer');
+  state.drops.length = 0;
+
+  // Far enough out that the magnet never touches either of them; the only thing
+  // that can remove one is the despawn timer, which is what is being measured.
+  const far = CFG.drops.magnetTiles * 32 * 8;
+  const mat = plantDrop(nw, 'log', far, 0, 1);
+  const gear = plantDrop(nw, 'axe_flint', far, 64, 1);
+  ok(mat !== undefined && gear !== undefined, 'a material and a piece of gear are on the floor');
+  ok(gear.gear === true && mat.gear === false,
+    'isGear() classifies them off the ITEMS columns (axe_flint has toolClass, log has none)');
+  eq(state.drops.length, 2, 'both are on the floor to begin with');
+
+  // Let the toss arc finish first: a drop still in flight is skipped by every
+  // branch below the arc, so aging one mid-hop would measure nothing.
+  for (let i = 0; i < 60 && state.drops.some((d: any) => d.hopT > 0); i++) nw.step(1);
+  ok(state.drops.every((d: any) => d.hopT === 0), 'both have landed and settled');
+
+  // Age them past the timer by moving bornT, not by stepping 90 real seconds.
+  mat.bornT = state.clock - CFG.drops.despawnSec - 1;
+  gear.bornT = state.clock - CFG.drops.despawnSec - 1;
+  nw.step(2);
+
+  eq(state.drops.length, 1, `the material rots away after ${CFG.drops.despawnSec}s`);
+  eq(state.drops[0]?.id, 'axe_flint', '...and the gear is the one that survived');
+  state.drops.length = 0;
+}
+
+async function testGroundDropCap(nw: any) {
+  const { state } = nw;
+  const { CFG } = await import('../data/config');
+  state.drops.length = 0;
+  const cap = CFG.drops.maxDrops;
+
+  // 12 pieces of gear seeded FIRST, so they are the oldest — if eviction were a
+  // plain shift() they would be exactly what got thrown away.
+  const far = CFG.drops.magnetTiles * 32 * 8;
+  for (let i = 0; i < 12; i++) plantDrop(nw, 'axe_flint', far + i * 40, -far, 1);
+  eq(state.drops.filter((d: any) => d.gear).length, 12, '12 pieces of gear are on the floor, oldest first');
+
+  for (let i = 0; i < cap + 100; i++) plantDrop(nw, 'log', far + (i % 50) * 40, far + (((i / 50) | 0) * 40), 1);
+
+  ok(state.drops.length <= cap, `the cap holds at ${state.drops.length} <= ${cap}`);
+  eq(state.drops.filter((d: any) => d.gear).length, 12,
+    'and all 12 gear stacks survived — a relic lost to an array limit is a bug, not a consequence');
+  state.drops.length = 0;
+}
+
+async function testGroundDropDisabled(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+  // The escape hatch has to actually work, because it is the entire mitigation
+  // if the playtest verdict goes against ground loot.
+  const saved = CFG.drops.enabled;
+  try {
+    state.drops.length = 0;
+    CFG.drops.enabled = false;
+    const had = state.player.inv['log'] ?? 0;
+    sys.drops.spawn([{ id: 'log', n: 5 }], nw.player.x + 400, nw.player.y + 400);
+    eq(state.drops.length, 0, 'with drops disabled nothing lands on the floor');
+    eq(state.player.inv['log'] ?? 0, had + 5, '...it goes straight to the bag, exactly as before B5');
+
+    // matched positive control: flip it back on and the same call behaves differently
+    CFG.drops.enabled = true;
+    sys.drops.spawn([{ id: 'log', n: 5 }], nw.player.x + 400, nw.player.y + 400);
+    eq(state.drops.length, 1, 'with drops enabled the same call lands on the floor instead');
+    eq(state.player.inv['log'] ?? 0, had + 5, '...and the bag is untouched');
+  } finally {
+    CFG.drops.enabled = saved;
+    state.drops.length = 0;
+  }
+}
+
 const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Boot & state integrity', fn: testBoot },
   { name: 'Starting inventory', fn: testStartingInventory },
@@ -4473,6 +4745,12 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Soul-feed — level-up on threshold crossing', fn: testSoulFeedLevelUp },
   { name: 'Soul-feed — non-feedable items rejected', fn: testSoulFeedRejectNonFeedable },
   { name: '🎯 Exhaustive playthrough (full game)', fn: testExhaustivePlaythrough },
+  // ---- B5: Ground Drops ----
+  { name: 'Ground drops - harvest lands on the floor, not in the bag', fn: testGroundDropSpawn },
+  { name: 'Ground drops - arm delay, magnet pickup, out-of-range control', fn: testGroundDropPickup },
+  { name: 'Ground drops - materials rot, gear never does', fn: testGroundDropDespawn },
+  { name: 'Ground drops - cap holds and never evicts gear', fn: testGroundDropCap },
+  { name: 'Ground drops - CFG.drops.enabled=false restores instant pickup', fn: testGroundDropDisabled },
 ];
 
 /** Run all registered tests sequentially. Returns { pass, fail, total, report }. */

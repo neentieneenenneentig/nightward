@@ -18,6 +18,7 @@ import { Views } from './game/world/views';
 import { Player } from './game/world/player';
 import { Camera } from './game/world/camera';
 import { UI, NET_LOG_LABELS, styleNetworkMsg } from './game/ui/ui';
+import { DropSystem } from './game/systems/drops';
 import { GatherSystem, VERB } from './game/systems/gather';
 import { EconomySystem } from './game/systems/economy';
 import { BuildSystem } from './game/systems/build';
@@ -149,6 +150,12 @@ async function boot() {
     get radius() { return painterlyRadius; },
     set radius(v: number) { painterlyRadius = Math.max(1, Math.min(4, v | 0)); },
   } };
+
+  // B5: Ground Drops — loot lands on the floor. Constructed BEFORE the three
+  // loot systems because each of them calls ctx.drops.spawn() the first time
+  // anything is gathered or killed.
+  const drops = new DropSystem(ctx);
+  ctx.drops = drops;
 
   const gather = new GatherSystem(ctx);
   const economy = new EconomySystem(ctx);
@@ -480,7 +487,7 @@ async function boot() {
     // B3.a test seam: movement is composed inside sim(), so the Gauntlet can only
     // observe it by driving the axis. Exposed for that; nothing in the game reads it.
     input,
-    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals, lifespan, loom, scoreboard, net }, world, player, gen, chunks,
+    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals, lifespan, loom, scoreboard, net, drops }, world, player, gen, chunks,
     get log() { return log; },  // expose full GameLog (entries + export + download)
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
@@ -581,6 +588,7 @@ async function boot() {
     combat.update(effectiveDt);
     hordes.update(effectiveDt);
     worldbosses.update(effectiveDt);
+    drops.update(effectiveDt);   // B5: after every loot producer, so a kill's drop integrates the same tick
     fire.update(effectiveDt);
     echoes.update(effectiveDt);
     vitals.update(effectiveDt);
@@ -634,6 +642,7 @@ async function boot() {
 
     views.syncFoes(hordes.foes, alpha);
     views.syncBosses(state.worldBosses, alpha);
+    views.syncDrops(state.drops, state.clock);   // B5
     for (const b of state.buildings) views.syncBuilding(b);
 
     const ph = phase(state.clock);

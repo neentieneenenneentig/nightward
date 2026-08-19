@@ -71,6 +71,8 @@ export interface GameState {
   depleted: Record<string, number>;
   buildings: Building[];
   worldBosses: WorldBoss[];
+  /** B5: loot lying on the ground, waiting to be walked over. */
+  drops: GroundDrop[];
   region: string;                      // region key the player is currently in
   explored: Record<string, number>;    // region key → 1 (for fog / future minimap)
   nightsSurvived: number;
@@ -87,6 +89,23 @@ export interface GameState {
   lifespanTargetMin: number;           // L1: seeded target run length in minutes (CFG.lifespan.baseRunMinutes ± jitter)
 }
 
+/** B5: a stack of loot lying on the ground.
+ *
+ *  `hopH` is deliberately VISUAL ONLY. The pickup test is a plain 2-D distance
+ *  check against (x, y) on the ground plane, so nothing can ever be collected
+ *  'in mid-air' on one frame and not the next. The arc is a lie told to the eye. */
+export interface GroundDrop {
+  uid: number;
+  id: string;            // key into ITEMS
+  n: number;             // stack size
+  x: number; y: number;  // world px — the resting position on the ground plane
+  vx: number; vy: number;// px/s; zero once at rest
+  hopT: number;          // seconds left in the toss arc; <= 0 means settled
+  hopH: number;          // px above the ground plane, for the visual arc only
+  bornT: number;         // state.clock at spawn — drives arm delay and despawn
+  magnet: boolean;       // latched once the player first came in range
+  gear: boolean;         // derived at spawn: exempt from despawn and from cap eviction
+}
 /** Worn gear, one item id per slot (undefined = empty). */
 export interface Equip {
   weapon?: string;
@@ -137,6 +156,7 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     depleted: {},
     buildings: [],
     worldBosses: [],
+    drops: [],
     region: '',
     explored: {},
     nightsSurvived: 0,

@@ -10,6 +10,8 @@ import { M, MATERIALS } from '../data/materials';
 import { FEATURES } from '../data/features';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
+import { ITEMS } from '../data/items';
+import { makeIcon } from '../../engine/procgen/icons';
 import { TILE } from './worldgen';
 
 const TRUNK = ramp('#382a20', '#52402f');
@@ -45,6 +47,7 @@ export class WorldArt {
   private foamFrames: HTMLCanvasElement[];
   private megaCache = new Map<string, HTMLCanvasElement>();
   private spires: HTMLCanvasElement[][];   // [0] rock, [1] snow
+  private itemIcons = new Map<string, HTMLCanvasElement>();   // B5: ground-drop sprites, per item id
 
   constructor(seed: number) {
     this.wallSeed = seed ^ hashId('wall-variant');
@@ -90,6 +93,20 @@ export class WorldArt {
   spire(snow: boolean, tx: number, ty: number): HTMLCanvasElement {
     const v = this.spires[snow ? 1 : 0];
     return v[(hash2(tx, ty, 0x5919) * v.length) | 0];
+  }
+
+  /** B5: the 16×16 item icon, as a world sprite. At a 32 px tile that is exactly
+   *  half a tile — the right size for an object lying on the ground, and zero new
+   *  art. Cached per ITEM ID, never per drop: a night wave can have 200 drops on
+   *  the floor sharing a dozen distinct textures. */
+  itemIcon(id: string): HTMLCanvasElement {
+    let c = this.itemIcons.get(id);
+    if (!c) {
+      const spec = ITEMS[id]?.icon;
+      c = makeIcon(spec ?? { kind: 'stone', color: [140, 140, 150] });
+      this.itemIcons.set(id, c);
+    }
+    return c;
   }
 
   feature(id: string, tx: number, ty: number): HTMLCanvasElement {

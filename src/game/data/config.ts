@@ -305,6 +305,31 @@ export const CFG = {
     charcoalChance: 0.7,         // chance a player-ignited controlled burn leaves charcoal on burnout
     charcoalXp: 12,              // bonus Firemaking xp when a controlled burn actually yields charcoal
   },
+  // B5: Ground Drops — loot lands on the floor and is walked over to collect.
+  // `enabled: false` restores the pre-B5 instant-pickup path exactly, which is
+  // the escape hatch if the playtest verdict goes against the feature.
+  drops: {
+    enabled: true,
+    tossSpeed: [40, 90],     // px/s outward, random per stack
+    tossSec: 0.45,           // arc duration
+    hopHeight: 14,           // px at the apex — visual only, never in the sim maths
+    bobPx: 1.5,              // idle bob amplitude once settled
+    bobHz: 1.1,              // idle bob rate
+    armDelaySec: 0.25,       // no magnet before this — you always see it land
+    magnetTiles: 1.6,        // attract radius; a pure walk-over turns a night wave into pixel-hunting
+    magnetAccel: 420,        // px/s²
+    magnetMaxSpeed: 260,     // px/s
+    pickupPx: 10,            // collected inside this
+    despawnSec: 90,          // game seconds before a material rots away
+    blinkLastSec: 8,         // flashes for this long before it goes
+    gearNeverDespawns: true, // weapons/armour/trinkets/relics/tools wait forever
+    maxDrops: 200,           // hard cap; oldest non-gear evicted first
+    mergePx: 8,              // same-id stacks landing this close merge instead of piling
+    mergeMaxN: 999,          // never merge past this stack size
+    sfxMinGapSec: 0.12,      // pickup blip rate limit — the deathWhistle lesson (2026-08-14)
+    toastWindowSec: 0.4,     // pickups inside this window collapse into one toast line
+    goldDrops: false,        // B5 Q2 — gold stays a direct credit until decided
+  },
 };
 
 export type Config = typeof CFG;

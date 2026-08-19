@@ -4,7 +4,7 @@ import { CFG } from '../data/config';
 import { ITEMS } from '../data/items';
 import { SKILLS } from '../data/skills';
 import type { FeatureDef } from '../data/features';
-import { acquireGear, addXp, awardSoulXp, bestTool, invAdd, rollLoot, skillLevel, soulStat } from '../rules';
+import { addXp, awardSoulXp, bestTool, rollLoot, skillLevel, soulStat } from '../rules';
 import { BUILDINGS } from '../data/buildings';
 import type { SoulSlot } from '../data/soulgear';
 import { TILE, type MegaCluster } from '../world/worldgen';
@@ -159,7 +159,11 @@ export class GatherSystem {
     if (matYieldMul !== 1) {
       for (const d of drops) d.n = Math.max(1, Math.round(d.n * matYieldMul));
     }
-    for (const d of drops) { if (d.n > 0) { invAdd(state, d.id, d.n); acquireGear(state, d.id); } }
+    // B5: the yield leaves the node and lands on the floor. Every modifier above
+    // has already run — this only changes WHERE the finished Stack[] goes. A
+    // mega-cluster spreads wider so up to 16 rolls read as a field, not a pile.
+    this.ctx.drops.spawn(drops.filter((d) => d.n > 0), (a.tx + 0.5) * TILE, (a.ty + 0.5) * TILE,
+      { spread: a.megaScale > 1 ? 2.2 : 1 });
     // N2b: material XP multiplier (Azure Vein etc.)
     const matXpMul = this.ctx.matFx?.mods?.xpMult ?? 1;
     const scaledXp = Math.round(a.def.xp * matXpMul);
@@ -201,7 +205,13 @@ export class GatherSystem {
 
     Sound.play(pickSfx(GATHER_SFX[a.def.skill] ?? ['forage']));
     const got = drops.map((d) => `+${d.n} ${ITEMS[d.id].name}`).join('  ');
-    toast(`${got}   (+${scaledXp} ${SKILL_NAME[a.def.skill]} xp)`);
+    // B5: the yield line moved to the pickup (drops.ts aggregates it); only the
+    // xp stays here, because xp really is earned at the swing. The log entry below
+    // keeps `got` — the event log records what the WORLD produced, which is still
+    // true at roll time even if the player never walks over to collect it.
+    toast(CFG.drops.enabled
+      ? `+${scaledXp} ${SKILL_NAME[a.def.skill]} xp`
+      : `${got}   (+${scaledXp} ${SKILL_NAME[a.def.skill]} xp)`);
     const s = this.ctx.net?.snap;
     this.ctx.log?.push('gather', `${got || 'Gathered nothing'} from ${a.def.name}`, state.clock);
 

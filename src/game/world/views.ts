@@ -7,7 +7,8 @@ import { TILE } from './worldgen';
 import type { WorldArt } from './art';
 import type { World } from './world';
 import type { Foe } from '../systems/hordes';
-import type { Building, WorldBoss } from '../state';
+import type { Building, GroundDrop, WorldBoss } from '../state';
+import { CFG } from '../data/config';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
 
@@ -64,6 +65,60 @@ class FoeView {
       const bw = this.w;
       this.bar.rect(-bw / 2, -this.w / 2 - 5, bw, 2).fill(0x110a10);
       this.bar.rect(-bw / 2, -this.w / 2 - 5, bw * frac, 2).fill(frac > 0.5 ? 0x8fd05a : frac > 0.25 ? 0xe6c86e : 0xd05a5a);
+    }
+  }
+  destroy() { this.cont.destroy({ children: true }); }
+}
+
+/** B5: a stack of loot lying on the ground. Same shape as FoeView — sprite,
+ *  contact shadow, y-sorted container — so an item behind a tree renders behind
+ *  the tree without any new render machinery. */
+class DropView {
+  cont = new Container();
+  private sprite: Sprite;
+  private shadow = new Graphics();
+  private count: Text | null = null;
+  private lastN = -1;
+  constructor(d: GroundDrop, art: WorldArt) {
+    this.sprite = new Sprite(tex(art.itemIcon(d.id)));
+    this.sprite.anchor.set(0.5, 0.5);
+    this.cont.addChild(this.shadow, this.sprite);
+  }
+  updateShadow(lightDX: number, lightDY: number, alpha: number) {
+    this.shadow.clear();
+    this.shadow.ellipse(lightDX * 1.5, 7 + lightDY * 1.5, 7, 3).fill({ color: 0x0a080e, alpha });
+  }
+  sync(d: GroundDrop, clock: number) {
+    // The bob is what makes the eye find loot on a busy floor. hopH is the toss
+    // arc; the bob only runs once the item has settled, so the two never fight.
+    const bob = d.hopT > 0 ? 0 : Math.sin(clock * CFG.drops.bobHz * Math.PI * 2 + d.uid) * CFG.drops.bobPx;
+    this.cont.position.set(Math.round(d.x), Math.round(d.y - d.hopH - bob));
+    this.cont.zIndex = d.y;
+    // shadow shrinks as the item rises — the only cue that the arc is vertical
+    const lift = 1 - Math.min(0.6, d.hopH / 28);
+    this.shadow.scale.set(lift, lift);
+    this.shadow.alpha = lift;
+
+    // blink out the last few seconds so a despawn is never a silent theft
+    const D = CFG.drops;
+    const age = clock - d.bornT;
+    const left = D.despawnSec - age;
+    this.sprite.alpha = (!d.gear || !D.gearNeverDespawns) && left < D.blinkLastSec && left > 0
+      ? 0.35 + 0.65 * (Math.sin(clock * 9) * 0.5 + 0.5)
+      : 1;
+
+    if (d.n !== this.lastN) {
+      this.lastN = d.n;
+      if (d.n > 1) {
+        if (!this.count) {
+          this.count = new Text({ text: '', style: { fontFamily: 'monospace', fontSize: 9, fill: 0xf2e9d8, stroke: { color: 0x140f18, width: 3 } } });
+          this.count.anchor.set(0.5, 0);
+          this.count.position.set(0, 5);
+          this.cont.addChild(this.count);
+        }
+        this.count.text = String(d.n);
+        this.count.visible = true;
+      } else if (this.count) this.count.visible = false;
     }
   }
   destroy() { this.cont.destroy({ children: true }); }
@@ -169,6 +224,7 @@ export class Views {
   private foes = new Map<number, FoeView>();
   private buildings = new Map<number, BuildingView>();
   private bosses = new Map<number, BossView>();
+  private drops = new Map<number, DropView>();
   private ghost: { cont: Container; foot: Graphics; sprite: Sprite } | null = null;
   private fx = new Container();
 
@@ -197,6 +253,7 @@ export class Views {
     for (const v of this.foes.values()) v.updateShadow(dirX, dirY, alpha);
     for (const v of this.buildings.values()) v.updateShadow(dirX, dirY, alpha);
     for (const v of this.bosses.values()) v.updateShadow(dirX, dirY, alpha);
+    for (const v of this.drops.values()) v.updateShadow(dirX, dirY, alpha);
   }
 
   // --- buildings ---
@@ -259,6 +316,32 @@ export class Views {
   }
   syncBosses(bosses: WorldBoss[], alpha: number) {
     for (const b of bosses) this.bosses.get(b.uid)?.sync(b, alpha);
+  }
+
+  // --- B5 ground drops ---
+  /** Diffed against state.drops each frame rather than driven by add/remove
+   *  callbacks: drops are created and destroyed inside the sim (magnet pickup,
+   *  despawn, cap eviction) where no view handle is in scope, and a missed
+   *  callback would leak a sprite forever. */
+  syncDrops(drops: GroundDrop[], clock: number) {
+    for (const d of drops) {
+      let v = this.drops.get(d.uid);
+      if (!v) {
+        v = new DropView(d, this.art);
+        v.updateShadow(this.lightDX, this.lightDY, this.shadowAlpha);
+        this.drops.set(d.uid, v);
+        this.layer.addChild(v.cont);
+      }
+      v.sync(d, clock);
+    }
+    if (this.drops.size !== drops.length) {
+      const live = new Set(drops.map((d) => d.uid));
+      for (const [uid, v] of this.drops) {
+        if (live.has(uid)) continue;
+        v.destroy();
+        this.drops.delete(uid);
+      }
+    }
   }
 
   // --- build ghost ---
@@ -379,9 +462,11 @@ export class Views {
     for (const v of this.foes.values()) v.destroy();
     for (const v of this.buildings.values()) v.destroy();
     for (const v of this.bosses.values()) v.destroy();
+    for (const v of this.drops.values()) v.destroy();
     this.foes.clear();
     this.buildings.clear();
     this.bosses.clear();
+    this.drops.clear();
     for (const b of buildings) this.addBuilding(b);
   }
 }

@@ -6,9 +6,8 @@
 // behind. Knobs in config.horde / config.dayspawn.
 import { CFG } from '../data/config';
 import { ENEMIES, type EnemyDef } from '../data/enemies';
-import { ITEMS } from '../data/items';
 import { SKILLS } from '../data/skills';
-import { acquireGear, addXp, awardSoulXp, hall, invAdd, rollLoot, territoryScore } from '../rules';
+import { addXp, awardSoulXp, hall, rollLoot, territoryScore } from '../rules';
 import { activeEffects } from './effects';
 import type { Building } from '../state';
 import { TILE } from '../world/worldgen';
@@ -791,11 +790,10 @@ export class HordeSystem {
     // X1: Miser's Charm — player kills pay out more gold
     if (awardXp && activeEffects(state).has('gold_find')) goldWon = Math.round(goldWon * 1.25);
     state.player.gold += goldWon;
-    for (const d of rollLoot(f.def.loot)) {
-      invAdd(state, d.id, d.n);
-      acquireGear(state, d.id);
-      toast(`+${d.n} ${ITEMS[d.id].name}`);
-    }
+    // B5: the corpse drops its loot on the floor. The toast moved with it — a
+    // 43-foe night wave firing one toast per stack at roll time is a wall of
+    // text; drops.ts aggregates the pickups into one line per 0.4 s instead.
+    this.ctx.drops.spawn(rollLoot(f.def.loot), f.x, f.y);
     if (awardXp) {
       const lvl = addXp(state, 'combat', f.def.xp);
       toast(`+${f.def.xp} ${SKILL_NAME['combat']} xp`);

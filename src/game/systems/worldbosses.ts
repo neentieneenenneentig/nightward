@@ -5,8 +5,7 @@
 // Slain, they re-form deeper in the network, stronger (Diablo-GR style).
 import { CFG } from '../data/config';
 import { ENEMIES, type EnemyDef } from '../data/enemies';
-import { ITEMS } from '../data/items';
-import { acquireGear, addXp, awardSoulXp, hall, invAdd, rollLoot, territoryScore } from '../rules';
+import { addXp, awardSoulXp, hall, rollLoot, territoryScore } from '../rules';
 import type { WorldBoss } from '../state';
 import { TILE } from '../world/worldgen';
 import { REGION, domainAtRegion, regionCenterPx } from '../world/domains';
@@ -230,10 +229,9 @@ export class WorldBossSystem {
     const def = defOf(b.defId);
     const [gmin, gmax] = CFG.worldBoss.goldOnKill;
     state.player.gold += gmin + Math.floor(Math.random() * (gmax - gmin + 1)) + b.level * 20;
-    for (const d of rollLoot(def.loot)) {
-      invAdd(state, d.id, d.n); acquireGear(state, d.id);
-      this.ctx.toast(`+${d.n} ${ITEMS[d.id].name}`, 'good');
-    }
+    // B5: a lord's hoard bursts outward rather than teleporting into the bag.
+    // Relics are gear, so they never despawn — nothing rare is ever lost to a timer.
+    this.ctx.drops.spawn(rollLoot(def.loot), b.x, b.y, { spread: 1.8 });
     if (fromPlayer) {
       const lvl = addXp(state, 'combat', def.xp);
       if (lvl) { this.ctx.toast(`Combat reached level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Combat reached level ${lvl}`, state.clock); }
