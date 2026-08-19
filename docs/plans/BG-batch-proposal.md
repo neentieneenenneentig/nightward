@@ -1,7 +1,18 @@
 # NIGHTWARD — Batch B & G Proposal
 ### "The Reachable Run" (gameplay) + "Depth" (graphics)
 
-> **STATUS: PROPOSAL. Not approved, not started, nothing implemented.**
+> **STATUS (2026-08-19): Batch G G1–G6 SHIPPED** on `feat/g-terrain-depth`, unmerged and
+> awaiting a playtest verdict — see the dated entry at the top of `ROADMAP.md` for what
+> actually landed and where it diverged from this document. **Batch B is unchanged: still
+> proposal-only here, with B0–B3 built on the separate unmerged `feat/b-reachable-run`.**
+>
+> Where G shipped differently from the plan below: G1 took Option C (multiply-blend shade
+> overlay) without building the Option A prototype, so the mandated A-vs-C gate was
+> **collapsed into a relief-on/relief-off gate** (`R` key, `?norelief`) — the verdict the
+> user still owes is "keep it or not", not "A or C". G1's normal-field build was moved off
+> the bake path after measurement. G6 grew to include the per-tile AO pass.
+>
+> **Original status:** PROPOSAL. Not approved, not started, nothing implemented.
 > Written 2026-08-11 against `main` @ `99b23eb` (clean tree, all 7 feature branches
 > fully merged). This document exists to be argued with before any code is written.
 >

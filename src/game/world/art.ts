@@ -1,12 +1,12 @@
 // Bakes every visual variant once at boot from the data tables, then hands
 // out deterministic picks per tile. All art is seeded procgen — zero assets.
 import { hash2, mulberry32 } from '../../engine/rng';
-import { ramp } from '../../engine/procgen/palette';
+import { ramp, scale } from '../../engine/procgen/palette';
 import {
   makeTileVariants, makeTreeVariants, makeRockVariants, makeHerbVariants,
-  makeBushVariants, makeStump, makeBuilding, makeBlobFrames, makeWall, Pix,
+  makeBushVariants, makeStump, makeBuilding, makeBlobFrames, makeWall, makeSpireVariants, Pix,
 } from '../../engine/procgen/sprites';
-import { MATERIALS } from '../data/materials';
+import { M, MATERIALS } from '../data/materials';
 import { FEATURES } from '../data/features';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
@@ -44,6 +44,7 @@ export class WorldArt {
   private foamSeed: number;
   private foamFrames: HTMLCanvasElement[];
   private megaCache = new Map<string, HTMLCanvasElement>();
+  private spires: HTMLCanvasElement[][];   // [0] rock, [1] snow
 
   constructor(seed: number) {
     this.wallSeed = seed ^ hashId('wall-variant');
@@ -64,6 +65,17 @@ export class WorldArt {
       );
     }
     this.stump = makeStump(TRUNK, seed);
+    // G5: spires are ALWAYS cut from rock, on snow too — a snow-coloured spire
+    // on a snowfield is an outline with nothing inside it. Bare crag punching
+    // up through the snowpack is both readable and what a peak actually does.
+    // The body is the mountain ramp SHADED DOWN. At full brightness a spire is
+    // the same value as the rock it stands on and reads as an empty outline;
+    // dark crag against light peak is what makes it a silhouette at all.
+    const crag = MATERIALS[M.MOUNTAIN].art.ramp.map((c) => scale(c, 0.66));
+    this.spires = [
+      makeSpireVariants(crag, seed ^ hashId('spire'), 7),
+      makeSpireVariants(crag, seed ^ hashId('spire-snow'), 7, MATERIALS[M.SNOW].art.ramp),
+    ];
 
     for (const b of BUILDINGS) this.buildings.set(b.id, makeBuilding(b.art, seed ^ hashId(b.id)));
     for (const e of ENEMIES) this.enemies.set(e.id, makeBlobFrames(e.art, seed ^ hashId(e.id)));
@@ -72,6 +84,12 @@ export class WorldArt {
   tile(biome: number, tx: number, ty: number): HTMLCanvasElement {
     const v = this.tiles[biome];
     return v[(hash2(tx, ty, 0x7a11e ^ biome) * v.length) | 0];
+  }
+
+  /** G5: one of the rock spires that stand on mountain and snow. */
+  spire(snow: boolean, tx: number, ty: number): HTMLCanvasElement {
+    const v = this.spires[snow ? 1 : 0];
+    return v[(hash2(tx, ty, 0x5919) * v.length) | 0];
   }
 
   feature(id: string, tx: number, ty: number): HTMLCanvasElement {

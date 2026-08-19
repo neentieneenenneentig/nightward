@@ -62,21 +62,40 @@ export function makeTileVariants(recipe: TileRecipe, seed: number, biomeId: numb
   const out: HTMLCanvasElement[] = [];
   for (let v = 0; v < count; v++) {
     const p = new Pix(32, 32);
+    const stops = recipe.ramp.length;
 
-    // base: low-freq noise gives soft blotches, per-pixel hash adds dither grain
+    // base: low-freq noise gives soft blotches, per-pixel hash adds dither grain.
+    // The ramp is quantised by its own length, so a 5-stop ramp reads as five
+    // bands and a 3-stop one behaves exactly as it always did.
+    //
+    // Each variant is re-centred on the SAME mean before quantising. Without
+    // that, every variant carries its own average brightness, the baker plants
+    // one variant per tile, and the 32px grid shows through the ground as a
+    // checkerboard — the "wallpaper" read. The texture still varies; only the
+    // DC offset is equalised.
+    const t = new Float32Array(1024);
+    let mean = 0;
     for (let y = 0; y < 32; y++) {
       for (let x = 0; x < 32; x++) {
         const n = valueNoise(x * 0.14 + v * 41.7, y * 0.14 + biomeId * 13.9, seed ^ 0xba5e);
         const dith = hash2(x + v * 101, y + biomeId * 57, seed ^ 0xd17);
-        const t = n * 0.65 + dith * 0.35;
-        p.set(x, y, recipe.ramp[t < 0.4 ? 0 : t < 0.74 ? 1 : 2]);
+        const q = n * 0.65 + dith * 0.35;
+        t[y * 32 + x] = q;
+        mean += q;
+      }
+    }
+    const shift = 0.5 - mean / 1024;
+    for (let y = 0; y < 32; y++) {
+      for (let x = 0; x < 32; x++) {
+        const q = t[y * 32 + x] + shift;
+        p.set(x, y, recipe.ramp[Math.max(0, Math.min(stops - 1, (q * stops) | 0))]);
       }
     }
 
     // detail pass: little seeded flourishes per biome
     const rand = mulberry32((seed ^ Math.imul(biomeId + 1, 2654435761)) + v * 7919);
     const R = () => (rand() * 32) | 0;
-    const [dark, , light] = [recipe.ramp[0], recipe.ramp[1], recipe.ramp[2]];
+    const dark = recipe.ramp[0], light = recipe.ramp[stops - 1];
 
     switch (recipe.detail) {
       case 'grass':
@@ -164,6 +183,51 @@ export function makeTileVariants(recipe: TileRecipe, seed: number, biomeId: numb
   return out;
 }
 
+/** G5: rock spire. Mountain and snow appear in NO feature density table, so
+ *  the peaks have always been flat texture fields with nothing standing on
+ *  them. These are render-only decoration, never gameplay entities — both
+ *  materials are impassable, so a real gatherable node up there would be
+ *  loot the player could never reach. */
+export function makeSpireVariants(rock: RGB[], seed: number, count = 6, cap?: RGB[]): HTMLCanvasElement[] {
+  const out: HTMLCanvasElement[] = [];
+  for (let v = 0; v < count; v++) {
+    const rand = mulberry32(seed ^ (0x5917 + v * 613));
+    const h = 13 + ((rand() * 12) | 0);   // 13..24 px
+    const w = 13 + ((rand() * 10) | 0);   // 13..22 px at the base — chunky, not a fin
+    const lean = (rand() - 0.5) * 0.24;   // a tilt, so they never read as a picket fence
+    const capH = cap ? 3 + ((rand() * 5) | 0) : 0;
+    const p = new Pix(w + 6, h + 2);
+
+    // The silhouette is a JAGGED half-width profile — a handful of random
+    // breakpoints, linearly interpolated — not a smooth curve. A smooth taper
+    // makes a traffic cone; shoulders and notches make a crag.
+    const KN = 4;
+    const kn: number[] = [];
+    for (let i = 0; i <= KN; i++) kn.push(Math.pow(i / KN, 0.7) * (0.62 + 0.6 * rand()) + 0.1);
+
+    for (let y = 0; y < h; y++) {
+      const f = ((y / (h - 1)) * KN);
+      const i0 = Math.min(KN - 1, f | 0), fr = f - i0;
+      const half = (kn[i0] + (kn[i0 + 1] - kn[i0]) * fr) * (w / 2) +
+        (hash2(v * 31, y, seed ^ 0x5918) - 0.5) * 1.4;
+      const c = (w + 6) / 2 + lean * (h - y);
+      const x0 = Math.round(c - half), x1 = Math.round(c + half);
+      // snow sits on the shoulders, with a ragged lower edge
+      const snowTo = cap ? capH + ((hash2(v, y === 0 ? 1 : x0, seed ^ 0x5921) * 3) | 0) : 0;
+      const pal = cap && y < snowTo ? cap : rock;
+      const lit = x0 + Math.max(1, Math.round((x1 - x0) * 0.4));
+      for (let x = x0; x <= x1; x++) {
+        // hard three-band split, keyed upper-left like the canopy and rocks —
+        // a hard terminator is what makes a small sprite read as solid volume
+        p.set(x, y + 1, x < lit ? pal[pal.length - 1] : x < lit + 2 ? pal[pal.length >> 1] : pal[0]);
+      }
+      p.set(x1, y + 1, darken(rock[0], 18));   // shadow edge, always rock
+    }
+    out.push(p.done());
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- trees ----
 
 export interface TreeRecipe {
@@ -171,24 +235,32 @@ export interface TreeRecipe {
   trunk: RGB[];  // [dark, mid]
 }
 
-/** 26×36 tree; the canopy pokes a few px above its tile for cheap depth. */
+/** Tree, nominally 26×36. Each VARIANT is built at its own size (0.72×–1.30×)
+ *  rather than scaled at draw time — nearest-neighbour scaling would shred the
+ *  pixels. Uniform tree size is most of why a forest reads as wallpaper: the
+ *  eye finds the repeat instantly when every silhouette is congruent. The
+ *  canopy pokes a few px above its tile for cheap depth. */
 export function makeTreeVariants(t: TreeRecipe, seed: number, count = 6): HTMLCanvasElement[] {
   const out: HTMLCanvasElement[] = [];
   for (let v = 0; v < count; v++) {
-    const p = new Pix(26, 36);
+    const k = 0.72 + 0.58 * hash2(v, 91, seed ^ 0x7ee5);
+    const W = Math.round(26 * k), H = Math.round(36 * k), R = 12 * k;
+    const p = new Pix(W, H);
 
     // trunk first so canopy overlaps it
-    p.rect(11, 24, 14, 33, t.trunk[1]);
-    for (let y = 24; y <= 33; y++) p.set(14, y, t.trunk[0]); // shaded side
-    p.rect(9, 32, 16, 33, t.trunk[0]);                       // root flare
+    const cx = (W - 1) / 2, cy = R + 1;
+    const tw = Math.max(2, Math.round(3 * k));
+    const tx0 = Math.round(cx - tw / 2), tTop = Math.round(cy + R * 0.85);
+    p.rect(tx0, tTop, tx0 + tw, H - 3, t.trunk[1]);
+    for (let y = tTop; y <= H - 3; y++) p.set(tx0 + tw, y, t.trunk[0]); // shaded side
+    p.rect(tx0 - 2, H - 4, tx0 + tw + 2, H - 3, t.trunk[0]);            // root flare
 
     // canopy: a noisy-edged blob, lit from the upper left
-    const cx = 13, cy = 13;
-    for (let y = 1; y <= 27; y++) {
-      for (let x = 1; x <= 24; x++) {
+    for (let y = 1; y < H - 3; y++) {
+      for (let x = 1; x < W - 1; x++) {
         const dx = x - cx, dy = (y - cy) * 1.15;
         const d = Math.hypot(dx, dy) + (hash2(x + v * 53, y, seed ^ 0x7e31) - 0.5) * 4.5;
-        if (d < 12) {
+        if (d < R) {
           const shade =
             -dx * 0.35 - (y - cy) * 0.55 +
             (hash2(x, y + v * 29, seed ^ 0xf01) - 0.5) * 5;

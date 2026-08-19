@@ -85,7 +85,12 @@ async function boot() {
 
   const state: GameState = newState(seed, spawn);
   const world = new World(gen, state, worldCore);
-  const chunks = new ChunkMap(world, art, stage.ground);
+  // G1: relief lighting on by default; ?norelief boots without it and R toggles
+  // it live, so the two looks can be compared on the same seed and camera.
+  const chunks = new ChunkMap(world, art, stage.ground, {
+    relief: !new URLSearchParams(location.search).has('norelief'),
+    seed,
+  });
   const views = new Views(stage.entities, art, world);
   views.reset(state.buildings);
 
@@ -314,6 +319,13 @@ async function boot() {
     if (e.key === 'G') {
       e.preventDefault();
       hordes.scatterCache();
+    }
+    // G1: R toggles height-field relief lighting
+    if (e.key === 'R') {
+      e.preventDefault();
+      const on = !chunks.reliefEnabled;
+      chunks.setRelief(on);
+      ctx.toast(`Relief lighting: ${on ? 'ON' : 'OFF'}`, on ? 'good' : 'info');
     }
   });
 
@@ -614,9 +626,11 @@ async function boot() {
     // world core first — activate/deactivate chunks so the baker below reads the
     // EFFECTIVE (override-aware) materials for anything freshly scrolled in
     worldCore.ensureAround(fx, fy, w / cam.zoom, h / cam.zoom);
+
     chunks.ensureAround(fx, fy, w / cam.zoom, h / cam.zoom);
     chunks.tickFoam(performance.now());
     chunks.tickGlow(performance.now());
+    chunks.tickRelief(state.clock);
 
     views.syncFoes(hordes.foes, alpha);
     views.syncBosses(state.worldBosses, alpha);
