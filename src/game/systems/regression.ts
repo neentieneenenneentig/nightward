@@ -4531,9 +4531,15 @@ async function testGroundDropPickup(nw: any) {
   // point the stack is stranded and the magnet assertion below fails for a
   // reason that has nothing to do with the magnet. That flaked 1 run in 2.
   const savedGod = state.god;
+  const savedOver = state.gameOver;
   state.god = true;
+  state.gameOver = false;   // a frozen clock means armed() is false forever
   try {
   state.drops.length = 0;
+  const clockBefore = state.clock;
+  nw.step(2);
+  ok(state.clock > clockBefore,
+    `the world clock is running (${clockBefore.toFixed(2)} → ${state.clock.toFixed(2)}) — the arm delay is measured in game seconds`);
   const id = 'log';
   const had = state.player.inv[id] ?? 0;
 
@@ -4572,6 +4578,7 @@ async function testGroundDropPickup(nw: any) {
   ok(!far.magnet, '...and never latched onto the player');
   } finally {
     state.god = savedGod;
+    state.gameOver = savedOver;
     state.drops.length = 0;
   }
 }
@@ -4707,6 +4714,194 @@ async function testLevelUpFlourish(nw: any) {
     'the flourish is not wired to soul-gear or Loom levels');
 }
 
+
+// ---------------------------------------------------------------------------
+// N4.1 — The Deep Wire
+// ---------------------------------------------------------------------------
+// `cfL4` is UNTRUSTED THIRD-PARTY TEXT being parsed into numbers that game
+// systems divide by and multiply with. Cloudflare has changed the field set
+// before and will again; a middlebox can rewrite the header; an ad blocker can
+// return an error page with a `server-timing` of its own. WORKFLOW Pitfall 4:
+// one NaN escaping this parser propagates through the mapping table and
+// silently zeroes half the game's modifiers, with no error anywhere.
+//
+// So the parser gets adversarial input, and every derived value gets a range
+// assertion. These run headless with no network — they test the parser, not
+// Cloudflare.
+
+async function testDeepWireParser(nw: any) {
+  const { parseCfL4, parseServerTiming } = await import('./deepwire');
+
+  // ---- the real thing, captured 2026-08-17 ----
+  const real = '?proto=TCP&rtt=2915&min_rtt=2372&rtt_var=1277&sent=4&recv=6&lost=0'
+    + '&retrans=0&sent_bytes=2838&recv_bytes=660&delivery_rate=1214165&cwnd=52'
+    + '&unsent_bytes=0&cid=a3b0a8b4484ce02d&ts=46&x=0';
+  const l4 = parseCfL4(real);
+  ok(l4 !== null, 'a real cfL4 description parses');
+  if (!l4) return;
+  // The header is MICROSECONDS. Reading it as ms would report a 2.9 ms path as
+  // 2915 ms and drive the sim into its slowest clamp on a perfect connection.
+  ok(Math.abs(l4.rtt - 2.915) < 1e-6, `rtt converts µs → ms (2915µs → ${l4.rtt}ms)`);
+  ok(Math.abs(l4.minRtt - 2.372) < 1e-6, `min_rtt converts too (${l4.minRtt}ms)`);
+  ok(Math.abs(l4.rttVar - 1.277) < 1e-6, `rtt_var converts too (${l4.rttVar}ms)`);
+  eq(l4.lost, 0, 'lost reads through');
+  eq(l4.retrans, 0, 'retrans reads through');
+  eq(l4.cwnd, 52, 'cwnd reads through');
+  eq(l4.deliveryRate, 1214165, 'delivery_rate reads through');
+  eq(l4.proto, 'TCP', 'proto reads through');
+  // Read by KEY, never by position — `x=0` is an undocumented field that showed
+  // up in the captured sample and a positional parser would have shifted on it.
+  ok(l4.cid === 'a3b0a8b4484ce02d', 'trailing unknown fields do not shift the parse');
+
+  // ---- adversarial input: none of these may produce NaN ----
+  const nasty: [string, any][] = [
+    ['empty string', ''],
+    ['null', null],
+    ['undefined', undefined],
+    ['no fields', '?'],
+    ['garbage', 'not a query string at all'],
+    ['NaN values', '?rtt=abc&min_rtt=xyz&lost=NaN&cwnd=Infinity'],
+    ['negative', '?rtt=-5000&min_rtt=-1&lost=-3&retrans=-2'],
+    ['absurd', '?rtt=999999999999999999&min_rtt=1e400&cwnd=1e308'],
+    ['injection', '?rtt=1000&cid=<script>alert(1)</script>&proto=' + 'A'.repeat(500)],
+    ['duplicate keys', '?rtt=1000&rtt=2000&min_rtt=500'],
+    ['no equals', '?rtt&min_rtt&lost'],
+    ['reordered', '?cwnd=10&lost=1&min_rtt=1000&rtt=2000&proto=TCP'],
+  ];
+  let clean = 0;
+  for (const [name, input] of nasty) {
+    const p = parseCfL4(input as any);
+    if (p === null) { clean++; continue; }
+    const bad = Object.entries(p).find(([k, v]) =>
+      typeof v === 'number' && (!Number.isFinite(v) || v < 0));
+    ok(!bad, `"${name}" yields no NaN/negative (${bad ? bad[0] + '=' + bad[1] : 'clean'})`);
+    ok(p.proto.length <= 12, `"${name}" truncates proto (${p.proto.length} chars)`);
+    ok(p.cid.length <= 32, `"${name}" truncates cid (${p.cid.length} chars)`);
+    clean++;
+  }
+  eq(clean, nasty.length, `all ${nasty.length} adversarial inputs handled without throwing`);
+
+  // The matched negative for "rejects garbage": it must still ACCEPT a partial
+  // dump. A parser that only accepted the complete field set would silently
+  // discard every reading the day Cloudflare drops a column.
+  const partial = parseCfL4('?rtt=5000&cwnd=10');
+  ok(partial !== null, 'a partial dump is still accepted');
+  ok(partial !== null && partial.lost === 0 && partial.minRtt === 0,
+    'and missing fields default to 0 rather than NaN');
+
+  // ---- Server-Timing splitting ----
+  const hdr = 'cfSpeedEdge;dur=4, cfSpeedWorker;dur=29, cfL4;desc="?proto=TCP&rtt=2915&min_rtt=2372"';
+  const st = parseServerTiming(hdr);
+  eq(st.size, 3, 'three Server-Timing entries parse');
+  eq(st.get('cfSpeedEdge')?.dur, 4, 'dur reads through');
+  ok((st.get('cfL4')?.desc ?? '').includes('rtt=2915'), 'the quoted cfL4 desc survives');
+  // Commas inside the quoted description are the trap: a naive split on ','
+  // shreds the payload and the RTT vanishes. Descriptions DO contain commas.
+  const commas = 'x;desc="a,b,c", cfL4;desc="?rtt=1000,extra"';
+  const st2 = parseServerTiming(commas);
+  eq(st2.size, 2, 'commas inside quoted descriptions do not split the header');
+  eq(st2.get('x')?.desc, 'a,b,c', 'and the quoted value comes back intact');
+  eq(parseServerTiming(null).size, 0, 'a missing header is an empty map, not a throw');
+}
+
+async function testDeepWireDerived(nw: any) {
+  const net = nw.sys.net;
+  const d = net.deep;
+  ok(d !== undefined, 'the NetworkSystem carries a DeepWire');
+
+  // Neutral-when-silent is the whole safety story: a player behind a proxy that
+  // blocks speed.cloudflare.com must get a BALANCED game, not an easy or an
+  // impossible one. Every derived value has to sit at its neutral with no data.
+  const saved = d.l4;
+  try {
+    d.l4 = null;
+    eq(d.fray, 0, 'no data → Fray 0 (no extra horde aggression)');
+    eq(d.silt, 0, 'no data → Silt 0 (no drag)');
+    eq(d.aperture, 10, 'no data → Aperture at the common initial cwnd');
+    eq(d.flowMbps, 0, 'no data → Flow 0, meaning unmeasured');
+    eq(d.pulseMs, 0, 'no data → Pulse 0, meaning unmeasured');
+    eq(d.isLive, false, 'and isLive is false, so the Lens tags everything estimated');
+
+    // Matched positive: feed it a hostile socket and every value must move.
+    d.l4 = {
+      proto: 'TCP', rtt: 120, minRtt: 30, rttVar: 40,
+      sent: 100, recv: 100, lost: 8, retrans: 12,
+      sentBytes: 0, recvBytes: 0, deliveryRate: 2_500_000, cwnd: 4,
+      unsentBytes: 0, cid: 'x', atMs: performance.now(),
+    };
+    ok(d.fray > 0.1, `loss + retrans raise Fray (${d.fray.toFixed(3)})`);
+    ok(d.fray <= 1, 'and Fray stays inside 0..1');
+    ok(d.silt > 0.3, `rtt far above min_rtt raises Silt (${d.silt.toFixed(3)})`);
+    ok(d.silt <= 1, 'and Silt stays inside 0..1');
+    eq(d.aperture, 4, 'Aperture reads cwnd');
+    ok(Math.abs(d.flowMbps - 20) < 0.01, `delivery_rate converts B/s → Mbps (${d.flowMbps})`);
+    eq(d.pulseMs, 30, 'Pulse reads min_rtt');
+    eq(d.fluxMs, 40, 'Flux reads rtt_var');
+
+    // A path that is merely DISTANT must not read as congested. min_rtt 200ms
+    // with rtt 210ms is a healthy link to the far side of the world; measuring
+    // Silt against an absolute threshold instead of this path's own floor would
+    // permanently punish players for their geography.
+    d.l4 = { ...d.l4, rtt: 210, minRtt: 200, lost: 0, retrans: 0 };
+    ok(d.silt < 0.1, `a distant but clean path has low Silt (${d.silt.toFixed(3)})`);
+    eq(d.fray, 0, '...and no Fray');
+  } finally {
+    d.l4 = saved;
+  }
+}
+
+async function testDeepWireMappings(nw: any) {
+  const net = nw.sys.net;
+  const { NET_METRICS, NET_GAME_MAP } = await import('../data/network');
+
+  // Every new metric key must resolve — a typo here is invisible at runtime
+  // because get() returns 0 for an unknown key, which looks like a real reading.
+  for (const key of ['fray', 'silt', 'aperture', 'flowMbps', 'pulseMs', 'fluxMs',
+                     'pulseBest', 'flowBest', 'fluxBest']) {
+    const row = NET_METRICS.find((m: any) => m.key === key);
+    ok(row !== undefined, `NET_METRICS carries '${key}'`);
+    const v = net.get(key);
+    ok(Number.isFinite(v), `net.get('${key}') is finite (${v})`);
+  }
+
+  // Every game mapping's netKey must exist in NET_METRICS. This is the failure
+  // that produces a silent 0 everywhere downstream.
+  for (const gm of NET_GAME_MAP as any[]) {
+    ok(NET_METRICS.some((m: any) => m.key === gm.netKey),
+      `game mapping '${gm.label}' resolves netKey '${gm.netKey}'`);
+  }
+
+  // The three new targets must clamp to their declared bands, and must sit at
+  // NEUTRAL when the deep wire is silent.
+  //
+  // Forced silent on purpose: this test first went red because the probe
+  // GENUINELY SUCCEEDED in CI and reported cwnd 52, so Aperture was legitimately
+  // 1.25. Reading the live wire here would make the assertion a measurement of
+  // whoever's network is running the suite.
+  const savedSnap = { ...net.snap };
+  try {
+    net.snap.deepLive = false;
+    net.snap.fray = 0; net.snap.silt = 0; net.snap.aperture = 10;
+    net.snap.flowMbps = 0; net.snap.pulseMs = 0; net.snap.fluxMs = 0;
+    for (const [target, neutral] of [['hordeAggression', 1], ['siltDrag', 1], ['aperture', 0.95]] as [string, number][]) {
+      const gm = (NET_GAME_MAP as any[]).find((m) => m.target === target);
+      ok(gm !== undefined, `game mapping target '${target}' exists`);
+      const v = net.getGameValue(target);
+      ok(v >= gm.min && v <= gm.max, `${target} = ${v.toFixed(3)} inside [${gm.min}, ${gm.max}]`);
+      ok(Math.abs(v - neutral) < 0.1,
+        `${target} sits at neutral ${neutral} with the deep wire silent (${v.toFixed(3)})`);
+    }
+  } finally {
+    Object.assign(net.snap, savedSnap);
+  }
+
+  // pulseBest/flowBest fall back to the estimate rather than to 0. Getting this
+  // backwards would hand the sim a 0 ms RTT and a 0 Mbps link on every network
+  // that blocks the probe — i.e. most of them.
+  ok(net.get('pulseBest') > 0, `pulseBest falls back to the estimate (${net.get('pulseBest')})`);
+  ok(net.get('flowBest') > 0, `flowBest falls back to the estimate (${net.get('flowBest')})`);
+}
+
 const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Boot & state integrity', fn: testBoot },
   { name: 'Starting inventory', fn: testStartingInventory },
@@ -4808,6 +5003,10 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Ground drops - CFG.drops.enabled=false restores instant pickup', fn: testGroundDropDisabled },
   // ---- B6: Level-Up Flourish ----
   { name: 'Level-up flourish - rising motes, ring, config gate', fn: testLevelUpFlourish },
+  // ---- N4.1: The Deep Wire ----
+  { name: 'Deep wire - cfL4 parser vs adversarial input', fn: testDeepWireParser },
+  { name: 'Deep wire - derived values neutral when silent, move when hostile', fn: testDeepWireDerived },
+  { name: 'Deep wire - metric keys and game mappings resolve', fn: testDeepWireMappings },
 ];
 
 /** Run all registered tests sequentially. Returns { pass, fail, total, report }. */

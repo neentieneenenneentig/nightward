@@ -322,6 +322,26 @@ export interface NetworkSnapshot {
   /** Total JS heap size in MB (Chrome-only). */
   jsHeapTotalMB: number;
 
+  // ---- N4.1: the Deep Wire — kernel TCP state from a Cloudflare edge ----
+  // These are MEASURED, not inferred, and the Lens must say so. Each is 0 when
+  // the deep wire is unavailable (blocked probe, no TAO, non-Cloudflare path);
+  // 0 means "unmeasured" and every consumer falls back rather than treating it
+  // as a real reading of zero.
+  /** Packet loss + retransmission severity, 0..1. Previously believed impossible from a browser. */
+  fray: number;
+  /** How far RTT sits above the path's own floor, 0..1 — bufferbloat. */
+  silt: number;
+  /** Congestion window, segments. How much the path will accept in flight. */
+  aperture: number;
+  /** Real achieved throughput (Mbps), uncapped — unlike connection.downlink. */
+  flowMbps: number;
+  /** The path's true latency floor (ms) from the kernel's min_rtt. */
+  pulseMs: number;
+  /** Kernel-measured RTT variance (ms). Real jitter, not a bucket statistic. */
+  fluxMs: number;
+  /** Is any of the above real this session? Drives the Lens honesty tags. */
+  deepLive: boolean;
+
   /** S1: transient — night RTT stability % (computed at dawn). */
   _nightRttStability?: number;
 
@@ -376,6 +396,68 @@ export interface NetMappingContext {
 
 /** Initial metric mappings — raw snapshot → game-readable values. */
 export const NET_METRICS: NetMapping[] = [
+  // ---- N4.1: measured rows. Every one of these carries an honest `inspect`
+  // saying it comes from a kernel rather than an estimate, because the whole
+  // point of the Lens is that it distinguishes the two.
+  {
+    key: 'fray', label: 'Fray',
+    compute: (s) => s.fray,
+    fallback: 0, unit: '', intervalMs: 2000,
+    inspect: { api: 'cfL4 lost + retrans from a Cloudflare edge Server-Timing header — the TCP_INFO the edge kernel keeps for our socket. Genuine packet loss, no local agent.', action: 'one header-only probe every 45s', flowsInto: 'horde aggression · corruption FX' },
+  },
+  {
+    key: 'silt', label: 'Silt',
+    compute: (s) => s.silt,
+    fallback: 0, unit: '', intervalMs: 2000,
+    inspect: { api: 'cfL4 rtt above min_rtt — bufferbloat measured against the OWN floor of this path, so distance is not punished as congestion', action: 'one header-only probe every 45s', flowsInto: 'movement drag · gather speed' },
+  },
+  {
+    key: 'aperture', label: 'Aperture',
+    compute: (s) => s.aperture,
+    fallback: 10, unit: 'seg', intervalMs: 2000,
+    inspect: { api: 'cfL4 cwnd — the congestion window at the edge, in segments', action: 'one header-only probe every 45s', flowsInto: 'carrying capacity' },
+  },
+  {
+    key: 'flowMbps', label: 'Flow (real)',
+    compute: (s) => s.flowMbps,
+    fallback: 0, unit: 'Mbps', intervalMs: 2000,
+    inspect: { api: 'cfL4 delivery_rate — what the socket actually achieved. Uncapped, and works outside Chromium, unlike connection.downlink', action: 'one header-only probe every 45s', flowsInto: 'gold rate (when live)' },
+  },
+  {
+    key: 'pulseMs', label: 'Pulse (real)',
+    compute: (s) => s.pulseMs,
+    fallback: 0, unit: 'ms', intervalMs: 2000,
+    inspect: { api: 'cfL4 min_rtt in microseconds — the physical floor of the path at sub-millisecond precision, not a 25ms bucket', action: 'one header-only probe every 45s', flowsInto: 'sim speed (when live)' },
+  },
+  {
+    key: 'fluxMs', label: 'Flux (real)',
+    compute: (s) => s.fluxMs,
+    fallback: 0, unit: 'ms', intervalMs: 2000,
+    inspect: { api: 'cfL4 rtt_var — variance measured by a kernel. The estimated Flux below is derived from 25ms buckets, so it partly measures the quantiser.', action: 'one header-only probe every 45s', flowsInto: 'enemy wobble (when live)' },
+  },
+  // The three rows the GAME actually consumes. Kept separate from both the
+  // measured and the estimated rows on purpose: the Lens shows `pulseMs` and
+  // `rtt` side by side so a player can see how wrong the 25ms bucket was, while
+  // the sim quietly reads whichever is real. Silently overwriting `rtt` with the
+  // measured value would erase the only evidence the deep wire works at all.
+  {
+    key: 'pulseBest', label: 'Pulse (effective)',
+    compute: (s) => (s.deepLive && s.pulseMs > 0 ? s.pulseMs : s.rtt),
+    fallback: 50, unit: 'ms', intervalMs: 1000,
+    inspect: { api: 'cfL4 min_rtt when the deep wire is live, otherwise navigator.connection.rtt', action: 'always active', flowsInto: 'sim speed' },
+  },
+  {
+    key: 'flowBest', label: 'Flow (effective)',
+    compute: (s) => (s.deepLive && s.flowMbps > 0 ? s.flowMbps : s.downlink),
+    fallback: 10, unit: 'Mbps', intervalMs: 2000,
+    inspect: { api: 'cfL4 delivery_rate when the deep wire is live, otherwise navigator.connection.downlink (capped at 10 Mbps)', action: 'always active', flowsInto: 'gold rate · gather speed' },
+  },
+  {
+    key: 'fluxBest', label: 'Flux (effective)',
+    compute: (s) => (s.deepLive && s.fluxMs > 0 ? s.fluxMs : s.jitter),
+    fallback: 5, unit: 'ms', intervalMs: 1000,
+    inspect: { api: 'cfL4 rtt_var when the deep wire is live, otherwise the derived bucket statistic', action: 'always active', flowsInto: 'enemy wobble' },
+  },
   {
     key: 'rtt', label: 'Pulse',
     compute: (s) => s.rtt,
@@ -507,7 +589,7 @@ export const NET_METRICS: NetMapping[] = [
 export const NET_GAME_MAP: NetGameMapping[] = [
   {
     label: 'Sim Speed',
-    netKey: 'rtt',
+    netKey: 'pulseBest',   // N4.1: real min_rtt where the deep wire reaches
     // High pulse = slower sim. 50ms = 1×, band clamped to 0.85–1.15× (D4).
     transform: (rtt: number) => Math.max(0.85, Math.min(1.15, 1.0 + (50 - rtt) * 0.003)),
     target: 'simSpeed',
@@ -516,7 +598,7 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   },
   {
     label: 'Gold Rate',
-    netKey: 'downlink',
+    netKey: 'flowBest',    // N4.1: real delivery_rate, uncapped, works outside Chromium
     // D5: wide lightning bands 0.30–1.50. 1 Mbps → 0.58×, 10 Mbps → 1.25×.
     transform: (dl: number) => Math.max(0.30, Math.min(1.50, 0.5 + dl * 0.075)),
     target: 'goldRate',
@@ -559,6 +641,38 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     min: 0.30,
     max: 1.50,
   },
+  // ---- N4.1: modifiers that only exist because the kernel told us ----
+  {
+    label: 'Horde Aggression (Fray)',
+    // Packet loss should be FRIGHTENING. This is the clearest hostile-network
+    // signal there is, and until N4.1 it was believed unreadable from a browser.
+    // Neutral at 1.0 when the deep wire is silent, so a filtered network plays a
+    // balanced game rather than an accidentally easy one.
+    netKey: 'fray',
+    transform: (f: number) => Math.max(1.0, Math.min(1.45, 1 + f * 1.8)),
+    target: 'hordeAggression',
+    min: 1.0,
+    max: 1.45,
+  },
+  {
+    label: 'Drag (Silt)',
+    // Buffers filling up IS the wire silting. Measured against the floor of THIS
+    // path, so a player who simply lives far from an edge is not permanently
+    // slowed for it — only one whose queues are actually backing up.
+    netKey: 'silt',
+    transform: (s: number) => Math.max(0.88, Math.min(1.0, 1 - s * 0.12)),
+    target: 'siltDrag',
+    min: 0.88,
+    max: 1.0,
+  },
+  {
+    label: 'Carry (Aperture)',
+    netKey: 'aperture',
+    transform: (c: number) => Math.max(0.85, Math.min(1.25, 0.85 + Math.min(c, 60) / 100)),
+    target: 'aperture',
+    min: 0.85,
+    max: 1.25,
+  },
   // ---- N2a: New modifiers from live vars ----
   {
     label: 'Move Speed',
@@ -571,7 +685,7 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   },
   {
     label: 'Gather Speed',
-    netKey: 'downlink',
+    netKey: 'flowBest',    // N4.1
     // D5: wide lightning bands 0.50–1.50
     transform: (dl: number) => Math.max(0.50, Math.min(1.50, 0.85 + dl * 0.04)),
     target: 'gatherSpeed',

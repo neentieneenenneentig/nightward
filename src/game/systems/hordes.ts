@@ -473,7 +473,11 @@ export class HordeSystem {
     const stunned = ef2._stunnedUntil > state.clock;
     // X1: tar pits bog foes down
     const tarSlow = ef2._tarUntil > state.clock ? (ef2._tarMul ?? 0.3) : 1;
-    let step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain * fear * chill * towerSlow * tarSlow;
+    // N4.1: Fray — packet loss and retransmission on the real wire make the
+    // horde press harder. 1.0 when the deep wire is silent, so a filtered
+    // network plays a balanced game rather than an accidentally easy one.
+    const fray = this.ctx.net?.getGameValue?.('hordeAggression') ?? 1;
+    let step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain * fear * chill * towerSlow * tarSlow * fray;
     step *= buffSpeedMul;
     if (stunned) step = 0;
     let blocked: Building | null = null;

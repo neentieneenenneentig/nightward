@@ -15,6 +15,7 @@ import {
   DOH_RESOLVERS, WIRE_BUDGET,
 } from '../data/network';
 import { biomeForConnection, biomeForProfile, BIOMES, type BiomeDef } from '../data/biomes';
+import { DeepWire } from './deepwire';
 
 function noNet(): boolean {
   try {
@@ -101,6 +102,16 @@ export class NetworkSystem {
   httpProto = '';
   /** Local clock minus server clock (ms). */
   clockSkewMs = 0;
+  /** N4.1: the Deep Wire — kernel TCP state read off a Cloudflare edge, plus a
+   *  passive PerformanceObserver harvesting TAO-enabled waterfalls. Everything
+   *  it produces is MEASURED; everything the rest of this class produces is
+   *  inferred, and the Lens has to be able to tell them apart. */
+  deep = new DeepWire({
+    take: (h, sp) => this.gate.take(h, sp),
+    release: () => this.gate.release(),
+    penalise: (h, r) => this.gate.penalise(h, r),
+    log: (k, m) => this.netLog(k, m),
+  });
   snap: NetworkSnapshot;
   mappings: Record<string, NetMapping> = {};
   gameMappings: NetGameMapping[] = NET_GAME_MAP;
@@ -201,6 +212,10 @@ export class NetworkSystem {
 
   constructor() {
     this.snap = this.freshSnapshot();
+    // N4.1: the passive half costs nothing until a resource loads, so it starts
+    // immediately. The active probe is scheduled by tick() and gated like every
+    // other outbound request.
+    this.deep.start();
     this.lastConnectionType = this.snap.connectionType;
     this.lastKnownType = this.snap.connectionType;
     this.lastOnline = this.snap.online;
@@ -234,6 +249,8 @@ export class NetworkSystem {
 
   /** Called once per frame (render, not sim) — polls slow metrics on their interval. */
   update(nowMs: number) {
+    this.deep.tick(nowMs);
+    this.readDeepWire();
     this.pollConnection(nowMs);
     this.pollSensors(nowMs);
     this.pollBeacons(nowMs);
@@ -243,6 +260,35 @@ export class NetworkSystem {
     this.detectTransitions(nowMs);
     this.decayStability(nowMs);
     this.pollIpInfo(nowMs);
+  }
+
+  /** N4.1: fold the Deep Wire's measured values into the snapshot.
+   *
+   *  Deliberately does NOT overwrite `rtt`/`downlink`/`jitter`. Those rows keep
+   *  their documented estimated meaning so the Lens can show the measured and
+   *  inferred numbers SIDE BY SIDE — a player on a filtered network still gets
+   *  a working game off the estimates, and a player on a clean path gets to see
+   *  exactly how wrong the estimates were. Silently swapping one for the other
+   *  would destroy the only evidence that the deep wire is working. */
+  private readDeepWire() {
+    const d = this.deep;
+    const live = d.isLive;
+    this.snap.deepLive = live;
+    if (!live) return;
+    this.snap.fray = d.fray;
+    this.snap.silt = d.silt;
+    this.snap.aperture = d.aperture;
+    this.snap.flowMbps = d.flowMbps;
+    this.snap.pulseMs = d.pulseMs;
+    this.snap.fluxMs = d.fluxMs;
+    // Identity as a side effect of measurement — this is what let N4.0 retire
+    // api.ipify.org and ipapi.co without losing anything.
+    const m = d.meta;
+    if (m.ip && this.snap.publicIp === '...') this.snap.publicIp = m.ip;
+    if (m.colo && this.snap.colo === '...') this.snap.colo = m.colo;
+    if (m.country && this.snap.country === '..') this.snap.country = m.country;
+    if (m.city && this.snap.city === '...') this.snap.city = m.city;
+    if (m.asn && this.snap.asn === '...') this.snap.asn = m.asn;
   }
 
   /** Get a mapped game value by key. Systems read this, not the raw snapshot. */
@@ -410,6 +456,15 @@ export class NetworkSystem {
       colo: '...',
       asn: '...',
       warp: false,
+      // N4.1: 0 is "unmeasured", never a real reading of zero. Every consumer
+      // below checks deepLive before preferring these over the estimates.
+      fray: 0,
+      silt: 0,
+      aperture: 10,
+      flowMbps: 0,
+      pulseMs: 0,
+      fluxMs: 0,
+      deepLive: false,
       traceChain: [],
       endpointProbes: [],
       // X1: new Lens fields (battery/heap refreshed by pollSensors)

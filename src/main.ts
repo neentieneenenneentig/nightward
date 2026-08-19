@@ -565,6 +565,9 @@ async function boot() {
     const feetSpeed = world.speedAt(Math.floor(player.x / TILE), Math.floor(player.y / TILE));
     // N2a: move speed modifier from echo jitter — read from mapping (live-tweakable)
     const moveSpeedMul = net.getGameValue('moveSpeed');
+    // N4.1: Silt — the world thickens as the path's buffers fill. Neutral 1.0
+    // whenever the deep wire has no reading, which is most networks.
+    const siltMul = net.getGameValue('siltDrag');
     // S1: resolve-zero speed penalty
     const resolveSpeedMul = vitals.getSpeedMult();
     // C3: Loom move speed modifier. B3.a: this also carries Deep Roots' "you move
@@ -573,7 +576,7 @@ async function boot() {
     // N2b: material speed burst (e.g. Flux Crystal exit)
     const matSpeedMul = matFx.speedBurst;
     const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y),
-      feetSpeed * moveSpeedMul * resolveSpeedMul * loomSpeedMul * matSpeedMul);
+      feetSpeed * moveSpeedMul * resolveSpeedMul * loomSpeedMul * matSpeedMul * siltMul);
     state.player.x = player.x;
     state.player.y = player.y;
 
