@@ -16,6 +16,37 @@ export function phase(clock: number): Phase {
   return { tc, isNight: tc >= CFG.time.daySec, dayIndex: Math.floor(clock / cy) + 1 };
 }
 
+/** B2.1 — the clock a run begins at. Always dawn, whatever the wall clock says.
+ *
+ *  This overturns decision D2 (2026-07-16), which set the starting phase from the
+ *  player's real local time-of-day. D2 was right for an unbounded run, where the
+ *  starting phase was flavour that washed out over an hour of play. L1 made the run
+ *  15 minutes — 2.65 cycles — and scored it on a leaderboard, at which point the
+ *  starting phase stopped being flavour and became a large, uncontrolled fraction of
+ *  the result:
+ *
+ *    boot at 16:50 local → ~6 s of daylight before the first horde
+ *    boot at 16:56–23:59 → start inside the night (29.4% of the real day)
+ *    boot at 00:05       → the full 240 s day to prepare
+ *
+ *  Post-B2.2 that lottery inverted rather than closing: a run booting mid-night now
+ *  skips that night's wave entirely (no dusk edge, so nothing spawns) and still gets
+ *  a full day afterwards, so 29.4% of the real day handed out an *easier* run. Either
+ *  polarity is a leaderboard comparing runs that were not asked the same question, and
+ *  it contradicts GDD pillar 4 — determinism from seed — for the one input that now
+ *  decides the score.
+ *
+ *  The real clock keeps its gameplay voice: `data/network.ts` still reads `timeOfDay`
+ *  for the witching-hours `resolveNightMult` (2.5× resolve drain at 2–5am). That is
+ *  where the "your world is your connection" coupling belongs — a texture over the
+ *  whole run, not a difficulty roll at second zero.
+ *
+ *  The argument is deliberately unused: it is the seam the old rule read from, kept
+ *  visible so this stays a decision rather than a forgotten constant. */
+export function startClock(_realTimeOfDay: number): number {
+  return 0;
+}
+
 /** Seconds until the current phase (day or night) ends — for the HUD clock. */
 export function phaseRemaining(clock: number): number {
   const { tc, isNight } = phase(clock);

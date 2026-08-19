@@ -23,10 +23,12 @@ export const CFG = {
   },
 
   // RS-style curve: xp to go from level L to L+1 = base * growth^(L-1)
+  // B1: retuned for the 15-min run window — copper immediately, iron mid-run,
+  // silver as a good run's reward, star as aspirational.
   xp: {
-    base: 400,               // ×10 (W4 balance pass) — leveling is a journey, not a sprint
-    growth: 1.32,
-    maxLevel: 50,
+    base: 60,
+    growth: 1.12,
+    maxLevel: 40,
   },
 
   // Weighty combat: attacks commit through windup → active (damage resolves
@@ -151,10 +153,35 @@ export const CFG = {
     orbContactImmunitySec: 0.8, // per-foe grace between orb contact hits
   },
 
-  // C3: The Loom — per-run passive tree point income.
+  // C3: The Loom — per-run passive tree point income and keystone magnitudes.
+  //
+  // B3.a: the keystone numbers used to be literals scattered across loom.ts,
+  // economy.ts and combat.ts — where they were literals at all. Five of the eight
+  // clauses below were not implemented anywhere; the tree advertised them and the
+  // game ignored them. They live here now for the same reason every other balance
+  // number does: one file, live-editable through window.NW.CFG.
   loom: {
     pointsPerBossKill: 2,   // L1: a second income source — 1/night alone is too
                              // thin for a 15-minute run to meaningfully spend
+
+    // Glass Echo — rolls from the top of the band, but you are made of glass.
+    glassEchoHpMul: 0.5,          // "Max HP halved"
+
+    // Deep Roots — your holdings stand; you do not move well.
+    deepRootsBuildingHpMul: 1.5,  // "Buildings +50% HP"
+    deepRootsTowerRangeAdd: 1,    // "...and towers +1 range" (tiles)
+    deepRootsMoveMul: 0.88,       // "You move 12% slower"
+
+    // Night Market — gold talks, and it wakes things up.
+    nightMarketGoldMul: 1.4,      // "Gold rate +40%"
+    nightMarketWakeDiv: 2,        // "Gold rouses bosses at HALF the threshold"
+
+    // The Long Thread — breadth of skill, converted to weave.
+    // B3.b: was 10. On B1's curve a full run reaches ~71 total skill levels, so /10
+    // paid 7 points for a 4-point keystone — a faucet that made the opening forced.
+    // /12 pays ~5: a sidegrade that trades a rule-warp for flexible points arriving
+    // early enough to spend. This is the number most likely to want a feel verdict.
+    longThreadLevelsPerPoint: 12, // "+1 Loom point per 12 total skill levels"
   },
 
   audio: {
@@ -211,7 +238,7 @@ export const CFG = {
   },
 
   // S1: survival pressure — vitals that decay and must be restored by action.
-  // STUBS ONLY (2026-07-17) — not yet wired; implementation per S1-survival-pressure.md.
+  // All values wired by S1 and consumed by L1 aging; live-editable via NW.CFG.
   // ALL VALUES BELOW ARE BASE (neutral connection: 10Mbps, 50ms RTT, 4g, 5ms jitter,
   // 4 cores, 4GB RAM). At runtime, NetworkSystem applies multipliers on top via
   // NET_GAME_MAP rows (vigorDecay, vigorPerKill, vigorPerGather, vigorPerCampfire,

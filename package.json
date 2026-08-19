@@ -14,7 +14,8 @@
     "qa:webgpu": "playwright test --project=webgpu",
     "qa:firefox": "playwright test --project=firefox",
     "qa:all": "playwright test",
-    "qa:report": "playwright show-report qa/.report"
+    "qa:report": "playwright show-report qa/.report",
+    "gauntlet": "node scripts/run-gauntlet.mjs"
   },
   "dependencies": {
     "pixi.js": "^8.6.0"

@@ -17,11 +17,9 @@ export class EconomySystem {
     if (pop <= 0) return;
     // N1: network gold rate multiplier (bandwidth → gold)
     const goldMul = this.ctx.net?.getGameValue?.('goldRate') ?? 1.0;
-    // C3: Loom territory income + Night Market keystone
-    const loomMods = this.ctx.loom?.ensureMods?.();
-    const loomGoldMul = loomMods
-      ? (1 + (loomMods.territoryIncomePct ?? 0) / 100) * (loomMods.nightMarket ? 1.4 : 1.0)
-      : 1.0;
+    // C3: Loom territory income + Night Market keystone.
+    // B3.a: the 1.4 used to be a literal here; it is CFG.loom.nightMarketGoldMul now.
+    const loomGoldMul = this.ctx.loom?.getGoldMul?.() ?? 1.0;
     const gain = Math.round(pop * CFG.economy.goldPerPop * goldMul * loomGoldMul);
     this.ctx.state.player.gold += gain;
     this.ctx.onGold?.();

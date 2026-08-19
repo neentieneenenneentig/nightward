@@ -367,16 +367,78 @@ async function testLogEntries(nw: any) {
 async function testXpAndLeveling(nw: any) {
   const { state } = nw;
 
-  const { addXp, skillLevel } = await import('../rules');
+  const { addXp, skillLevel, levelFromXp } = await import('../rules');
   const beforeLevel = skillLevel(state, 'woodcutting');
   const beforeXp = state.player.xp.woodcutting ?? 0;
 
   const newLevel = addXp(state, 'woodcutting', 500);
   ok((state.player.xp.woodcutting ?? 0) > beforeXp, 'woodcutting XP increased');
-  ok(skillLevel(state, 'woodcutting') >= beforeLevel, 'skill level is monotonic');
-  ok(skillLevel(state, 'woodcutting') >= 2 || newLevel > 0, '500 XP grants at least level 2');
+  // B1: precise — 500 xp yields exactly level 7 under the current curve.
+  // Changing CFG.xp.base, growth, or maxLevel turns this red.
+  eq(levelFromXp(500), 7, '500 cumulative xp = level 7 (curve: base 60, growth 1.12)');
+  ok(newLevel > 0, 'addXp reports a level-up when crossing a threshold');
+  ok(skillLevel(state, 'woodcutting') >= 2, 'after adding xp, skill is at least level 2');
 
   void newLevel;
+}
+
+/** B1: pin the xp curve against the recipe levelReqs that consume it.
+ *
+ *  The gate numbers below are LITERAL, and that is the entire point.  The
+ *  first version of this test computed them by summing xpToNext() and then
+ *  asserted levelFromXp() of that sum — but levelFromXp IS the inverse of
+ *  that sum, so the assertion reduced to the identity f(f⁻¹(L)) === L.  It
+ *  stayed green under base 1 / growth 1.001, under base 99999 / growth 3.0,
+ *  and under the exact curve B1 was replacing.  Hand-written constants can
+ *  only stay true for one curve.
+ *
+ *  Every gate is pinned from BOTH sides — one xp below the threshold must
+ *  still report the previous level — so a curve that gets cheaper fails as
+ *  loudly as one that gets more expensive.
+ *
+ *  Turns red if: CFG.xp.base or CFG.xp.growth move at all; CFG.xp.maxLevel
+ *  drops below a gate or below the highest recipe levelReq; or xpToNext and
+ *  levelFromXp stop agreeing about cumulative-vs-per-level semantics.
+ *
+ *  To re-derive after an intentional curve change:
+ *    let c = 0; for (let L = 1; L < 40; L++) c += Math.round(60 * 1.12 ** (L - 1)); */
+async function testXpCurve(nw: any) {
+  const { levelFromXp, xpToNext } = await import('../rules');
+  const { RECIPES } = await import('../data/recipes');
+  const { CFG } = await import('../data/config');
+
+  // Cumulative xp required to REACH each level under base 60 / growth 1.12.
+  const GATES: Array<[level: number, cumulativeXp: number]> = [
+    [5,   286],    // sword_copper, armor_copper
+    [10,  886],    // iron_bar — mid-run gate
+    [15,  1943],   // sword_iron
+    [20,  3805],
+    [30,  12873],
+    [40,  41039],  // level cap
+  ];
+
+  for (const [lvl, total] of GATES) {
+    eq(levelFromXp(total), lvl, `${total} cumulative xp = level ${lvl}`);
+    eq(levelFromXp(total - 1), lvl - 1,
+      `${total - 1} xp is still level ${lvl - 1} (gate ${lvl} is exact)`);
+  }
+
+  // Cheapest thing to get wrong, loudest signal that CFG.xp.base moved.
+  eq(xpToNext(1), 60, 'first level costs 60 xp (CFG.xp.base)');
+
+  // The cap actually clamps — no amount of xp exceeds maxLevel.
+  eq(levelFromXp(41039 * 100), CFG.xp.maxLevel,
+    `xp is clamped at CFG.xp.maxLevel (${CFG.xp.maxLevel})`);
+
+  // Every recipe gate must be reachable under the shipped cap.  Bound to
+  // CFG.xp.maxLevel, not a literal, so lowering the cap is what breaks it.
+  let maxRecipeReq = 0;
+  for (const r of RECIPES) {
+    if (r.levelReq > maxRecipeReq) maxRecipeReq = r.levelReq;
+    ok(r.levelReq <= CFG.xp.maxLevel,
+      `recipe ${r.id} levelReq ${r.levelReq} ≤ cap ${CFG.xp.maxLevel}`);
+  }
+  ok(maxRecipeReq > 0, `recipes declare levelReqs (highest is ${maxRecipeReq})`);
 }
 
 async function testStateImmutabilityPattern(nw: any) {
@@ -986,7 +1048,9 @@ async function testWaystoneDisconnect(nw: any) {
 async function testLoomAllocation(nw: any) {
   const { state } = nw;
   const { LOOM_NODES, computeModifiers, DEFAULT_MODIFIERS } = await import('../data/loom');
-  ok(LOOM_NODES.length >= 40, `Loom has ${LOOM_NODES.length} nodes (expected ≥40)`);
+  // B3.b resized the tree from 40 nodes to 15 for the 15-minute run. The shape is
+  // pinned properly in testLoomTreeShape; this only needs a tree to walk.
+  ok(LOOM_NODES.length >= 12, `Loom has ${LOOM_NODES.length} nodes to walk`);
 
   // Give some points to spend
   state.player.loomPoints = 5;
@@ -1052,7 +1116,13 @@ async function testLoomKeystones(nw: any) {
   // Glass Echo
   const glassEcho = LOOM_NODES.find((n: any) => n.id === 'keystone_glass');
   ok(glassEcho !== undefined, 'Glass Echo keystone exists');
-  ok(glassEcho!.keystoneDesc!.includes('HP'), 'Glass Echo description mentions HP tradeoff');
+  // The old assertion here was `keystoneDesc.includes('HP')` — it pinned the
+  // *advertisement* in place. Glass Echo promises "Max HP halved" and nothing
+  // implements it: `glassEcho` is read in exactly one place, combat.ts's
+  // damage-roll transform, which is the upside. Testing the description made
+  // the missing downside harder to notice, not easier. The gap is a balance
+  // call, recorded for B3 (§12 Q3), so it is left alone here rather than
+  // silently implemented — but it is no longer defended by a test.
 
   // Deep Roots
   const deepRoots = LOOM_NODES.find((n: any) => n.id === 'keystone_roots');
@@ -1080,17 +1150,919 @@ async function testLoomKeystones(nw: any) {
     }
   }
 
-  const allocated = loom.allocate('keystone_glass_echo');
-  if (allocated) {
-    const mods = loom.ensureMods();
-    ok(mods.glassEcho === true, 'Glass Echo flag is true after allocation');
+  // This used to read `loom.allocate('keystone_glass_echo')` — a node id that
+  // does not exist. allocate() returned false, the whole `if (allocated)` body
+  // was unreachable, and the test closed on `ok(true, ...)`. It had never once
+  // allocated a keystone. Allocate the real id and assert unconditionally, so
+  // a rename cannot quietly hollow it out again.
+  ok(loom.allocate('keystone_glass'), 'Glass Echo allocates once its prereq is held');
+  const mods = loom.ensureMods();
+  ok(mods.glassEcho === true, 'Glass Echo flag is live after allocation');
 
-    // Verify HP halving is readable
-    const hpMul = loom.getPlayerHpMul?.() ?? 1;
-    ok(hpMul < 1, `Glass Echo reduces player HP multiplier: ${hpMul}`);
+  // The implemented half of the keystone: damage rolls are remapped out of the
+  // bottom of the D5 band, so a roll sitting on the band floor comes back high.
+  const floorRoll = loom.getDmgRollTransform(0.30);
+  ok(floorRoll > 0.30, `Glass Echo lifts a floor roll: 0.30 → ${floorRoll.toFixed(2)}`);
+
+  ok(state.player.loomPoints > 0, 'points remain, so the next check is about rank not funds');
+  ok(!loom.canAllocate('keystone_glass'), 'a keystone cannot be taken twice');
+}
+
+/** B3.c — slaying a domain lord pays out, on every path it advertises.
+ *
+ *  §B3 asks for exactly this: "verify the echo-grant and relic-drop paths actually
+ *  fire end-to-end once a boss is killable — the ROADMAP records that
+ *  `worldbosses.hurt()` was missing its `scoreboard.onKill()` call for the entire
+ *  life of the project until L1 found it. That code path has had very little real
+ *  exercise."
+ *
+ *  It had less than that. Mutating the boss death branch one line at a time, three
+ *  of its five payouts were completely unpinned — the suite stayed green with the
+ *  scoreboard call deleted, with the Loom grant deleted, and with the combat xp
+ *  deleted. **The scoreboard line is the one that was already lost once**, for the
+ *  project's entire history, and nothing would have caught losing it again.
+ *
+ *  Killing is done through `hurt()` rather than by fighting: the payout branch is
+ *  what is under test, not the AI or the damage pipeline. */
+async function testBossDeathPaysOut(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+
+  const saved = {
+    bosses: state.worldBosses.map((b: any) => ({ ...b })),
+    gold: state.player.gold,
+    inv: { ...state.player.inv },
+    xp: { ...state.player.xp },
+    echoes: { ...(state.player.echoes ?? {}) },
+    relic: state.player.relic,
+    points: state.player.loomPoints,
+    slain: sys.scoreboard.bossesSlain,
+    god: state.god,
+    gameOver: state.gameOver,
+  };
+  try {
+    state.god = false;
+    state.gameOver = false;
+
+    // Any lord will do; revive one if they are all re-forming.
+    let boss = sys.worldbosses.alive()[0];
+    if (!boss && state.worldBosses.length) {
+      boss = state.worldBosses[0];
+      boss.reviveAt = 0;
+      boss.hp = boss.maxHp;
+    }
+    ok(boss !== undefined, 'a domain lord exists to be slain');
+    if (!boss) return;
+
+    const invSum = () => Object.values(state.player.inv as Record<string, number>)
+      .reduce((s: number, n: number) => s + n, 0);
+    const before = {
+      echoes: Object.keys(state.player.echoes ?? {}).length,
+      gold: state.player.gold,
+      inv: invSum(),
+      combatXp: state.player.xp.combat ?? 0,
+      points: state.player.loomPoints ?? 0,
+      slain: sys.scoreboard.bossesSlain,
+    };
+
+    sys.worldbosses.hurt(boss, boss.hp * 2 + 100, true);
+
+    ok(boss.hp <= 0, `${boss.name} falls`);
+    ok(boss.reviveAt > state.clock, '...and is scheduled to re-form, not deleted');
+
+    // C1 — the echo clings to the slayer.
+    ok(Object.keys(state.player.echoes ?? {}).length > before.echoes,
+      `the lord's echo is granted (${before.echoes} → ${Object.keys(state.player.echoes ?? {}).length})`);
+
+    // C4 — the relic table rolls. Bosses are the only relic source in the game.
+    ok(invSum() > before.inv,
+      `the lord's hoard drops (${before.inv} → ${invSum()} items)`);
+    ok(state.player.gold > before.gold,
+      `gold drops (${before.gold} → ${state.player.gold})`);
+
+    // The three that nothing pinned before this test existed.
+    eq(sys.scoreboard.bossesSlain, before.slain + 1,
+      'scoreboard.onKill(true) fires — the line that was missing for the whole project');
+    eq((state.player.loomPoints ?? 0) - before.points, CFG.loom.pointsPerBossKill,
+      `the Loom drinks: +${CFG.loom.pointsPerBossKill} points, the run's second income source`);
+    ok((state.player.xp.combat ?? 0) > before.combatXp,
+      `combat xp is awarded (${before.combatXp} → ${state.player.xp.combat})`);
+
+    // A lord already re-forming cannot be farmed for a second payout.
+    const afterFirst = sys.scoreboard.bossesSlain;
+    sys.worldbosses.hurt(boss, 99999, true);
+    eq(sys.scoreboard.bossesSlain, afterFirst,
+      'a re-forming lord pays out once, not once per swing');
+  } finally {
+    state.worldBosses.length = 0;
+    for (const b of saved.bosses) state.worldBosses.push(b);
+    state.player.gold = saved.gold;
+    state.player.inv = saved.inv;
+    state.player.xp = saved.xp;
+    state.player.echoes = saved.echoes;
+    state.player.relic = saved.relic;
+    state.player.loomPoints = saved.points;
+    sys.scoreboard.bossesSlain = saved.slain;
+    state.god = saved.god;
+    state.gameOver = saved.gameOver;
+  }
+}
+
+/** B3.b — the tree's shape, pinned as a rule rather than as a snapshot.
+ *
+ *  Three properties, each of which the old 40-node tree broke:
+ *
+ *  1. Every keystone is reachable at the same cost. The old depths were 5 (Long
+ *     Thread), 8 (Glass Echo) and 9 (Night Market, Deep Roots) against a run that
+ *     affords ~6 points — so exactly one keystone was ever takeable, and it was the
+ *     one that paid for itself. That is a forced opening, not a build.
+ *  2. Every stat key the modifier map declares is granted by at least one node.
+ *     This is the structural half of B3.a: that test proves each key is CONSUMED by
+ *     a system, this one proves each is GRANTED by the tree. A key needs both to
+ *     matter, and the old tree failed the pair in the other direction — nine Ward
+ *     nodes granted only keys nothing read.
+ *  3. No node is inert. A node whose every effect is a key no system consumes is a
+ *     purchasable placebo, and the tree had ten of them.
+ *
+ *  Depth is computed the way `allocate()` actually gates: one rank of each
+ *  prerequisite, transitively, plus the node itself. */
+async function testLoomTreeShape(nw: any) {
+  const { LOOM_NODES, nodeById, DEFAULT_MODIFIERS, computeModifiers } = await import('../data/loom');
+
+  eq(LOOM_NODES.length, 15, `the tree is 15 nodes (got ${LOOM_NODES.length})`);
+  const totalRanks = LOOM_NODES.reduce((s: number, n: any) => s + n.maxRank, 0);
+  ok(totalRanks <= 60,
+    `${totalRanks} total ranks — small enough that a ~6-point run engages a real fraction of it`);
+
+  // --- 1. every keystone costs the same, and that cost is affordable ---
+  const costTo = (id: string, seen = new Set<string>()): number => {
+    if (seen.has(id)) return 0;
+    seen.add(id);
+    const n = nodeById(id);
+    if (!n) return 0;
+    return 1 + (n.req ?? []).reduce((s, r) => s + costTo(r, seen), 0);
+  };
+  const keystones = LOOM_NODES.filter((n: any) => n.keystone);
+  eq(keystones.length, 4, 'four keystones');
+  const depths = keystones.map((k: any) => ({ id: k.id, name: k.name, cost: costTo(k.id) }));
+  for (const d of depths) {
+    eq(d.cost, 4, `${d.name} costs ${d.cost} points to reach (all keystones sit at 4)`);
+  }
+  // A 900s run spans 2.65 cycles, so 2 nights + ~2 lords ≈ 6 points.
+  const { CFG } = await import('../data/config');
+  const reachablePoints = 2 * 1 + 2 * CFG.loom.pointsPerBossKill;
+  ok(Math.max(...depths.map((d) => d.cost)) < reachablePoints,
+    `a ~${reachablePoints}-point run can afford any keystone AND spend the remainder on ranks`);
+  ok(Math.min(...depths.map((d) => d.cost)) * 2 > reachablePoints - 2,
+    'but not so cheap that a run trivially takes all four');
+
+  // --- 2. every declared modifier key is granted by some node ---
+  const statKeys = Object.keys(DEFAULT_MODIFIERS).filter(
+    (k) => typeof (DEFAULT_MODIFIERS as any)[k] === 'number');
+  const granted = new Set<string>();
+  for (const n of LOOM_NODES) for (const k of Object.keys(n.effects)) granted.add(k);
+  const ungranted = statKeys.filter((k) => !granted.has(k));
+  eq(ungranted.length, 0,
+    `every stat key is granted by some node${ungranted.length ? ` — orphaned: ${ungranted.join(', ')}` : ''}`);
+
+  // Keystone flags come from the flag branch of computeModifiers, not from effects.
+  const flagKeys = Object.keys(DEFAULT_MODIFIERS).filter(
+    (k) => typeof (DEFAULT_MODIFIERS as any)[k] === 'boolean');
+  for (const k of flagKeys) {
+    const owner = keystones.find((ks: any) => (computeModifiers({ [ks.id]: 1 }) as any)[k] === true);
+    ok(owner !== undefined, `keystone flag '${k}' is raised by a real keystone (${owner?.name ?? 'NONE'})`);
   }
 
-  ok(true, 'loom keystones test completed');
+  // --- 3. no node is inert ---
+  // A node is inert when allocating one rank of it changes nothing in the map.
+  const inert = LOOM_NODES.filter((n: any) => {
+    if (n.keystone) return false;
+    const m = computeModifiers({ [n.id]: 1 });
+    return statKeys.every((k) => (m as any)[k] === (DEFAULT_MODIFIERS as any)[k]);
+  });
+  eq(inert.length, 0,
+    `no node is a placebo${inert.length ? ` — inert: ${inert.map((n: any) => n.name).join(', ')}` : ''}`);
+
+  // --- prerequisites are all real, and nothing is orphaned behind a typo ---
+  for (const n of LOOM_NODES) {
+    for (const r of n.req ?? []) {
+      ok(nodeById(r) !== undefined, `${n.name}'s prerequisite '${r}' is a real node`);
+    }
+  }
+}
+
+/** B3.b — the Loom is reachable by a player.
+ *
+ *  It was not. `LoomSystem.allocate()` shipped with C3 and had **zero production
+ *  call sites**: no panel, no tab, no key binding, no mention of the Loom anywhere
+ *  in `ui/` except the end-of-run scorecard's point total. A player earned points,
+ *  was toasted about each one, saw them counted on their scorecard, and could never
+ *  spend a single one. Forty nodes, 132 ranks and four keystones were unreachable
+ *  by any means the game offered.
+ *
+ *  §12 Q3 asked whether a 40-node tree is the right size for a 15-minute run. The
+ *  honest answer was that its size did not matter yet — nobody could open it.
+ *
+ *  This drives the real DOM: opens the panel, clicks a node, and checks that a
+ *  point left the bank and a modifier the game reads actually moved. */
+async function testLoomPanelIsReachable(nw: any) {
+  const { state, ui, sys } = nw;
+  const { LOOM_NODES } = await import('../data/loom');
+  const saved = {
+    nodes: { ...(state.player.loomNodes ?? {}) },
+    points: state.player.loomPoints,
+    rebuild: (sys.loom as any)._rebuildNeeded,
+  };
+  try {
+    state.player.loomNodes = {};
+    state.player.loomPoints = 4;
+    (sys.loom as any)._rebuildNeeded = true;
+
+    ui.open('loom');
+    ok(ui.isOpen(), 'the Loom panel opens at all');
+    eq(document.querySelector('.nw-phead h2')?.textContent, 'THE LOOM',
+      'the panel that opens is the Loom');
+    eq(document.querySelectorAll('.nw-loomcol').length, 3, 'all three branches are drawn');
+    eq(document.querySelectorAll('.nw-loomnode').length, LOOM_NODES.length,
+      `every one of the ${LOOM_NODES.length} nodes is on screen`);
+    ok(document.querySelectorAll('.nw-loomnode.keystone').length === 4,
+      'the four keystones are drawn and marked as keystones');
+
+    const affordable = [...document.querySelectorAll('.nw-loomnode.can')] as HTMLElement[];
+    ok(affordable.length > 0, `${affordable.length} nodes are allocatable with 4 points in hand`);
+
+    const pointsBefore = state.player.loomPoints;
+    const modsBefore = { ...sys.loom.ensureMods() };
+    affordable[0].click();
+    eq(state.player.loomPoints, pointsBefore - 1,
+      'clicking a node spends a real point — the panel is wired to LoomSystem');
+    eq(Object.keys(state.player.loomNodes).length, 1, '...and records the rank on the run');
+
+    // The click has to reach the modifier map, not just the bookkeeping.
+    const modsAfter = sys.loom.ensureMods();
+    const moved = Object.keys(modsAfter).filter(
+      (k) => typeof (modsAfter as any)[k] === 'number' && (modsAfter as any)[k] !== (modsBefore as any)[k]);
+    ok(moved.length > 0,
+      `...and moves a modifier the game reads (${moved.join(', ')})`);
+
+    // Spending down to nothing closes the tree again — no free ranks.
+    state.player.loomPoints = 0;
+    ui.open('loom');
+    eq(document.querySelectorAll('.nw-loomnode.can').length, 0,
+      'with no points, nothing is allocatable');
+  } finally {
+    ui.close();
+    state.player.loomNodes = saved.nodes;
+    state.player.loomPoints = saved.points;
+    (sys.loom as any)._rebuildNeeded = true;
+    sys.loom.ensureMods();
+    (sys.loom as any)._rebuildNeeded = saved.rebuild;
+  }
+}
+
+/** B3.a — the Loom's payoff layer is real, not advertising.
+ *
+ *  The audit that motivated this test: six of `LoomModifiers`' fourteen stat keys
+ *  (`craftCostReduction`, `armorPct`, `regenPct`, `buildingHpPct`, `towerDmgPct`,
+ *  `towerRange`) had **zero production consumers**. That made 10 of the tree's 36
+ *  nodes — 38 of 128 ranks — placebo, including nine of the twelve Ward nodes.
+ *  `getBuildingHpMul`, `getBossWakeGold` and `getDmgRollTransform` had zero
+ *  production call sites *between them*. Deep Roots did nothing whatsoever: all
+ *  three of its advertised clauses were unwired.
+ *
+ *  The suite was fully green through all of it, which is the actual lesson. So this
+ *  test does not check the accessors against themselves — with two flagged
+ *  exceptions it drives the real system and observes the real consequence: damage
+ *  actually taken, HP actually regenerated, ingredients actually left in the bag, a
+ *  building's actual ceiling, a tower actually reaching a foe it could not reach.
+ *
+ *  Modifiers are pinned directly onto `loom.mods` rather than allocated. That is
+ *  deliberate: this test asks whether the game CONSUMES each key. Whether the tree
+ *  GRANTS it is a different question, tested by the allocation tests. */
+async function testLoomPayoffLayerIsReal(nw: any) {
+  const { state, sys, world } = nw;
+  const loom = sys.loom;
+  const { DEFAULT_MODIFIERS } = await import('../data/loom');
+  const { playerMaxHp } = await import('../rules');
+  const { CFG } = await import('../data/config');
+  const { craft } = await import('./crafting');
+  const { BUILDINGS } = await import('../data/buildings');
+  const { ENEMIES } = await import('../data/enemies');
+
+  const saved = {
+    mods: loom.mods,
+    rebuild: (loom as any)._rebuildNeeded,
+    nodes: { ...(state.player.loomNodes ?? {}) },
+    points: state.player.loomPoints,
+    hp: state.player.hp,
+    gold: state.player.gold,
+    depleted: { ...state.depleted },
+    clock: state.clock,
+    equip: { ...state.player.equip },
+    relic: state.player.relic,
+    inv: { ...state.player.inv },
+    buildings: state.buildings.slice(),
+    god: state.god,
+    gameOver: state.gameOver,
+    xp: { ...state.player.xp },
+  };
+  // A clean subject: no god mode, no gear (gear grants flat armour and can carry
+  // the 'dodge' effect, which would make the damage probe a coin flip), daylight.
+  state.god = false;
+  state.gameOver = false;
+  state.player.equip = {};
+  state.player.relic = undefined;
+  state.clock = 10;                     // daylight — regen is day-only
+
+  const setMods = (over: any) => {
+    loom.mods = { ...DEFAULT_MODIFIERS, ...over };
+    (loom as any)._rebuildNeeded = false;
+  };
+
+  try {
+    // ---- armorPct: damage actually taken ---------------------------------
+    const hitFor = (dmg: number) => {
+      state.player.hp = 5000;             // headroom, so no death/respawn branch
+      const before = state.player.hp;
+      sys.combat.damagePlayer(dmg, 'gauntlet');
+      return before - state.player.hp;
+    };
+    setMods({});
+    const bareHit = hitFor(60);
+    setMods({ armorPct: 100 });
+    const armoredHit = hitFor(60);
+    ok(bareHit > 0, `a bare hit lands for ${bareHit}`);
+    ok(armoredHit < bareHit,
+      `armorPct softens a real hit: ${bareHit} → ${armoredHit} damage taken`);
+    ok(armoredHit <= Math.ceil(bareHit * 0.6),
+      `100 armorPct is worth about a third off: ${armoredHit} ≤ ${Math.ceil(bareHit * 0.6)}`);
+
+    // Diminishing, so no stack of ranks reaches immunity.
+    setMods({ armorPct: 100000 });
+    ok(hitFor(60) >= 1, 'armorPct cannot reach immunity — a hit always costs at least 1');
+
+    // ---- regenPct: HP actually regenerated -------------------------------
+    const regenOver = (secs: number) => {
+      state.player.hp = 1;
+      sys.combat.update(secs);
+      return state.player.hp - 1;
+    };
+    setMods({});
+    const bareRegen = regenOver(1.0);
+    setMods({ regenPct: 200 });
+    const boostedRegen = regenOver(1.0);
+    ok(bareRegen > 0, `daylight regen ticks at all: +${bareRegen.toFixed(3)} hp/s`);
+    ok(boostedRegen > bareRegen,
+      `regenPct speeds real regen: ${bareRegen.toFixed(3)} → ${boostedRegen.toFixed(3)} hp/s`);
+
+    // ---- craftCostReduction: ingredients actually left in the bag --------
+    const { RECIPES } = await import('../data/recipes');
+    const rec = RECIPES.find((r: any) => r.in.length === 1 && r.in[0].n >= 2);
+    if (rec) {
+      state.player.xp[rec.skill] = 1e7;   // clear the level gate
+      const ing = rec.in[0];
+      setMods({});
+      state.player.inv[ing.id] = ing.n;
+      ok(craft(state, rec.id, () => {}, undefined, undefined, loom),
+        `${rec.id} crafts at full price`);
+      eq(state.player.inv[ing.id] ?? 0, 0, `...consuming all ${ing.n} ${ing.id}`);
+
+      setMods({ craftCostReduction: 50 });
+      state.player.inv[ing.id] = ing.n;
+      ok(craft(state, rec.id, () => {}, undefined, undefined, loom),
+        `${rec.id} still crafts at a discount`);
+      eq(state.player.inv[ing.id] ?? 0, ing.n - Math.ceil(ing.n * 0.5),
+        `...leaving ${ing.n - Math.ceil(ing.n * 0.5)} ${ing.id} unspent — the discount is real`);
+
+      // Never free: the floor holds even at an absurd rank total.
+      setMods({ craftCostReduction: 100000 });
+      state.player.inv[ing.id] = ing.n;
+      craft(state, rec.id, () => {}, undefined, undefined, loom);
+      eq(state.player.inv[ing.id] ?? 0, ing.n - 1,
+        'craftCostReduction floors at 1 of each ingredient — crafting never becomes free');
+    }
+
+    // ---- gatherSpeedPct and doubleYieldChance: the real gather -----------
+    // Both were already wired before B3.a, and both were unpinned: unwiring either
+    // left the suite green. Found by mutation, not by reading.
+    state.player.inv.axe_flint = (state.player.inv.axe_flint ?? 0) + 1;
+    state.player.inv.pick_flint = (state.player.inv.pick_flint ?? 0) + 1;
+    const gtx0 = Math.floor(state.player.x / 32), gty0 = Math.floor(state.player.y / 32);
+    let node: { tx: number; ty: number } | null = null;
+    for (let dy = -3; dy <= 3 && !node; dy++)
+      for (let dx = -3; dx <= 3 && !node; dx++)
+        if (world.activeFeatureAt(gtx0 + dx, gty0 + dy)) node = { tx: gtx0 + dx, ty: gty0 + dy };
+
+    if (node) {
+      const savedPos = { x: state.player.x, y: state.player.y };
+      state.player.x = (node.tx + 0.5) * 32 + 20;
+      state.player.y = (node.ty + 0.5) * 32;
+      nw.step(1);
+
+      // gatherSpeedPct shortens the work: `need` is gatherSec / speed.
+      const needWith = (over: any) => {
+        setMods(over);
+        sys.gather.active = null;
+        nw.step(1);
+        sys.gather.tryStart();
+        const n = sys.gather.active ? sys.gather.active.need : -1;
+        sys.gather.active = null;
+        return n;
+      };
+      const slowNeed = needWith({});
+      const fastNeed = needWith({ gatherSpeedPct: 100 });
+      ok(slowNeed > 0, `a real gather takes ${slowNeed.toFixed(2)}s of work`);
+      ok(fastNeed < slowNeed,
+        `gatherSpeedPct shortens it: ${slowNeed.toFixed(2)}s → ${fastNeed.toFixed(2)}s`);
+
+      // doubleYieldChance at 100 fires every time, so the extra roll is deterministic.
+      const harvest = (over: any) => {
+        setMods(over);
+        // The previous harvest depleted the node, so the second probe would find
+        // nothing. Un-deplete and re-bake — this is the same tile either way, which
+        // is what makes the two yields comparable at all.
+        for (const k of Object.keys(state.depleted)) delete state.depleted[k];
+        nw.chunks.rebakeTile(node!.tx, node!.ty);
+        sys.gather.active = null;
+        nw.step(1);
+        sys.gather.tryStart();
+        const a = sys.gather.active;
+        if (!a) return -1;
+        const before = Object.values(state.player.inv as Record<string, number>)
+          .reduce((s: number, n: number) => s + n, 0);
+        // rollLoot() is random per entry, so an unpinned second roll can legitimately
+        // yield nothing and the probe reads "2 → 2 items". Pinning random to 0 makes
+        // every entry drop at its minimum, identically for both harvests, so the
+        // doubled one is exactly twice the plain one. (This flaked RED twice in three
+        // runs before the stub — caught here rather than in someone else's commit.)
+        const realRandom = Math.random;
+        Math.random = () => 0;
+        try { (sys.gather as any).finish(a); } finally { Math.random = realRandom; }
+        sys.gather.active = null;
+        return Object.values(state.player.inv as Record<string, number>)
+          .reduce((s: number, n: number) => s + n, 0) - before;
+      };
+      const plainYield = harvest({});
+      const doubledYield = harvest({ doubleYieldChance: 100 });
+      ok(plainYield > 0, `a real harvest yields ${plainYield} items`);
+      ok(doubledYield > plainYield,
+        `doubleYieldChance adds a real second roll: ${plainYield} → ${doubledYield} items`);
+      state.player.x = savedPos.x; state.player.y = savedPos.y;
+      sys.gather.active = null;
+    }
+
+    // ---- buildingHpPct + Deep Roots: a building's actual ceiling ---------
+    // Placed through build.commit(), the path the game uses. The older tower test
+    // pushes into state.buildings directly, which would have missed this entirely.
+    const cheap = BUILDINGS.find((d: any) => d.id === 'campfire') ?? BUILDINGS[0];
+    const placeVia = (over: any): any => {
+      setMods(over);
+      for (const c of cheap.cost ?? []) state.player.inv[c.id] = (state.player.inv[c.id] ?? 0) + c.n * 4;
+      sys.build.enter(cheap.id);
+      if (!sys.build.mode) return null;
+      const px = Math.floor(state.player.x / 32), py = Math.floor(state.player.y / 32);
+      let spot: { tx: number; ty: number } | null = null;
+      for (let r = 1; r <= 8 && !spot; r++)
+        for (let dx = -r; dx <= r && !spot; dx++)
+          for (let dy = -r; dy <= r && !spot; dy++)
+            if (world.canPlaceAt(px + dx, py + dy, false)) spot = { tx: px + dx, ty: py + dy };
+      if (!spot) { sys.build.cancel(); return null; }
+      sys.build.mode.tx = spot.tx; sys.build.mode.ty = spot.ty; sys.build.mode.valid = true;
+      (sys.build as any).enteredAt = -1e9;   // the anti-misclick guard is not under test
+      (sys.build as any).commit();
+      sys.build.cancel();
+      return state.buildings[state.buildings.length - 1];
+    };
+    const plain = placeVia({});
+    if (plain) {
+      eq(plain.maxHp, cheap.hp, `a plain ${cheap.id} is placed at its def HP (${cheap.hp})`);
+      const tough = placeVia({ buildingHpPct: 100 });
+      ok(tough && tough.maxHp > plain.maxHp,
+        `buildingHpPct raises a real building's ceiling: ${plain.maxHp} → ${tough?.maxHp}`);
+      eq(tough.hp, tough.maxHp, '...and it is placed at full health, not at the old max');
+      const rooted = placeVia({ deepRoots: true });
+      eq(rooted.maxHp, Math.round(cheap.hp * CFG.loom.deepRootsBuildingHpMul),
+        `Deep Roots' "+50% building HP" is real: ${plain.maxHp} → ${rooted.maxHp}`);
+    }
+
+    // ---- towerDmgPct and towerRange: a tower actually reaching further ---
+    // One isolated tower on the field, so no aura or shrine can move the numbers.
+    const towerDef = BUILDINGS.find((d: any) => d.tower && d.towerRole !== 'aura');
+    if (towerDef) {
+      const held = state.buildings;
+      const tx = Math.floor(state.player.x / 32) + 20, ty = Math.floor(state.player.y / 32) + 20;
+      const tower = { uid: state.nextUid++, type: towerDef.id, tx, ty, hp: towerDef.hp, maxHp: towerDef.hp };
+      state.buildings = [tower];
+      world.reindexBuildings();
+
+      const dummy = ENEMIES.find((e: any) => !e.boss)!;
+      const shootFrom = (tiles: number, over: any) => {
+        setMods(over);
+        (sys.combat as any).towerT.clear();          // no leftover cooldown
+        const foe = {
+          uid: state.nextUid++, def: dummy,
+          x: (tx + 0.5) * 32 + tiles * 32, y: (ty + 0.2) * 32,
+          px: 0, py: 0, hp: 100000, maxHp: 100000,
+          dmg: 0, atkT: 999, telegraphT: 0, animT: 0,
+        };
+        sys.hordes.foes.push(foe);
+        (sys.combat as any).updateTowers(1 / 30);
+        sys.hordes.foes = sys.hordes.foes.filter((f: any) => f.uid !== foe.uid);
+        return foe.maxHp - foe.hp;
+      };
+
+      const R = towerDef.tower.rangeTiles;
+      const inRange = shootFrom(R - 0.5, {});
+      ok(inRange > 0, `the isolated ${towerDef.id} hits at ${(R - 0.5).toFixed(1)} tiles for ${inRange}`);
+
+      const buffed = shootFrom(R - 0.5, { towerDmgPct: 100 });
+      ok(buffed > inRange,
+        `towerDmgPct raises real tower damage: ${inRange} → ${buffed}`);
+
+      // The boundary: just outside the tower's reach, then reached.
+      eq(shootFrom(R + 0.5, {}), 0,
+        `nothing lands at ${(R + 0.5).toFixed(1)} tiles — that is outside the tower's reach`);
+      ok(shootFrom(R + 0.5, { towerRange: 1 }) > 0,
+        'towerRange extends a real tower onto a foe it could not previously touch');
+      ok(shootFrom(R + 0.5, { deepRoots: true }) > 0,
+        `Deep Roots' "towers +1 range" is real, not just a tooltip`);
+
+      state.buildings = held;
+      world.reindexBuildings();
+    }
+
+    // ---- Glass Echo: the roll transform reaches a real swing -------------
+    // The first version of this test pinned loom.getDmgRollTransform() directly and
+    // passed while combat.ts was mutated to ignore it — a helper test, not a wiring
+    // test. This swings at a foe instead. `lastSwingDmgMul` is pinned to the bottom
+    // of the D5 band, which is exactly where Glass Echo's remap does the most work.
+    const dummy2 = ENEMIES.find((e: any) => !e.boss)!;
+    const savedResonance = nw.ctx.net.consumeResonance;
+    const savedRoll = nw.ctx.net.lastSwingDmgMul;
+    nw.ctx.net.consumeResonance = () => null;   // crits are not under test
+    const swingFor = (over: any, angleOff = 0) => {
+      setMods(over);
+      nw.ctx.net.lastSwingDmgMul = 0.30;        // the D5 band floor
+      const r = 8;
+      const foe = {
+        uid: state.nextUid++, def: dummy2,
+        x: state.player.x + Math.cos(angleOff) * r,
+        y: state.player.y + Math.sin(angleOff) * r,
+        px: 0, py: 0, hp: 100000, maxHp: 100000,
+        dmg: 0, atkT: 999, telegraphT: 0, animT: 0,
+      };
+      nw.ctx.player.aimAngle = 0;               // face +x
+      sys.hordes.foes.push(foe);
+      (sys.combat as any).resolveHit();
+      sys.hordes.foes = sys.hordes.foes.filter((f: any) => f.uid !== foe.uid);
+      return foe.maxHp - foe.hp;
+    };
+    const floorSwing = swingFor({});
+    ok(floorSwing > 0, `a floor-roll swing lands for ${floorSwing}`);
+    ok(swingFor({ glassEcho: true }) > floorSwing,
+      `Glass Echo lifts a real swing off the band floor: ${floorSwing} → ${swingFor({ glassEcho: true })} damage`);
+
+    // The three melee stat keys, through the same real swing. meleeDmgPct was
+    // wired but unpinned — unwiring it left the suite green until this landed.
+    ok(swingFor({ meleeDmgPct: 200 }) > floorSwing,
+      `meleeDmgPct raises real swing damage: ${floorSwing} → ${swingFor({ meleeDmgPct: 200 })}`);
+    ok(swingFor({ dmgRollFloor: 1.0 }) > floorSwing,
+      `dmgRollFloor lifts the roll on a real swing: ${floorSwing} → ${swingFor({ dmgRollFloor: 1.0 })}`);
+
+    // swingSpeedPct: the real attack envelope, which is what updatePhase() clocks
+    // the swing with. Whatever pinned this before was flaky — it went RED on one
+    // mutation sweep and GREEN on the next with no code change between them.
+    setMods({});
+    const slowEnv = (sys.combat as any).envelope();
+    setMods({ swingSpeedPct: 100 });
+    const fastEnv = (sys.combat as any).envelope();
+    ok(fastEnv.windup < slowEnv.windup,
+      `swingSpeedPct shortens the real swing envelope: windup ${slowEnv.windup.toFixed(3)}s → ${fastEnv.windup.toFixed(3)}s`);
+    ok(fastEnv.recovery < slowEnv.recovery,
+      `...and its recovery: ${slowEnv.recovery.toFixed(3)}s → ${fastEnv.recovery.toFixed(3)}s`);
+
+    // arcWidthPct: a foe just outside the swing arc, then inside a widened one.
+    const halfArc = (CFG.combat.arcDeg * Math.PI / 180) / 2;
+    const justOutside = halfArc + 0.12;
+    eq(swingFor({}, justOutside), 0,
+      `a foe ${(justOutside * 180 / Math.PI).toFixed(0)}° off-centre is outside the base arc`);
+    ok(swingFor({ arcWidthPct: 200 }, justOutside) > 0,
+      'arcWidthPct widens a real swing onto a foe it previously missed');
+
+    nw.ctx.net.consumeResonance = savedResonance;
+    nw.ctx.net.lastSwingDmgMul = savedRoll;
+
+    // ---- Glass Echo: max HP is halved, and the clamp bites ---------------
+    state.player.loomNodes = {};
+    const fullHp = playerMaxHp(state);
+    eq(fullHp, CFG.player.maxHp, 'with an empty weave, max HP is the config value');
+    state.player.loomNodes = { keystone_glass: 1 };
+    const glassHp = playerMaxHp(state);
+    eq(glassHp, Math.round(CFG.player.maxHp * CFG.loom.glassEchoHpMul),
+      `Glass Echo's "Max HP halved" is real: ${fullHp} → ${glassHp}`);
+    ok(glassHp < fullHp, 'the keystone has a downside at all — it is not a pure upgrade');
+
+    // Taking it while above the new ceiling must not leave a health bar past 100%.
+    state.player.loomNodes = {};
+    state.player.loomPoints = 5;
+    state.player.hp = CFG.player.maxHp;
+    (loom as any)._rebuildNeeded = true;
+    loom.allocate('w1');                          // any node; the clamp runs on all
+    state.player.loomNodes = { keystone_glass: 1 };
+    state.player.hp = CFG.player.maxHp;
+    loom.allocate('w1');
+    ok(state.player.hp <= playerMaxHp(state),
+      `allocating clamps HP to the new ceiling (${state.player.hp} ≤ ${playerMaxHp(state)})`);
+
+    // ---- Night Market: the boss-wake threshold actually halves -----------
+    state.player.loomNodes = {};
+    (loom as any)._rebuildNeeded = true;
+    setMods({});
+    eq(loom.getBossWakeGold(), CFG.worldBoss.wakeGold, 'bosses rouse at the full gold threshold by default');
+    setMods({ nightMarket: true });
+    eq(loom.getBossWakeGold(), CFG.worldBoss.wakeGold / CFG.loom.nightMarketWakeDiv,
+      `Night Market halves it: ${CFG.worldBoss.wakeGold} → ${loom.getBossWakeGold()}`);
+
+    // ---- territoryIncomePct and Night Market's gold rate -----------------
+    setMods({});
+    eq(loom.getGoldMul(), 1, 'no weave, no gold bonus');
+    setMods({ territoryIncomePct: 50 });
+    eq(+loom.getGoldMul().toFixed(4), 1.5, 'territoryIncomePct feeds the gold rate');
+    setMods({ nightMarket: true });
+    eq(+loom.getGoldMul().toFixed(4), CFG.loom.nightMarketGoldMul,
+      `Night Market's "+40% gold" comes from CFG, not a literal (${CFG.loom.nightMarketGoldMul}×)`);
+
+    // ---- moveSpeedPct and Deep Roots' penalty: real distance travelled ----
+    // The composition lives inside sim(), so the only honest probe is to drive the
+    // input axis and measure how far the player actually gets. An accessor-only
+    // version of this check passed while main.ts was mutated to ignore the Loom.
+    setMods({});
+    eq(loom.getMoveSpeedMul(), 1, 'no weave, no speed change');
+    setMods({ moveSpeedPct: 30, deepRoots: true });
+    ok(loom.getMoveSpeedMul() < 1.3,
+      'the penalty composes multiplicatively — movement ranks do not cancel it out');
+
+    const savedAxis = nw.input?.axis;
+    if (savedAxis) {
+      nw.input.axis = () => ({ x: 1, y: 0 });
+      const sx = state.player.x, sy = state.player.y;
+      const travel = (over: any) => {
+        setMods(over);
+        state.player.x = sx; state.player.y = sy;
+        nw.ctx.player.teleport(sx, sy);
+        nw.step(20);
+        return Math.hypot(state.player.x - sx, state.player.y - sy);
+      };
+      const freeDist = travel({});
+      const rootedDist = travel({ deepRoots: true });
+      const fastDist = travel({ moveSpeedPct: 100 });
+      nw.input.axis = savedAxis;
+      state.player.x = sx; state.player.y = sy;
+      nw.ctx.player.teleport(sx, sy);
+      ok(freeDist > 0, `the player covers real ground in the sim: ${freeDist.toFixed(1)}px / 20 ticks`);
+      ok(rootedDist < freeDist,
+        `Deep Roots slows real movement: ${freeDist.toFixed(1)} → ${rootedDist.toFixed(1)}px`);
+      ok(fastDist > freeDist,
+        `moveSpeedPct speeds it up: ${freeDist.toFixed(1)} → ${fastDist.toFixed(1)}px`);
+    }
+
+    // ---- territoryIncomePct and Night Market reach the real gold tick -----
+    const heldBuildings = state.buildings;
+    const ptx = Math.floor(state.player.x / 32), pty = Math.floor(state.player.y / 32);
+    state.buildings = [{ uid: state.nextUid++, type: 'hall', tx: ptx + 3, ty: pty + 3, hp: 500, maxHp: 500 }];
+    world.reindexBuildings();
+    const goldFrom = (over: any) => {
+      setMods(over);
+      state.player.gold = 0;
+      (sys.economy as any).t = CFG.economy.tickSec;   // force the tick to fire now
+      sys.economy.update(0.001);
+      return state.player.gold;
+    };
+    const baseGold = goldFrom({});
+    if (baseGold > 0) {
+      ok(goldFrom({ territoryIncomePct: 100 }) > baseGold,
+        `territoryIncomePct reaches the real economy tick: ${baseGold} → ${goldFrom({ territoryIncomePct: 100 })} gold`);
+      ok(goldFrom({ nightMarket: true }) > baseGold,
+        `Night Market's "+40% gold" reaches it too: ${baseGold} → ${goldFrom({ nightMarket: true })} gold`);
+    }
+    state.buildings = heldBuildings;
+    world.reindexBuildings();
+  } finally {
+    loom.mods = saved.mods;
+    (loom as any)._rebuildNeeded = saved.rebuild;
+    state.player.loomNodes = saved.nodes;
+    state.player.loomPoints = saved.points;
+    state.player.hp = saved.hp;
+    state.clock = saved.clock;
+    state.player.equip = saved.equip;
+    state.player.relic = saved.relic;
+    state.player.inv = saved.inv;
+    state.player.xp = saved.xp;
+    state.buildings = saved.buildings;
+    state.god = saved.god;
+    state.gameOver = saved.gameOver;
+    state.player.gold = saved.gold;
+    state.depleted = saved.depleted;
+    world.reindexBuildings();
+  }
+}
+
+/** B2.1 — every run starts at dawn, whatever the wall clock says.
+ *
+ *  D2 set the opening clock to `net.snap.timeOfDay * cycleLen()`. On a 15-minute
+ *  scored run that is 2.65 cycles long, that made the real local time of page load
+ *  a large uncontrolled input to the score — boot at 16:50 for ~6 s of daylight,
+ *  boot at 16:56–23:59 (29.4% of the real day) and start inside the night.
+ *
+ *  The pin has two halves because there are two ways to lose this:
+ *    - `startClock()` itself could start reading its argument again. Checked across
+ *      the exact time-of-day fractions that used to produce night starts.
+ *    - main() could stop calling it. Checked against `state.bootClock`, which main()
+ *      records from the value it actually used.
+ *
+ *  Note on the second half: it is only decisive when the machine running the suite
+ *  is not within a few minutes of local midnight, since tod≈0 makes the old rule and
+ *  the new one agree. The first half has no such hole, which is why both are here. */
+async function testRunStartsAtDawn(nw: any) {
+  const { state } = nw;
+  const { startClock, phase, cycleLen } = await import('./daynight');
+  const cy = cycleLen();
+
+  // The fractions below are the §4 table's own rows: dawn, midday, one second
+  // before dusk, deep inside the night, and one second before the next dawn.
+  for (const tod of [0, 0.25, 0.5, 0.706, 0.85, 0.99999]) {
+    const c = startClock(tod);
+    eq(c, 0, `time-of-day ${tod} still starts the run at clock 0 (D2 would give ${(tod * cy).toFixed(0)})`);
+    ok(!phase(c).isNight, `...and clock 0 is daylight, not night`);
+  }
+
+  // Full daylight, not merely "not night": the run must get the whole preparation
+  // window, so the leaderboard compares runs that were asked the same question.
+  const { CFG } = await import('../data/config');
+  const { phaseRemaining } = await import('./daynight');
+  eq(phaseRemaining(startClock(0.85)), CFG.time.daySec,
+    `a run booted at 20:24 local still gets the full ${CFG.time.daySec}s day before its first night`);
+
+  // And this run — the live boot behind the suite — actually used it.
+  eq(state.bootClock, 0, 'this run booted at dawn');
+}
+
+/** B2 — a night can only be survived if it was entered.
+ *
+ *  Two paths handed out free nights, each worth CFG.legacy.weights.nightSurvived
+ *  on a board whose entire purpose is comparing runs:
+ *
+ *    1. D2 seeds the clock from the real local time of day, and ~29% of the real
+ *       day lands inside the game's night. Such a run never sees dusk — but the
+ *       next dawn credited a night AND a Loom point anyway (§5).
+ *    2. triggerGameOver() called hordes.onDawn() purely to sweep the field, and
+ *       onDawn() incremented the counter. So every run, however it ended,
+ *       collected one final night at the moment it ended. The plan missed this
+ *       one; it is the path that actually produced §5's own 7-second scorecard,
+ *       which could not have crossed a dawn at all.
+ *
+ *  Measured live before the fix: a run parked in daylight having fought nothing
+ *  reported nightsSurvived 1 / loomPoints 1, then 2 after onHallDestroyed(). */
+async function testNightCreditRequiresEntry(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+  const cy = CFG.time.daySec + CFG.time.nightSec;
+  const restoreClock = state.clock;
+  state.gameOver = false;
+  state.gameOverCause = null;
+
+  // --- sweeping the field is not a credit ---------------------------------
+  const beforeSweep = state.nightsSurvived;
+  sys.hordes.clearField();
+  eq(state.nightsSurvived, beforeSweep, 'clearField() sweeps without crediting a night');
+  eq(sys.hordes.foes.length, 0, 'clearField() does clear the foes');
+
+  // --- dawn on a night nobody entered credits nothing ----------------------
+  const beforeUnentered = state.nightsSurvived;
+  const pointsBefore = state.player.loomPoints ?? 0;
+  sys.hordes.onDawn(false);
+  eq(state.nightsSurvived, beforeUnentered, 'dawn after an unentered night credits no night');
+  eq(state.player.loomPoints ?? 0, pointsBefore, '...and no Loom point');
+
+  // --- a real dusk → dawn cycle credits exactly one ------------------------
+  // Driven through nw.step so the gate under test is main.ts's own transition
+  // branch, not a hand-call into the horde system.
+  state.clock = CFG.time.daySec - 1;      // daylight; let any pending edge settle
+  nw.step(2);
+  state.nightEntered = false;
+  const survivedBefore = state.nightsSurvived;
+
+  state.clock = CFG.time.daySec + 1;      // into the night → dusk edge
+  nw.step(2);
+  eq(state.nightEntered, true, 'crossing dusk marks the night as entered');
+  eq(state.nightsSurvived, survivedBefore, '...and credits nothing yet');
+
+  state.clock = cy + 1;                    // into the next day → dawn edge
+  nw.step(2);
+  eq(state.nightsSurvived, survivedBefore + 1, 'crossing dawn after a real dusk credits one night');
+  eq(state.nightEntered, false, 'the dawn consumes the mark, so it cannot be spent twice');
+
+  // --- §5's actual scenario: the run booted mid-night ----------------------
+  // Sit inside the night with no dusk on record — which is precisely what D2's
+  // real-clock start produces for the ~29% of the real day that lands in the
+  // game's night — then cross into day. This is the case that pins main.ts's
+  // transition gate; the onDawn(false) check above only pins the horde system.
+  state.clock = CFG.time.daySec + 50;      // mid-night
+  nw.step(2);
+  state.nightEntered = false;              // ...but nobody was here when it fell
+  const survivedBoot = state.nightsSurvived;
+  const pointsBoot = state.player.loomPoints ?? 0;
+  state.clock = cy + 1;                     // cross into day → dawn edge
+  nw.step(2);
+  eq(state.nightsSurvived, survivedBoot, 'a run that booted mid-night gets no night at its first dawn');
+  eq(state.player.loomPoints ?? 0, pointsBoot, '...and no Loom point either');
+
+  // A stat fixture must not be able to wedge the gate shut. This is why the
+  // mark is a flag and not `nightsEntered > nightsSurvived`: regression.ts
+  // assigns state.nightsSurvived directly (the scoreboard fixtures set it to 5
+  // and to 20), and under the counter form that put the credit permanently out
+  // of reach — the extended playthrough silently survived 0 nights across 6
+  // full day/night cycles.
+  state.nightsSurvived = 999;
+  state.clock = CFG.time.daySec - 1; nw.step(2);
+  state.clock = CFG.time.daySec + 1; nw.step(2);   // dusk
+  state.clock = cy + 1; nw.step(2);                // dawn
+  eq(state.nightsSurvived, 1000, 'credit still works after nightsSurvived is assigned directly');
+
+  state.nightsSurvived = survivedBefore + 1;
+  state.clock = restoreClock;
+  state.nightEntered = false;
+  sys.hordes.clearField();
+}
+
+/** B2 — the Long Thread counts skill levels with the game's xp curve.
+ *
+ *  systems/loom.ts carried its own levelOf(): it multiplied CFG.xp.growth
+ *  without rounding, while rules.xpToNext rounds every level's cost. The copy's
+ *  cumulative ran fractionally high, so the two disagreed at 64 xp values in
+ *  0..60000 — and, because the drift is always in the same direction, they
+ *  disagreed at *exactly* the gate totals. A skill parked on 286 xp is level 5
+ *  by the curve the rest of the game uses, and was level 4 to the Loom.
+ *
+ *  The expected values below are written down, not derived from the curve.
+ *  Eight skills on the level-5 gate is 40 total levels, which is 4 points at one
+ *  per ten. Under the old private copy the same xp read as level 4 apiece — 32
+ *  levels, 3 points. So this separates the fix from the bug rather than
+ *  restating whichever one happens to be compiled in. */
+async function testLongThreadCurve(nw: any) {
+  const { state } = nw;
+  const { SKILLS } = await import('../data/skills');
+  const { LOOM_NODES } = await import('../data/loom');
+  const loom = nw.sys.loom;
+
+  const saved = {
+    xp: { ...state.player.xp },
+    nodes: { ...state.player.loomNodes },
+    points: state.player.loomPoints,
+    lt: state.player._longThreadPoints,
+  };
+
+  eq(SKILLS.length, 8, 'eight skills feed the Long Thread total');
+
+  const thread = LOOM_NODES.find((n: any) => n.id === 'keystone_thread')!;
+  state.player.loomNodes = {};
+  for (const reqId of thread.req ?? [])
+    state.player.loomNodes[reqId] = LOOM_NODES.find((n: any) => n.id === reqId)?.maxRank ?? 1;
+  state.player.loomPoints = 10;
+  ok(loom.allocate('keystone_thread'), 'Long Thread allocates once its prereq is held');
+  ok(loom.ensureMods().longThread, 'Long Thread modifier is live');
+
+  // Every skill parked exactly on the level-5 gate.
+  state.player.xp = {};
+  for (const s of SKILLS) state.player.xp[s.id] = 286;
+  state.player._longThreadPoints = 0;
+  const atGate = state.player.loomPoints;
+  loom.onSkillLevelUp();
+  // Written down, not derived: 8 skills x level 5 = 40 total levels, and B3.b set
+  // the divisor to 12, so floor(40/12) = 3. Under B1's /10 this was 4; under the
+  // pre-B2 private xp curve the same xp read level 4 apiece = 32 levels = 3.
+  eq(state.player.loomPoints - atGate, 3,
+    '8 skills on the L5 gate (286 xp) = 40 levels = 3 Long Thread points at /12');
+  eq(state.player._longThreadPoints, 3, 'the grant is banked so it is not paid twice');
+
+  loom.onSkillLevelUp();
+  eq(state.player.loomPoints - atGate, 3, 'a second call with no new levels grants nothing');
+
+  // One xp short of the gate is one level short on every skill: 32 levels, and
+  // floor(32/12) = 2. The pair of assertions is the point — 285 and 286 xp must
+  // land on different grants, which is what caught loom.ts's private xp curve
+  // in the first place (§17): it read both as level 4.
+  for (const s of SKILLS) state.player.xp[s.id] = 285;
+  state.player._longThreadPoints = 0;
+  const belowGate = state.player.loomPoints;
+  loom.onSkillLevelUp();
+  eq(state.player.loomPoints - belowGate, 2,
+    '8 skills one xp below the gate (285) = 32 levels = 2 points at /12');
+
+  state.player.xp = saved.xp;
+  state.player.loomNodes = saved.nodes;
+  state.player.loomPoints = saved.points;
+  state.player._longThreadPoints = saved.lt;
 }
 
 // =========================================================================
@@ -2014,9 +2986,13 @@ async function testSurvivalPlaythrough(nw: any) {
     if (state.player.gold > prevGold) {
       m.goldEarned += state.player.gold - prevGold;
     }
-    // Track nights survived
+    // Track nights survived. B2: accumulate the DELTA, not the absolute counter.
+    // state.nightsSurvived is a run-wide stat that earlier fixtures assign
+    // directly (the scoreboard tests set it to 5, 1 and 20), so copying it here
+    // reported a playthrough's nights as "20 + however many it actually did" —
+    // and that number is what gets quoted as evidence.
     if (state.nightsSurvived > prevNight) {
-      m.nightsSurvived = state.nightsSurvived;
+      m.nightsSurvived += state.nightsSurvived - prevNight;
       logEvent(m, state.clock, 'night', `survived night ${state.nightsSurvived}`);
       prevNight = state.nightsSurvived;
     }
@@ -3176,9 +4152,10 @@ async function testExhaustivePlaythrough(nw: any) {
     if (state.player.gold > prevGold) m.goldEarned += state.player.gold - prevGold;
     prevGold = state.player.gold;
 
-    // Track nights
+    // Track nights — the DELTA, not the absolute run stat (see the same fix in
+    // testSurvivalPlaythrough above; fixtures assign state.nightsSurvived).
     if (state.nightsSurvived > prevNight) {
-      m.nightsSurvived = state.nightsSurvived;
+      m.nightsSurvived += state.nightsSurvived - prevNight;
       exLog(m, state.clock, 'night', `survived night ${state.nightsSurvived}`);
       exMark(m, 'hordes');
       prevNight = state.nightsSurvived;
@@ -3345,9 +4322,29 @@ async function testExhaustivePlaythrough(nw: any) {
     console.log(`    ${pt.phase}: ${dur.toFixed(0)}s game-time`);
   }
 
-  // Core survival — these MUST pass
-  ok(!state.gameOver || m.nightsSurvived >= 3,
-    `game not over OR ${m.nightsSurvived} nights survived`);
+  // Core survival — these MUST pass.
+  //
+  // This used to read `!state.gameOver || m.nightsSurvived >= 3`. Two problems.
+  // The disjunct passes for any run that merely didn't end, whatever it did —
+  // it went green on a playthrough that survived 0 nights. And the threshold it
+  // guarded is not deterministic: phase 4 steps a LIVE, un-paused game, the
+  // background rAF loop races the suite's own stepping, and gameOver freezes
+  // state.clock — measured across three identical runs, phase 4 survived 1, 4
+  // and 6 nights. Any fixed lower bound here is a coin flip. It only ever
+  // looked stable because m.nightsSurvived was copying the absolute run stat,
+  // which an earlier fixture had already set to 20.
+  //
+  // So assert the bound that IS deterministic, and that is the one B2 exists to
+  // defend: nights credited can never exceed the nights the clock could hold.
+  // Phantom credits — the free night at dawn, the free night at death — break
+  // this immediately, while a slow run does not.
+  const { CFG: CFG4 } = await import('../data/config');
+  const p4 = m.phaseTimings.find((pt: any) => pt.phase.startsWith('PHASE 4'));
+  const p4Elapsed = p4 ? Math.max(0, p4.endClock - p4.startClock) : 0;
+  const cycleCap = Math.ceil(p4Elapsed / (CFG4.time.daySec + CFG4.time.nightSec)) + 1;
+  ok(m.nightsSurvived <= cycleCap,
+    `${m.nightsSurvived} nights credited across ${p4Elapsed.toFixed(0)}s of phase-4 clock ` +
+    `(at most ${cycleCap} cycles fit) — no phantom nights`);
   ok(state.player.hp > 0 || state.god === true,
     'player alive or god-mode at end of playthrough');
   ok(m.ticksElapsed >= 10000,
@@ -3402,6 +4399,14 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Fire ignition', fn: testFireIgnite },
   { name: 'Game log', fn: testLogEntries },
   { name: 'XP & leveling', fn: testXpAndLeveling },
+  { name: 'XP curve — gates at 5/10/15/20/30 vs recipe levelReqs', fn: testXpCurve },
+  { name: 'Boss death pays out on every path', fn: testBossDeathPaysOut },
+  { name: 'Loom tree shape: reachable, granted, no placebo', fn: testLoomTreeShape },
+  { name: 'Loom is reachable by a player (panel + click)', fn: testLoomPanelIsReachable },
+  { name: 'Loom payoff layer is real, not advertising', fn: testLoomPayoffLayerIsReal },
+  { name: 'Run starts at dawn, not at the wall clock', fn: testRunStartsAtDawn },
+  { name: 'Night credit requires entering the night', fn: testNightCreditRequiresEntry },
+  { name: 'Long Thread counts levels on the real xp curve', fn: testLongThreadCurve },
   { name: 'State immutability', fn: testStateImmutabilityPattern },
   { name: '🔥 Survival playthrough (10 min)', fn: testSurvivalPlaythrough },
   // ---- P1 Gauntlet (14 behavioral tests) ----
@@ -3496,10 +4501,14 @@ export async function runAll(nw: any): Promise<{ pass: number; fail: number; tot
     }
   }
 
+  // _pass/_fail count ASSERTIONS (ok() increments them), TESTS.length counts
+  // test functions.  The old summary mixed the two — "ALL 1310 TESTS PASSED"
+  // against a 73-function suite — which is how a reviewer ends up quoting the
+  // wrong number.  Say which unit is which.
   const elapsed = (performance.now() - startMs).toFixed(0);
   const summary = _fail === 0
-    ? `✅ ALL ${_pass} TESTS PASSED  (${elapsed}ms)`
-    : `❌ ${_fail}/${TESTS.length} FAILED  (${elapsed}ms)`;
+    ? `✅ ALL ${_pass} ASSERTIONS PASSED across ${TESTS.length} tests  (${elapsed}ms)`
+    : `❌ ${_fail} of ${_pass + _fail} ASSERTIONS FAILED across ${TESTS.length} tests  (${elapsed}ms)`;
 
   console.log('');
   console.log(_fail === 0

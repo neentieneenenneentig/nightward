@@ -3,6 +3,7 @@
 import { CFG } from './data/config';
 import { ITEMS } from './data/items';
 import { activeEffects } from './systems/effects';
+import { computeModifiers } from './data/loom';
 import { SOULGEAR, baseStatFor, type SoulSlot } from './data/soulgear';
 import type { GameState } from './state';
 import type { LootTable, Stack } from './types';
@@ -152,6 +153,23 @@ export function armorDef(state: GameState): number {
 /** Bonus hp/s the worn charm adds to daytime regen — soul-leveled. */
 export function charmRegen(state: GameState): number {
   return wornStat(state, 'charm');
+}
+
+/** B3.a — the player's max HP, which is no longer a constant.
+ *
+ *  Glass Echo advertises "Max HP halved" and did not have it: the keystone was a
+ *  pure upgrade, which is not what a keystone is for. Implementing it meant max HP
+ *  had to stop being `CFG.player.maxHp` read directly at fourteen call sites, so it
+ *  lives here instead — a pure function of state, callable from systems, UI and the
+ *  debug verbs alike without threading the LoomSystem through any of them.
+ *
+ *  This recomputes the modifier map rather than reading LoomSystem's cache. The map
+ *  is a fold over the allocated nodes — at most ~15 entries — and this is called a
+ *  handful of times per frame, so the cost is noise. Correctness beats the cache
+ *  here: a stale max HP is a wrong health bar. */
+export function playerMaxHp(state: GameState): number {
+  const mods = computeModifiers(state.player.loomNodes ?? {});
+  return Math.round(CFG.player.maxHp * (mods.glassEcho ? CFG.loom.glassEchoHpMul : 1));
 }
 
 /** Equip an item into its slot, or unequip if it's already worn there. */

@@ -79,7 +79,7 @@ class BuildingView {
   private heightClass: number;
   constructor(b: Building, private art: WorldArt, mask = 0) {
     const def = BUILDINGS.find((d) => d.id === b.type)!;
-    this.maxHp = def.hp;
+    this.maxHp = b.maxHp ?? def.hp;   // B3.a: the Loom can raise a building's ceiling
     this.isWall = def.art === 'wall';
     this.sprite = new Sprite(tex(this.isWall ? art.wall(mask) : art.buildings.get(b.type)!));
     this.sprite.anchor.set(0.5, 1);
@@ -100,7 +100,7 @@ class BuildingView {
     shadow.ellipse(ox, oy, sprite.width * 0.35, sprite.width * 0.14).fill({ color: 0x0a080e, alpha });
   }
   sync(b: Building) {
-    const frac = b.hp / this.maxHp;
+    const frac = b.hp / (b.maxHp ?? this.maxHp);
     this.bar.clear();
     if (frac < 1) {
       this.bar.rect(-14, -this.sprite.height - 4, 28, 3).fill(0x110a10);

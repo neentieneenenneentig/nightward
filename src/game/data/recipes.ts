@@ -1,5 +1,4 @@
-// Crafting recipes. `station` is reserved for gating on buildings later
-// (e.g. 'furnace') — null means craftable anywhere.
+// Crafting recipes — all craftable from anywhere in the world.
 import type { Stack } from '../types';
 
 export interface Recipe {
@@ -9,13 +8,12 @@ export interface Recipe {
   skill: string;
   levelReq: number;
   xp: number;
-  station: string | null;
 }
 
 const R = (
   id: string, skill: string, levelReq: number, xp: number,
   out: Stack, ...inputs: Stack[]
-): Recipe => ({ id, skill, levelReq, xp, out, in: inputs, station: null });
+): Recipe => ({ id, skill, levelReq, xp, out, in: inputs });
 
 const s = (id: string, n = 1): Stack => ({ id, n });
 

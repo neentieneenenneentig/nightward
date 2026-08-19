@@ -104,7 +104,11 @@ export class WorldBossSystem {
     const p = state.player;
     const hallB = hall(state);
     const terr = territoryScore(state);
-    const goldRoused = state.player.gold >= CFG.worldBoss.wakeGold;
+    // B3.a: Night Market advertises "gold rouses bosses at HALF the threshold".
+    // loom.getBossWakeGold() has existed since C3 and was called by nothing, so
+    // the keystone's second clause did not exist in the game.
+    const wakeGold = this.ctx.loom?.getBossWakeGold?.() ?? CFG.worldBoss.wakeGold;
+    const goldRoused = state.player.gold >= wakeGold;
     const territoryRoused = terr >= CFG.worldBoss.wakeTerritory || this.ctx.isNight() || goldRoused;
 
     for (const b of state.worldBosses as WorldBoss[]) {

@@ -12,9 +12,10 @@ import {
   invCount, invHasAll, skillLevel, xpProgress, slotOf,
   soulStat, bestTool, type EquipSlot,
   equippedWeaponDmg, armorDef,
-  population, territoryScore, soulXpProgress,
+  population, territoryScore, soulXpProgress, playerMaxHp,
 } from '../rules';
 import type { SoulSlot } from '../data/soulgear';
+import { nodesByBranch, nodeById, type LoomBranch, type LoomNode } from '../data/loom';
 import { SoulFeedSystem, totalSoulXp, itemSoulAffinity, type FeedResult } from '../systems/soulfeed';
 import { phase, phaseRemaining } from '../systems/daynight';
 import type { GameState } from '../state';
@@ -42,11 +43,45 @@ export interface UIHooks {
   logEntries(): LogEntry[];
   /** W7: feed an item to a soul-gear slot. Returns FeedResult or null if invalid. */
   feedSoul(itemId: string, count: number, targetSlot: SoulSlot): FeedResult | null;
+  /** B3.b: spend a Loom point on a node. Returns true if it was allocated.
+   *  Before this existed, LoomSystem.allocate() had no production caller at all —
+   *  the tree was unreachable and every point earned was unspendable. */
+  allocateLoom(nodeId: string): boolean;
+  /** B3.b: what the Loom panel needs to draw itself. */
+  loomView(): {
+    points: number;
+    allocated: Record<string, number>;
+    canAllocate(nodeId: string): boolean;
+  };
 }
 
-type Panel = 'bag' | 'craft' | 'skills' | 'log' | 'leaderboard' | null;
+type Panel = 'bag' | 'craft' | 'skills' | 'loom' | 'log' | 'leaderboard' | null;
 
 const icon = (id: string) => iconUrl(id, ITEMS[id].icon as any);
+
+/** B3.b: a Loom node's per-rank effects, in words. The node rows carry raw keys
+ *  (`meleeDmgPct: 4`); this is the only place they are turned into something a
+ *  player reads, so the label table lives here rather than in the data. */
+const LOOM_EFFECT_LABEL: Record<string, string> = {
+  meleeDmgPct: 'melee damage', swingSpeedPct: 'swing speed', arcWidthPct: 'swing arc',
+  dmgRollFloor: 'damage floor', gatherSpeedPct: 'gather speed',
+  doubleYieldChance: 'double-yield chance', craftCostReduction: 'craft cost',
+  moveSpeedPct: 'move speed', armorPct: 'armour', regenPct: 'daylight regen',
+  buildingHpPct: 'building HP', towerDmgPct: 'tower damage',
+  towerRange: 'tower range', territoryIncomePct: 'tribute',
+};
+function effectSummary(n: LoomNode): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(n.effects)) {
+    const label = LOOM_EFFECT_LABEL[k] ?? k;
+    // craftCostReduction is the one key whose "+" means "less" — say so.
+    if (k === 'craftCostReduction') parts.push(`&minus;${v}% ${label}`);
+    else if (k === 'towerRange') parts.push(`+${v} tile ${label}`);
+    else if (k === 'dmgRollFloor') parts.push(`+${(v * 100).toFixed(0)}% ${label}`);
+    else parts.push(`+${v}% ${label}`);
+  }
+  return parts.join(' &middot; ') + ' <i>per rank</i>';
+}
 
 export class UI {
   private root: HTMLElement;
@@ -289,6 +324,7 @@ export class UI {
     else if (kl === 'i') this.toggle('bag');
     else if (kl === 'c') this.toggle('craft');
     else if (kl === 'k') this.toggle('skills');
+    else if (kl === 'm') this.toggle('loom');
     else if (kl === 'l') this.toggle('log');
     else if (k === ';') this.toggle('leaderboard');
   }
@@ -347,7 +383,7 @@ export class UI {
     this.panelHost.appendChild(scrim);
 
     const head = el('div', 'nw-phead');
-    const titles: Record<string, string> = { bag: 'BAG', craft: 'CRAFTING', skills: 'SKILLS', log: 'LOG', leaderboard: 'LEADERBOARD' };
+    const titles: Record<string, string> = { bag: 'BAG', craft: 'CRAFTING', skills: 'SKILLS', loom: 'THE LOOM', log: 'LOG', leaderboard: 'LEADERBOARD' };
     head.innerHTML = `<h2>${titles[this.panel]}</h2>`;
     if (this.panel === 'craft') head.appendChild(this.craftTabs());
     const x = el('div', 'nw-x'); x.innerHTML = '&times;';
@@ -366,7 +402,7 @@ export class UI {
     // auto-focus first action item (craft button, bag cell, etc.)
     requestAnimationFrame(() => {
       const first = panel.querySelector<HTMLElement>(
-        '.nw-make:not([disabled]), .nw-cell, .nw-slot',
+        '.nw-loomnode.can, .nw-make:not([disabled]), .nw-cell, .nw-slot',
       );
       if (first) first.focus();
     });
@@ -393,6 +429,7 @@ export class UI {
     if (this.panel === 'bag') this.fillBag(body);
     else if (this.panel === 'craft') this.fillCraft(body);
     else if (this.panel === 'skills') this.fillSkills(body);
+    else if (this.panel === 'loom') this.fillLoom(body);
     else if (this.panel === 'log') this.fillLog(body);
     else if (this.panel === 'leaderboard') this.fillLeaderboard(body);
   }
@@ -644,13 +681,96 @@ export class UI {
     }
   }
 
+  /** B3.b — the Loom panel.
+   *
+   *  This did not exist. `LoomSystem.allocate()` shipped with C3 and had zero
+   *  production call sites: no panel, no tab, no key. A player earned points, was
+   *  toasted about them, saw them totalled on the end-of-run scorecard, and could
+   *  never spend one. The whole tree — 40 nodes, 132 ranks, 4 keystones — was
+   *  unreachable by any means. §12 Q3 asked whether the tree was the right size for
+   *  a 15-minute run; the honest answer was that its size did not matter yet.
+   *
+   *  Laid out as the data intends: three branches by `branch`, ordered by the
+   *  `col`/`row` position hints the node rows have always carried and nothing had
+   *  ever read. Keystones sort last within their branch — they are the terminals. */
+  private fillLoom(body: HTMLElement) {
+    const view = this.hooks.loomView();
+
+    const note = el('div', 'nw-note');
+    note.innerHTML = `Nights survived and lords slain weave the <b>Loom</b>. Spend points to
+      thread passives; a <b>keystone</b> warps a rule outright and carries a cost.
+      <b>There is no unweaving</b> — a run is its weave.`;
+    body.appendChild(note);
+
+    const bank = el('div', 'nw-loombank');
+    bank.innerHTML = view.points > 0
+      ? `<b>${view.points}</b> point${view.points === 1 ? '' : 's'} unspent`
+      : `<span class="none">No points to spend — survive a night, or fell a lord.</span>`;
+    body.appendChild(bank);
+
+    const cols = el('div', 'nw-loomcols');
+    const branchLabel: Record<LoomBranch, string> = {
+      war: 'War', field: 'Field', ward: 'Ward',
+    };
+    for (const branch of ['war', 'field', 'ward'] as LoomBranch[]) {
+      const col = el('div', 'nw-loomcol');
+      const head = el('div', 'nw-loomhead');
+      head.textContent = branchLabel[branch];
+      col.appendChild(head);
+
+      const nodes = nodesByBranch(branch).slice().sort((a, b) =>
+        (a.keystone ? 1 : 0) - (b.keystone ? 1 : 0) || a.col - b.col || a.row - b.row);
+
+      for (const n of nodes) {
+        const rank = view.allocated[n.id] ?? 0;
+        const can = view.canAllocate(n.id);
+        const maxed = rank >= n.maxRank;
+        const row = el('div', 'nw-loomnode'
+          + (n.keystone ? ' keystone' : '')
+          + (rank > 0 ? ' taken' : '')
+          + (maxed ? ' maxed' : '')
+          + (can ? ' can' : ''));
+
+        const reqNames = (n.req ?? [])
+          .filter((r) => (view.allocated[r] ?? 0) <= 0)
+          .map((r) => nodeById(r)?.name ?? r);
+        const why = maxed ? 'Fully woven'
+          : reqNames.length ? `Needs ${reqNames.join(', ')}`
+          : view.points <= 0 ? 'No points'
+          : 'Weave it';
+
+        row.innerHTML = `
+          <div class="nm">${n.name}${n.keystone ? '<span class="ks">keystone</span>' : ''}</div>
+          <div class="ef">${n.keystone ? (n.keystoneDesc ?? '') : effectSummary(n)}</div>
+          <div class="ft"><span class="rk">${rank}/${n.maxRank}</span><span class="wy">${why}</span></div>`;
+
+        if (can) {
+          row.tabIndex = 0;
+          row.setAttribute('role', 'button');
+          row.addEventListener('click', () => {
+            if (this.hooks.allocateLoom(n.id)) this.renderPanel();
+          });
+          row.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              if (this.hooks.allocateLoom(n.id)) this.renderPanel();
+            }
+          });
+        }
+        col.appendChild(row);
+      }
+      cols.appendChild(col);
+    }
+    body.appendChild(cols);
+  }
+
   // --------------------------------------------------------------- refresh ----
 
   /** Called every frame. Cheap top-bar text updates + gather progress.
    *  Panel body is NOT rebuilt — it's only rebuilt on open() or tab change. */
   refresh() {
     const p = this.state.player;
-    this.hpFill.style.width = (100 * Math.max(0, p.hp) / CFG.player.maxHp).toFixed(1) + '%';
+    this.hpFill.style.width = (100 * Math.max(0, p.hp) / playerMaxHp(this.state)).toFixed(1) + '%';
     this.hpText.textContent = Math.ceil(Math.max(0, p.hp)) + '';
     this.goldText.textContent = p.gold + '';
 

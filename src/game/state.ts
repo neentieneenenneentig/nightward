@@ -11,6 +11,12 @@ export interface Building {
   tx: number;
   ty: number;
   hp: number;
+  /** B3.a: a building's own ceiling, not BUILDINGS[type].hp. The Loom's
+   *  buildingHpPct ranks and Deep Roots scale it at placement time, so two walls
+   *  in the same run can have different maxima and the health bar has to read the
+   *  building rather than the type. Optional so anything constructing a Building
+   *  without one still works — readers fall back to the def. */
+  maxHp?: number;
 }
 
 /** A roaming domain lord on the overworld (see systems/worldbosses.ts). */
@@ -37,6 +43,11 @@ export interface GameState {
   v: 1;
   seed: number;
   clock: number;                      // game seconds since world start
+  /** B2.1: the clock this run actually booted at, recorded once by main(). Exists so
+   *  a test can pin the start-at-dawn rule against the live boot and not only against
+   *  daynight.startClock() — the seam that reintroduces the real-clock lottery is
+   *  main()'s call site, not the function. */
+  bootClock: number;
   nextUid: number;
   player: {
     x: number; y: number;
@@ -63,6 +74,12 @@ export interface GameState {
   region: string;                      // region key the player is currently in
   explored: Record<string, number>;    // region key → 1 (for fog / future minimap)
   nightsSurvived: number;
+  /** B2: has dusk fallen since the last dawn? Dawn credits a night only if so.
+   *  A flag, not a counter compared against nightsSurvived — the run's own stats
+   *  get assigned directly by fixtures and by any future save/restore, and a
+   *  gate that a stray assignment can wedge shut is the wrong shape. This is
+   *  simply the rule itself: you cannot survive a night you were not here for. */
+  nightEntered: boolean;
   gameOver: boolean;
   gameOverCause: 'hall_fallen' | 'old_age' | null; // L1: what actually ended the run
   god: boolean;                        // debug/test mode: immortal, everything unlocked
@@ -114,6 +131,7 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     v: 1,
     seed,
     clock: 0,
+    bootClock: 0,
     nextUid: 1,
     player: { x: spawn.x, y: spawn.y, hp: CFG.player.maxHp, gold: 0, inv, xp: {}, equip: {}, soulItems, echoes: {}, vigor: CFG.vitals.vigorMax, resolve: CFG.vitals.resolveMax, lastActionT: 0, loomPoints: 0, loomNodes: {}, age: CFG.lifespan.startAge },
     depleted: {},
@@ -122,6 +140,7 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     region: '',
     explored: {},
     nightsSurvived: 0,
+    nightEntered: false,   // a run that boots mid-night has not entered it
     gameOver: false,
     gameOverCause: null,
     god: false,

@@ -421,6 +421,37 @@ html, body, #nw-observatory, .nw-pbody {
   border: 1px solid #000; border-radius: 3px; box-shadow: inset 0 1px 2px rgba(0,0,0,.5); }
 .nw-xpfill { height: 100%; background: #5a8fc0; }
 
+/* ---- the Loom (B3.b) ---- */
+.nw-loombank { text-align: center; padding: 6px 0 10px; color: var(--ink-dim); font-size: 12px; }
+.nw-loombank b { font-family: var(--font-display); font-size: 17px; color: var(--gold); letter-spacing: 1px; }
+.nw-loombank .none { font-style: italic; }
+.nw-loomcols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; align-items: start; }
+.nw-loomhead { font-family: var(--font-display); font-size: 12px; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--metal-hi); text-align: center;
+  padding-bottom: 6px; border-bottom: 1px solid var(--metal-lo); margin-bottom: 8px; }
+.nw-loomnode { padding: 6px 8px; margin-bottom: 6px; border: 1px solid #000; border-radius: 3px;
+  background: linear-gradient(180deg, #120e08, #0c0906);
+  box-shadow: inset 0 0 0 1px var(--metal-lo); opacity: .5; }
+.nw-loomnode .nm { color: var(--ink-bright); font-size: 12px; display: flex;
+  align-items: baseline; gap: 6px; }
+.nw-loomnode .ef { color: var(--ink-dim); font-size: 10px; line-height: 1.35; margin-top: 2px; }
+.nw-loomnode .ef i { font-style: normal; opacity: .6; }
+.nw-loomnode .ft { display: flex; justify-content: space-between; align-items: baseline;
+  margin-top: 4px; font-size: 10px; }
+.nw-loomnode .rk { color: var(--gold); font-variant-numeric: tabular-nums; }
+.nw-loomnode .wy { color: var(--ink-dim); font-style: italic; }
+.nw-loomnode .ks { font-size: 8px; letter-spacing: 1px; text-transform: uppercase;
+  color: #c9b6e6; border: 1px solid #c9b6e655; border-radius: 3px; padding: 0 4px; }
+.nw-loomnode.taken { opacity: 1; box-shadow: inset 0 0 0 1px var(--metal); }
+.nw-loomnode.maxed .wy { color: var(--good); }
+.nw-loomnode.keystone { border-color: #3a2c52; }
+.nw-loomnode.keystone.taken { box-shadow: inset 0 0 0 1px #6b53a0, 0 0 12px rgba(140,110,200,.25); }
+.nw-loomnode.can { opacity: 1; cursor: pointer; }
+.nw-loomnode.can .wy { color: var(--gold); font-style: normal; }
+.nw-loomnode.can:hover { background: linear-gradient(180deg, #1c1610, #100c08);
+  box-shadow: inset 0 0 0 1px var(--metal), 0 3px 12px rgba(0,0,0,.5); }
+.nw-loomnode.can:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
 /* ---- event log ---- */
 .nw-logrow { display: flex; align-items: baseline; gap: 8px; padding: 5px 6px;
   border-bottom: 1px solid #000; box-shadow: inset 0 -1px 0 var(--metal-lo); font-size: 12px; }
