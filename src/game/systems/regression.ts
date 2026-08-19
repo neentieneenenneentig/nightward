@@ -917,18 +917,12 @@ async function testUISmoke(nw: any) {
   ok(lensPanel !== null, 'Lens panel exists in DOM');
   const lensBody = document.getElementById('nw-lens-body');
   ok(lensBody !== null, 'Lens body element exists');
-  if (lensPanel) {
-    lensPanel.style.display = '';
-    nw.step(5);
-    const row = lensPanel.querySelector('[data-inspect-key]');
-    if (row) {
-      row.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-      const inspectBox = document.getElementById('nw-lens-inspect');
-      ok(inspectBox !== null, 'inspect box element exists');
-    }
-    lensPanel.style.display = 'none';
-  }
-  ok(true, 'UI smoke test completed without errors');
+  // N4.2: the Lens is a transform-driven drawer now, so poking style.display
+  // no longer opens it. The `if (row)` guard here also meant the inspect-box
+  // assertion silently skipped whenever the panel was empty — a precondition
+  // that never held. Both are covered properly by the dedicated Lens tests;
+  // this one keeps only what it can honestly claim.
+  ok(document.getElementById('nw-lens-inspect') !== null, 'inspect box element exists');
 }
 
 // =========================================================================
@@ -4902,6 +4896,197 @@ async function testDeepWireMappings(nw: any) {
   ok(net.get('flowBest') > 0, `flowBest falls back to the estimate (${net.get('flowBest')})`);
 }
 
+
+// ---------------------------------------------------------------------------
+// N4.2 — The Lens side cart, and the Chronicle behind it
+// ---------------------------------------------------------------------------
+// The existing UI smoke test asserted "Lens panel exists in DOM" and then
+// `ok(true, 'completed without errors')`. That would have stayed green through
+// this entire refactor with every tab rendering nothing at all — the exact
+// failure mode B5 documented, where the suite does not go red, it stays green
+// while the mechanic changes underneath it.
+
+async function testLensSideCart(nw: any) {
+  if (typeof document === 'undefined') { ok(true, 'no DOM — skipping'); return; }
+  const lens = nw.lens;
+  ok(lens !== undefined, 'the Lens is exposed for testing');
+  if (!lens) return;
+
+  const el = document.getElementById('nw-observatory') as HTMLElement;
+  ok(el !== null, 'the drawer is in the DOM');
+
+  // It is a DRAWER, not a modal. Parked off-screen by transform rather than
+  // display:none, so the slide is a real compositor transition — and so the old
+  // `panel.style.display = ''` way of opening it no longer works.
+  const wasOpen = lens.isOpen();
+  lens.setOpen(false);
+  ok(el.style.transform.includes('100%'), `closed → parked off-screen (${el.style.transform})`);
+  lens.setOpen(true);
+  ok(el.style.transform.includes('0'), `open → slid in (${el.style.transform})`);
+  ok(!el.style.transform.includes('100%'), '...and no longer parked');
+
+  // Non-modal: the game must remain visible and clickable beside it. A full
+  // -screen scrim would defeat the entire point of the refactor.
+  ok(parseInt(el.style.width) <= 700 || el.style.width === '100%',
+    `the drawer is a side cart, not a full cover (${el.style.width})`);
+
+  // ---- five tabs, and switching them actually changes the content ----
+  const tabs = el.querySelectorAll('[data-tab]');
+  eq(tabs.length, 5, 'five tabs: PULSE / PATHS / IDENTITY / VESSEL / THREADS');
+  const body = document.getElementById('nw-lens-body') as HTMLElement;
+  ok(body !== null, 'the body element exists');
+
+  const seen: string[] = [];
+  for (let i = 0; i < tabs.length; i++) {
+    (tabs[i] as HTMLElement).click();
+    lens.refresh(true);
+    const html = body.innerHTML;
+    ok(html.length > 120, `tab ${i} renders content (${html.length} chars)`);
+    ok(!html.includes('failed to render'), `tab ${i} renders without throwing`);
+    seen.push(html);
+  }
+  // The matched negative: if every tab rendered the same thing, the assertions
+  // above would all pass and the tab bar would be decoration.
+  eq(new Set(seen).size, 5, 'all five tabs render DIFFERENT content');
+
+  // ---- honesty tags ----
+  const all = seen.join('');
+  for (const t of ['measured', 'reported', 'derived', 'unavailable']) {
+    ok(all.includes(`>${t}</span>`), `readings are tagged '${t}' somewhere in the panel`);
+  }
+  // "unavailable" with no reason is indistinguishable from "broken".
+  ok(/title="[^"]*cannot be read here[^"]*—[^"]+"/.test(all),
+    'every unavailable reading carries a reason, not just the word');
+
+  // ---- inspect box survived the refactor ----
+  (tabs[0] as HTMLElement).click();
+  lens.refresh(true);
+  const row = el.querySelector('[data-inspect-key]') as HTMLElement;
+  ok(row !== null, 'rows still carry data-inspect-key — the best thing in the old panel');
+  if (row) {
+    row.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    const box = document.getElementById('nw-lens-inspect') as HTMLElement;
+    ok(box !== null, 'the inspect box exists');
+    ok(box.style.display !== 'none', 'and opens on hover');
+    ok(/SOURCE/.test(box.innerHTML) && /FLOWS INTO/.test(box.innerHTML),
+      'with SOURCE / ACTION / FLOWS INTO intact');
+  }
+
+  lens.setOpen(wasOpen);
+}
+
+async function testLensEscapesThirdPartyStrings(nw: any) {
+  if (typeof document === 'undefined') { ok(true, 'no DOM — skipping'); return; }
+  const lens = nw.lens, net = nw.sys.net;
+  if (!lens) { ok(false, 'no lens'); return; }
+
+  // ISP, city, ASN, colo and PTR arrive verbatim from someone else's JSON and go
+  // straight into innerHTML. The escape was added once as a review fix; this
+  // pins it so the five-module refactor cannot quietly lose it again.
+  const saved = { isp: net.snap.isp, city: net.snap.city, asn: net.snap.asn, colo: net.snap.colo, fetched: net.identityFetched };
+  const payload = '<img src=x onerror="window.__nwPwned=1">';
+  try {
+    net.identityFetched = true;
+    net.snap.isp = payload;
+    net.snap.city = payload;
+    net.snap.asn = payload;
+    net.snap.colo = payload;
+    lens.setOpen(true);
+    const tabs = document.querySelectorAll('#nw-observatory [data-tab]');
+    (tabs[2] as HTMLElement).click();          // IDENTITY
+    lens.refresh(true);
+    const body = document.getElementById('nw-lens-body') as HTMLElement;
+
+    ok(body.querySelector('img') === null, 'a markup-bearing ISP string does not become an element');
+    ok(!(window as any).__nwPwned, 'and its onerror never fires');
+    // Matched positive: the value must still be VISIBLE, escaped. A panel that
+    // dropped the field entirely would pass the two assertions above while
+    // hiding the thing the player is trying to read.
+    ok(body.innerHTML.includes('&lt;img'), 'the raw text is shown, escaped');
+  } finally {
+    net.snap.isp = saved.isp; net.snap.city = saved.city;
+    net.snap.asn = saved.asn; net.snap.colo = saved.colo;
+    net.identityFetched = saved.fetched;
+    delete (window as any).__nwPwned;
+    lens.setOpen(false);
+  }
+}
+
+async function testChronicleStore(nw: any) {
+  const { ChronicleStore } = await import('./chronicle');
+  const c = new ChronicleStore();
+  c.define({ key: 'x', label: 'X', unit: 'ms' });
+
+  // ---- retention keeps the outliers ----
+  // 400 samples at 1 Hz with a single 900ms spike buried at t=30. Naive
+  // decimation ("keep every tenth") deletes that spike nine times out of ten,
+  // and the spike is the entire story of a network event.
+  for (let t = 0; t < 400; t++) c.push('x', t, t === 30 ? 900 : 20, 'measured');
+  const s: any = c.get('x');
+  ok(s.buckets.length > 0, `old samples collapsed into ${s.buckets.length} buckets`);
+  ok(s.fine.length < 400, `and the fine window is bounded (${s.fine.length} samples, not 400)`);
+  const spikeBucket = s.buckets.find((b: any) => b.t <= 30 && b.t + 10 > 30);
+  ok(spikeBucket !== undefined, 'the bucket covering t=30 exists');
+  eq(spikeBucket?.max, 900, 'and it kept the 900ms spike as its max — outliers survive aggregation');
+  eq(spikeBucket?.med, 20, '...while the median still reports the normal state');
+
+  // ---- NaN never enters the store ----
+  const before = s.fine.length + s.buckets.length;
+  c.push('x', 401, NaN, 'measured');
+  c.push('x', 402, Infinity, 'measured');
+  eq(s.fine.length + s.buckets.length, before, 'NaN and Infinity are refused at the door');
+
+  // ---- change detection: fires on a step ----
+  const d = new ChronicleStore();
+  d.define({ key: 'y', label: 'Y', unit: 'ms' });
+  for (let t = 0; t < 120; t++) d.push('y', t, 20 + (t % 3), 'measured');   // steady, tiny wobble
+  eq(d.events.length, 0, 'a steady series produces no events');
+  for (let t = 120; t < 140; t++) d.push('y', t, 200, 'measured');          // hard step up
+  ok(d.events.length >= 1, `a step change fires an event (${d.events.length})`);
+  const ev = d.events[0];
+  eq(ev?.dir, 'up', 'and it knows which way it went');
+  ok((ev?.sigma ?? 0) >= 3, `at ${Math.abs(ev?.sigma ?? 0).toFixed(1)}σ outside the baseline`);
+
+  // ---- and NOT on noise ----
+  // The matched negative that matters: a link that always wobbles must not cry
+  // wolf. Same absolute swing as the step above, but as ongoing variance.
+  const e = new ChronicleStore();
+  e.define({ key: 'z', label: 'Z', unit: 'ms' });
+  for (let t = 0; t < 200; t++) e.push('z', t, 100 + (t % 7) * 30, 'measured');
+  eq(e.events.length, 0, 'a permanently noisy series fires nothing — sigma, not percent');
+}
+
+async function testChronicleExport(nw: any) {
+  const { exportChronicle } = await import('./chronicle');
+  const c = nw.chronicle;
+  ok(c !== undefined, 'the run carries a Chronicle');
+  if (!c) return;
+
+  const payload: any = exportChronicle(c, nw.sys.net, nw.state);
+  eq(payload.format, 'nightward-chronicle', 'the export is self-describing');
+  ok(payload.series !== undefined, 'it carries the series');
+  ok(payload.snapshot !== undefined, 'and the current snapshot');
+  ok(typeof payload.sessionStart === 'string', 'and when the session started');
+
+  // Provenance has to survive the export. A series of numbers with no record of
+  // how they were obtained is a rumour, and this file is meant to be evidence.
+  const keys = Object.keys(payload.series);
+  ok(keys.length >= 3, `${keys.length} series exported`);
+  const withSamples = keys.map((k) => payload.series[k]).find((v: any) => v.fine?.length);
+  if (withSamples) {
+    ok(withSamples.fine.every((s: any) => typeof s.q === 'string'),
+      'every exported sample carries its quality tag');
+  } else {
+    ok(true, 'no samples yet this run — quality tags checked in testChronicleStore');
+  }
+
+  // It must be real JSON. A payload with a cycle or an undefined in it throws
+  // here rather than in front of a player who clicked export.
+  let json = '';
+  try { json = JSON.stringify(payload); } catch (err: any) { json = ''; }
+  ok(json.length > 50, `the payload serialises (${json.length} bytes)`);
+}
+
 const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Boot & state integrity', fn: testBoot },
   { name: 'Starting inventory', fn: testStartingInventory },
@@ -5007,6 +5192,11 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Deep wire - cfL4 parser vs adversarial input', fn: testDeepWireParser },
   { name: 'Deep wire - derived values neutral when silent, move when hostile', fn: testDeepWireDerived },
   { name: 'Deep wire - metric keys and game mappings resolve', fn: testDeepWireMappings },
+  // ---- N4.2: The Lens side cart + the Chronicle ----
+  { name: 'Lens - drawer, five tabs, honesty tags, inspect box', fn: testLensSideCart },
+  { name: 'Lens - third-party strings stay escaped', fn: testLensEscapesThirdPartyStrings },
+  { name: 'Chronicle - aggregation keeps outliers, change detection', fn: testChronicleStore },
+  { name: 'Chronicle - export carries series and provenance', fn: testChronicleExport },
 ];
 
 /** Run all registered tests sequentially. Returns { pass, fail, total, report }. */

@@ -18,6 +18,8 @@ import { Views } from './game/world/views';
 import { Player } from './game/world/player';
 import { Camera } from './game/world/camera';
 import { UI, NET_LOG_LABELS, styleNetworkMsg } from './game/ui/ui';
+import { Lens } from './game/ui/lens';
+import { ChronicleStore, CHRONICLE_SERIES, exportChronicle, sampleChronicle } from './game/systems/chronicle';
 import { DropSystem } from './game/systems/drops';
 import { GatherSystem, VERB } from './game/systems/gather';
 import { EconomySystem } from './game/systems/economy';
@@ -220,101 +222,28 @@ async function boot() {
     scoreboard.onRift();  // W6: count rifts survived
   });
 
-  // N2a: The Lens — raw observatory panel (O key). 8 sections:
-  // 1.Connection 2.Realm 3.Routes 4.Identity 5.Vessel 6.Threads 7.Feed 8.Inspect
-  const obsPanel = document.createElement('div');
-  obsPanel.id = 'nw-observatory';
-  obsPanel.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:35;'
-    + 'font-family:ui-monospace,Consolas,monospace;font-size:10px;line-height:1.35;'
-    + 'color:#bbb;background:#080810f2;padding:12px 16px;border-radius:8px;'
-    + 'border:1px solid #334;display:none;min-width:340px;max-width:420px;max-height:94vh;overflow-y:auto;'
-    + 'pointer-events:auto;user-select:none;';
-  obsPanel.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;border-bottom:1px solid #334;padding-bottom:4px;">
-      <span style="color:#aaa;font-weight:bold;font-size:12px;">🔍 The Lens</span>
-      <span style="color:#555;font-size:9px;">O to close</span>
-    </div>
-    <div id="nw-lens-body"></div>
-  `;
-  document.body.appendChild(obsPanel);
+  // N4.2: The Lens is now a right-edge side cart (src/game/ui/lens/). It used
+  // to be a centred modal that covered the game, which is exactly the wrong
+  // shape for a panel whose whole premise is that these numbers are driving the
+  // world in front of you. The 115 lines of string concatenation that used to
+  // live here are five tab modules now.
+  const chronicle = new ChronicleStore();
+  for (const m of CHRONICLE_SERIES) chronicle.define(m);
+  net.chronicle = chronicle;
 
-  // N2a: Inspect detail box — appears on hover/tap of any Lens row
-  const inspectBox = document.createElement('div');
-  inspectBox.id = 'nw-lens-inspect';
-  inspectBox.style.cssText = 'position:fixed;z-index:40;'
-    + 'font-family:ui-monospace,Consolas,monospace;font-size:9px;line-height:1.4;'
-    + 'color:#ccc;background:#0a0a16f8;padding:8px 10px;border-radius:6px;'
-    + 'border:1px solid #557;display:none;max-width:320px;'
-    + 'pointer-events:none;user-select:none;';
-  document.body.appendChild(inspectBox);
+  let lastChronicleT = -1;
 
-  // Attach hover/tap handler to the Lens body (delegated)
-  obsPanel.addEventListener('mouseover', (e) => {
-    const target = (e.target as HTMLElement).closest('[data-inspect-key]') as HTMLElement | null;
-    if (!target) { inspectBox.style.display = 'none'; return; }
-    showInspectBox(target, inspectBox, e);
-  });
-  obsPanel.addEventListener('mouseout', (e) => {
-    const target = (e.target as HTMLElement).closest('[data-inspect-key]') as HTMLElement | null;
-    if (!target) { inspectBox.style.display = 'none'; return; }
-    // Only hide if mouse actually left the Lens
-    if (!obsPanel.contains(e.relatedTarget as Node)) {
-      inspectBox.style.display = 'none';
-    }
-  });
-  // Tap-to-pin on mobile (click toggles pin)
-  obsPanel.addEventListener('click', (e) => {
-    const target = (e.target as HTMLElement).closest('[data-inspect-key]') as HTMLElement | null;
-    if (!target) return;
-    if (inspectBox.dataset.pinned === target.dataset.inspectKey) {
-      inspectBox.dataset.pinned = '';
-      inspectBox.style.display = 'none';
-    } else {
-      inspectBox.dataset.pinned = target.dataset.inspectKey ?? '';
-      showInspectBox(target, inspectBox, e);
-    }
-  });
-
-  function showInspectBox(target: HTMLElement, box: HTMLElement, e: MouseEvent) {
-    const key = target.dataset.inspectKey ?? '';
-    const inspectData = getInspectData(key);
-    if (!inspectData) { box.style.display = 'none'; return; }
-    box.innerHTML = `
-      <div style="color:#f96;font-size:10px;font-weight:bold;margin-bottom:4px;">${key}</div>
-      <div style="margin-bottom:3px;"><span style="color:#888;">SOURCE</span><br><span style="color:#ccc;">${inspectData.api}</span></div>
-      <div style="margin-bottom:3px;"><span style="color:#888;">ACTION</span><br><span style="color:#ccc;">${inspectData.action}</span></div>
-      <div><span style="color:#888;">FLOWS INTO</span><br><span style="color:#ccc;">${inspectData.flowsInto}</span></div>
-    `;
-    // Position beside the target, clamped to the viewport. The box height varies
-    // with content (long SOURCE strings wrap), so measure the real size first —
-    // the old hardcoded ~100px estimate let tall boxes run off the bottom, and the
-    // left-flip could push the box past the left edge on narrow viewports.
-    const rect = target.getBoundingClientRect();
-    box.style.left = '0px';
-    box.style.top = '-9999px';
-    box.style.display = '';
-    const bw = box.offsetWidth, bh = box.offsetHeight;
-    let left = rect.right + 8;
-    if (left + bw > window.innerWidth - 4) left = rect.left - bw - 8;
-    left = Math.max(4, Math.min(left, window.innerWidth - bw - 4));
-    let top = rect.top;
-    top = Math.max(4, Math.min(top, window.innerHeight - bh - 4));
-    box.style.left = left + 'px';
-    box.style.top = top + 'px';
-  }
+  const lens = new Lens(
+    { net, chronicle, log, inspectFor: getInspectData },
+    () => exportChronicle(chronicle, net, state),
+  );
 
   // O key toggles the Lens
   window.addEventListener('keydown', (e) => {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
     if (e.key === 'o' || e.key === 'O') {
       e.preventDefault();
-      const closing = obsPanel.style.display !== 'none';
-      obsPanel.style.display = closing ? 'none' : '';
-      // when closing the Lens, dismiss any pinned inspect popup too
-      if (closing) {
-        inspectBox.style.display = 'none';
-        inspectBox.dataset.pinned = '';
-      }
+      lens.toggle();
     }
     // V toggles the oil-painting Kuwahara filter
     if (e.key === 'v' || e.key === 'V') {
@@ -488,6 +417,7 @@ async function boot() {
     // observe it by driving the axis. Exposed for that; nothing in the game reads it.
     input,
     sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals, lifespan, loom, scoreboard, net, drops }, world, player, gen, chunks,
+    lens, chronicle,          // N4.2 test seam: the drawer and the series store
     get log() { return log; },  // expose full GameLog (entries + export + download)
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
@@ -777,10 +707,8 @@ async function boot() {
       post.apply(stage.app.screen.width, stage.app.screen.height, ppCfg, stage.app.canvas);
     }
 
-    // update Resonance panel
-    if (obsPanel.style.display !== 'none') {
-      updateObservatory();
-    }
+    // N4.2: self-throttling to 4 Hz and a no-op while the drawer is closed.
+    lens.refresh();
 
     // sim tick — R2: this is where the fire CA actually advances. Feed REAL elapsed wall-clock
     // time (frameMs), not the fixed sim step: render() runs once per rendered frame regardless
@@ -794,186 +722,25 @@ async function boot() {
     // poll browser metrics & push to Rust core (non-blocking)
     net.update(performance.now());
     net.recordHistory(performance.now());
+    // N4.2: one Chronicle sample per second, keyed on the WORLD clock so the
+    // series lines up with the run's own events rather than with wall time.
+    if (state.clock - lastChronicleT >= 1) {
+      lastChronicleT = state.clock;
+      sampleChronicle(chronicle, net, state.clock);
+      // A detected step is content: the Feed says the network changed, in the
+      // Feed's own voice, and N4.3 turns the same event into a world event.
+      for (const ev of chronicle.takeEvents()) {
+        log.push('resonance', `${ev.label} stepped ${ev.dir === 'up' ? 'up' : 'down'}: `
+          + `${ev.from.toFixed(1)} → ${ev.to.toFixed(1)} (${Math.abs(ev.sigma).toFixed(1)}σ)`, state.clock);
+      }
+    }
     worldCore.pushNetworkParams(net.packForCore());
     const changed = worldCore.drainEvents();
     fire.onWorldEvents(changed);
     if (changed.length) worldCore.bumpRebakes(chunks.rebakeTiles(changed));
   }
 
-  // N2a: Lens update — rebuilds all 7 sections with inspect data attributes
-  function updateObservatory() {
-    const body = document.getElementById('nw-lens-body');
-    if (!body) return;
-    const s = net.snap;
-    const biome = net.getBiome();
-    const stability = net.getStability();
-    const profile = (net as any).computeRealmProfile?.() ?? { median: s.rtt, variance: s.jitter * s.jitter };
 
-    const attr = (key: string) => `data-inspect-key="${key}"`;
-
-    let html = '';
-
-    // ── 1. Connection ──
-    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
-    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">CONNECTION</div>';
-    html += `<div style="display:flex;gap:8px;">`;
-    html += `<span ${attr('connection-rtt')} style="color:#f96;cursor:help;">RTT <b>${s.rtt.toFixed(0)}</b>ms</span>`;
-    html += `<span ${attr('connection-dl')} style="color:#6cf;cursor:help;">DL <b>${s.downlink.toFixed(1)}</b>Mbps</span>`;
-    html += `<span ${attr('connection-jitter')} style="color:#fc6;cursor:help;">Jit <b>${s.jitter.toFixed(1)}</b>ms</span>`;
-    html += `</div>`;
-    html += `<div style="font-size:8px;color:#556;margin-top:1px;">`;
-    html += `RTT quantized to 25 ms by browser · DL capped at 10 Mbps`;
-    html += `<br>effectiveType: ${s.effectiveType} · type: ${s.connectionType || '— (desktop browsers hide this)'}`;
-    html += ` · saveData: ${(navigator as any).connection?.saveData ? 'yes' : 'no'} · online: ${s.online}`;
-    html += `</div></div>`;
-
-    // ── 2. Realm profile ──
-    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
-    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">REALM PROFILE</div>';
-    html += `<div ${attr('realm-profile')} style="cursor:help;">echo median ${profile.median.toFixed(0)}ms · variance ${(profile.variance).toFixed(0)} → <b style="color:${biome.hex}">${biome.name}</b></div>`;
-    html += `<div style="margin-top:2px;height:3px;background:#222;border-radius:2px;overflow:hidden;">`;
-    html += `<div style="height:100%;width:${Math.round(stability*100)}%;background:${biome.hex};transition:width 0.5s;"></div></div>`;
-    html += `<div ${attr('realm-stability')} style="font-size:9px;color:#666;cursor:help;">Stability ${Math.round(stability*100)}%</div></div>`;
-
-    // ── 3. Routes ──
-    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
-    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">ROUTES</div>';
-    html += `<div ${attr('routes-origin')} style="font-size:9px;cursor:help;"><b>this origin</b> DNS ${s.pageDnsTime.toFixed(0)}ms · TCP — · TLS ${s.pageTlsTime.toFixed(0)}ms · TTFB ${s.pageTtfb.toFixed(0)}ms <span style="color:#585;">measured</span></div>`;
-    const base = (net as any).baseline;
-    if (base) {
-      html += `<div ${attr('routes-baseline')} style="font-size:9px;cursor:help;color:#8c8;">baseline ${base.ms.toFixed(0)}ms · dns ${base.dns.toFixed(0)} · tcp ${base.tcp.toFixed(0)} · tls ${base.tls.toFixed(0)} · ttfb ${base.ttfb.toFixed(0)}${base.proto ? ` · ${escapeHtml(base.proto)}` : ''}</div>`;
-    }
-    const wire = (net as any).wireStats?.();
-    if (wire) {
-      html += `<div ${attr('routes-gate')} style="font-size:8px;color:#667;cursor:help;">gate: ${wire.granted} sent · ${wire.denied} throttled${wire.off ? ' · PROBING OFF' : ''}</div>`;
-      for (const r of wire.resolvers) {
-        html += `<div ${attr('routes-resolver')} style="font-size:8px;color:#778;cursor:help;">resolver ${escapeHtml(r.label)} · n=${r.n} · avg ${r.avg.toFixed(0)}ms · best ${r.best.toFixed(0)}ms</div>`;
-      }
-    }
-    const probes = s.endpointProbes ?? [];
-    const seen = new Set<string>();
-    for (const p of probes) {
-      if (seen.has(p.label)) continue; seen.add(p.label);
-      const route = (net as any).echoSamples?.get(p.host ?? p.label) as number[] | undefined;
-      const last = p.rtt > 0 ? p.rtt : '—';
-      const best = route?.length ? Math.min(...route).toFixed(0) : last;
-      const med = route?.length ? [...route].sort((a,b)=>a-b)[Math.floor(route.length/2)].toFixed(0) : last;
-      const warm = (net as any).warmedRoutes?.has(p.host ?? p.label) ? '🔥' : '';
-      const ip = (p as any).ip ? escapeHtml((p as any).ip) : (p.detail ? escapeHtml(p.detail) : '—');
-      const ttl = (p as any).ttl ? ` · ttl ${(p as any).ttl}` : '';
-      const dnssec = (p as any).ad ? ' · 🔒' : '';
-      const via = (p as any).resolver ? ` · via ${escapeHtml((p as any).resolver)}` : '';
-      html += `<div ${attr(p.label)} style="font-size:9px;cursor:help;">${warm} ${p.label} → <span style="color:#9bd;">${ip}</span> · ${last}ms · best ${best} · med ${med} · n=${route?.length ?? 0}${ttl}${dnssec}${via}</div>`;
-    }
-    if (!probes.length) html += '<div style="font-size:9px;color:#555;">No routes resolved yet — the scheduler resolves one every few seconds</div>';
-    html += '</div>';
-
-    // ── 4. Identity ──
-    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
-    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">IDENTITY</div>';
-    const idRevealed = (net as any).identityFetched;
-    // Review fix: isp/city/country/asn/colo come verbatim from third-party
-    // JSON (ipapi.co) / text (cloudflare trace) responses with no
-    // sanitization, then went straight into innerHTML — escape before
-    // interpolating so a markup-bearing registrant/org string can't inject.
-    const unrev = '— unrevealed (explore to reveal)';
-    html += `<div ${attr('identity-ip')} style="font-size:9px;cursor:help;">IP: ${idRevealed && s.publicIp !== '...' ? escapeHtml(s.publicIp) : unrev}</div>`;
-    html += `<div ${attr('identity-isp')} style="font-size:9px;cursor:help;">PTR: ${idRevealed && s.isp !== '...' ? escapeHtml(s.isp) : unrev}</div>`;
-    html += `<div style="font-size:9px;">Country: ${idRevealed && s.country !== '..' ? escapeHtml(s.country) : '—'} · <span style="color:#887;">city/ASN need a geo-IP vendor — none is contacted</span></div>`;
-    html += `<div ${attr('identity-colo')} style="font-size:9px;cursor:help;">CF colo: ${s.colo !== '...' ? escapeHtml(s.colo) : '—'} · warp: ${s.warp ? 'yes' : 'no'}</div>`;
-    const tls = (net as any).tlsVersion, kex = (net as any).kex, proto = (net as any).httpProto;
-    html += `<div ${attr('identity-tls')} style="font-size:9px;cursor:help;">TLS: ${tls ? escapeHtml(tls) : '—'} · kex: ${kex ? escapeHtml(kex) : '—'} · proto: ${proto ? escapeHtml(proto) : '—'}</div>`;
-    const skew = (net as any).clockSkewMs ?? 0;
-    html += `<div ${attr('identity-skew')} style="font-size:9px;cursor:help;">Clock drift: ${skew > 0 ? '+' : ''}${(skew / 1000).toFixed(2)}s vs internet time</div>`;
-    html += `<div style="font-size:9px;color:#887;">local gateway / LAN — not observable from a browser</div>`;
-    html += '</div>';
-
-    // ── 5. Vessel ──
-    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
-    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">VESSEL</div>';
-    const ua = navigator.userAgent;
-    const brand = /Edge|Chrome|Firefox|Safari/.exec(ua)?.[0] ?? '—';
-    html += `<div ${attr('vessel-ua')} style="font-size:9px;cursor:help;">UA: ${brand} · cores: ${s.cpuCores} · RAM: ${s.deviceMemory}GB</div>`;
-    html += `<div ${attr('vessel-screen')} style="font-size:9px;cursor:help;">Screen: ${screen.width}×${screen.height} @${devicePixelRatio}x · lang: ${navigator.language} · tz: ${Intl.DateTimeFormat().resolvedOptions().timeZone}</div>`;
-    const gl = document.createElement('canvas').getContext('webgl2') || document.createElement('canvas').getContext('webgl');
-    const gpu = (gl as any)?.getParameter?.(gl?.RENDERER) ?? '—';
-    html += `<div ${attr('vessel-gpu')} style="font-size:9px;cursor:help;">GPU: ${gpu}</div>`;
-    html += '</div>';
-
-    // ── 6. Threads (decoder ring) ──
-    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
-    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">THREADS</div>';
-    const gmCtx = { snap: net.snap, distinctRegionsProbed: (net as any).distinctRegionsProbed ?? 0 };
-    for (const gm of NET_GAME_MAP) {
-      const raw = net.get(gm.netKey);
-      const val = Math.max(gm.min, Math.min(gm.max, gm.transform(raw, gmCtx)));
-      // Dormant threads: the mapping computes truthfully but no system consumes it yet.
-      const dim = gm.dormant ? 'opacity:0.4;' : '';
-      const tag = gm.dormant ? ' <span style="color:#557;">dormant</span>' : '';
-      html += `<div ${attr(gm.target)} style="font-size:9px;cursor:help;${dim}">${gm.label} ×${val.toFixed(2)} ← ${gm.netKey} ${raw.toFixed(1)} (clamp ${gm.min}–${gm.max})${tag}</div>`;
-    }
-    html += `<div style="font-size:9px;">Realm ← ${biome.name} (${biome.id})</div>`;
-    html += '</div>';
-
-    // ── 7. Feed (last 30 truth-kind entries) ──
-    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
-    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">FEED</div>';
-    const feedEntries = log.recentFeed(30);
-    if (!feedEntries.length) {
-      html += '<div style="font-size:9px;color:#555;">No truth events yet</div>';
-    } else {
-      for (const e of feedEntries) {
-        const t = Math.floor(e.t);
-        const ts = `${String((t/60)|0).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
-        const kindLabel = NET_LOG_LABELS[e.kind] ?? e.kind;
-        const styledMsg = styleNetworkMsg(e.msg);
-        html += `<div ${attr('feed-entry')} style="font-size:8px;color:#888;cursor:help;">[${ts}] <span style="color:#f96;">${kindLabel}</span> ${styledMsg}</div>`;
-      }
-    }
-    html += '</div>';
-
-    body.innerHTML = html;
-  }
-
-  /** Draw a sparkline on a canvas element by id. */
-  function drawSparkline(canvasId: string, data: number[], color: string, yMin: number, yMax: number) {
-    const canvas = document.getElementById(canvasId) as HTMLCanvasElement | null;
-    if (!canvas || data.length < 2) return;
-    const ctx2d = canvas.getContext('2d');
-    if (!ctx2d) return;
-    const w = canvas.width, h = canvas.height;
-    ctx2d.clearRect(0, 0, w, h);
-
-    // find actual data range
-    let dMin = Infinity, dMax = -Infinity;
-    for (const v of data) { if (v < dMin) dMin = v; if (v > dMax) dMax = v; }
-    if (dMax === dMin) { dMin -= 1; dMax += 1; }
-    // clamp to sensible display range
-    const dispMin = yMin > 0 ? Math.min(dMin, yMin) : dMin;
-    const dispMax = yMax > 0 ? Math.max(dMax, yMax) : dMax;
-    const range = dispMax - dispMin || 1;
-
-    const scaleX = w / Math.max(data.length - 1, 1);
-    const scaleY = (h - 4) / range;
-
-    // draw line
-    ctx2d.strokeStyle = color;
-    ctx2d.lineWidth = 1.5;
-    ctx2d.beginPath();
-    for (let i = 0; i < data.length; i++) {
-      const x = i * scaleX;
-      const y = h - 2 - (data[i] - dispMin) * scaleY;
-      if (i === 0) ctx2d.moveTo(x, y);
-      else ctx2d.lineTo(x, y);
-    }
-    ctx2d.stroke();
-
-    // draw min/max labels
-    ctx2d.fillStyle = '#666';
-    ctx2d.font = '8px monospace';
-    ctx2d.fillText(dispMax.toFixed(0), 2, 8);
-    ctx2d.fillText(dispMin.toFixed(0), 2, h - 2);
-  }
 }
 
 // ---- helpers ----

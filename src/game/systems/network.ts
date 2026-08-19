@@ -113,6 +113,10 @@ export class NetworkSystem {
     log: (k, m) => this.netLog(k, m),
   });
   snap: NetworkSnapshot;
+  /** N4.2: the session-long time-series store. Assigned by main() rather than
+   *  constructed here — the Lens, the export and this system all need the same
+   *  instance, and a second one would silently draw an empty history. */
+  chronicle: any = null;
   mappings: Record<string, NetMapping> = {};
   gameMappings: NetGameMapping[] = NET_GAME_MAP;
 
