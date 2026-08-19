@@ -38,7 +38,8 @@ export type ParticleKind =
   | 'rift'       // realm rift (N2)
   | 'death'      // enemy killed
   | 'heal'       // player healed
-  | 'crit';      // critical hit
+  | 'crit'       // critical hit
+  | 'levelup';   // B6: skill level gained — rises off the player
 
 /** Particle definitions — data-driven, tweakable at runtime. */
 export const PARTICLE_DEFS: Record<ParticleKind, ParticleDef> = {
@@ -86,6 +87,14 @@ export const PARTICLE_DEFS: Record<ParticleKind, ParticleDef> = {
     lifetime: [0.2, 0.4], speed: [60, 150], direction: [0, Math.PI * 2],
     color: 0xFFD700, alpha: [1.0, 0], scale: [1.5, 0.3],
     gravity: 40, spread: Math.PI,
+  },
+  // B6: negative gravity is the whole trick — motes that RISE read as an
+  // upgrade, motes that fall read as debris. Long-lived and slow so the burst
+  // hangs on the character rather than snapping past.
+  levelup: {
+    lifetime: [0.7, 1.2], speed: [25, 70], direction: [-Math.PI / 2, -Math.PI / 2],
+    color: 0xFFE08A, alpha: [1.0, 0], scale: [1.1, 0.2],
+    gravity: -40, spread: Math.PI / 2.2,
   },
 };
 

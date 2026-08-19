@@ -7,13 +7,14 @@ import { TILE } from '../world/worldgen';
 import { acquireGear, addXp, invAdd, invHasAll, invTakeAll, skillLevel } from '../rules';
 import type { GameState } from '../state';
 import { Sound } from '../../engine/audio';
+import { levelUpFlourish } from './flourish';
 import type { GameLog } from './log';
 import type { Stack } from '../types';
 
 /** B3.a: `loom` is optional and last so existing callers keep working, but a caller
  *  that omits it silently charges full price — the two call sites in main.ts both
  *  pass it. If a third appears, it wants the Loom too. */
-export function craft(state: GameState, recipeId: string, toast: (m: string, k?: any) => void, log?: GameLog, net?: any, loom?: any): boolean {
+export function craft(state: GameState, recipeId: string, toast: (m: string, k?: any) => void, log?: GameLog, net?: any, loom?: any, ctx?: any): boolean {
   const r = RECIPES.find((x) => x.id === recipeId);
   if (!r) return false;
   if (skillLevel(state, r.skill) < r.levelReq) {
@@ -45,7 +46,9 @@ export function craft(state: GameState, recipeId: string, toast: (m: string, k?:
   net?.probeAction?.('craft');
   // M3.6: Passive flux snapshot — connection stability at craft time, zero HTTP
   net?.samplePassive?.('craft');
-  if (lvl) { Sound.play('levelup'); toast(`${cap(r.skill)} reached level ${lvl}!`, 'good'); log?.push('level', `${cap(r.skill)} reached level ${lvl}`, state.clock); }
+  // B6: ctx is optional — the Gauntlet calls craft() headless with no views,
+  // and levelUpFlourish() is a no-op without one rather than a crash.
+  if (lvl) { if (ctx) levelUpFlourish(ctx); else Sound.play('levelup'); toast(`${cap(r.skill)} reached level ${lvl}!`, 'good'); log?.push('level', `${cap(r.skill)} reached level ${lvl}`, state.clock); }
   return true;
 }
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);

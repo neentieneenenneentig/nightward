@@ -6,6 +6,7 @@ import { MATERIALS } from '../data/materials';
 import { addXp, invAdd } from '../rules';
 import { tileKey, type Building } from '../state';
 import { TILE } from '../world/worldgen';
+import { levelUpFlourish } from './flourish';
 
 export class FireSystem {
   // tileKey -> the material a tracked controlled burn should yield if it's the player's doing —
@@ -53,7 +54,7 @@ export class FireSystem {
     const lvl = addXp(state, 'firemaking', CFG.fire.ignitionXp);
     toast('The flame catches.', 'good');
     log?.push('world', `Set fire to (${tx},${ty})`, state.clock);
-    if (lvl) { toast(`Firemaking reached level ${lvl}!`, 'good'); log?.push('level', `Firemaking reached level ${lvl}`, state.clock); }
+    if (lvl) { levelUpFlourish(this.ctx); toast(`Firemaking reached level ${lvl}!`, 'good'); log?.push('level', `Firemaking reached level ${lvl}`, state.clock); }
     return true;
   }
 
@@ -76,7 +77,7 @@ export class FireSystem {
         const lvl = addXp(state, 'firemaking', CFG.fire.charcoalXp);
         toast('+1 Charcoal from the embers', 'good');
         log?.push('gather', `Collected charcoal from a controlled burn at (${tx},${ty})`, state.clock);
-        if (lvl) { toast(`Firemaking reached level ${lvl}!`, 'good'); log?.push('level', `Firemaking reached level ${lvl}`, state.clock); }
+        if (lvl) { levelUpFlourish(this.ctx); toast(`Firemaking reached level ${lvl}!`, 'good'); log?.push('level', `Firemaking reached level ${lvl}`, state.clock); }
       }
     }
   }

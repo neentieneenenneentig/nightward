@@ -13,6 +13,7 @@ import type { Building } from '../state';
 import { TILE } from '../world/worldgen';
 import { BUILDINGS } from '../data/buildings';
 import { Sound } from '../../engine/audio';
+import { levelUpFlourish } from './flourish';
 import { epithetForRegion, prefixForBirth } from '../data/lexicon';
 
 const SKILL_NAME: Record<string, string> = Object.fromEntries(SKILLS.map((s) => [s.id, s.name]));
@@ -797,7 +798,8 @@ export class HordeSystem {
     if (awardXp) {
       const lvl = addXp(state, 'combat', f.def.xp);
       toast(`+${f.def.xp} ${SKILL_NAME['combat']} xp`);
-      if (lvl) { toast(`Combat reached level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Combat reached level ${lvl}`, state.clock); }
+      // B6: combat levels were entirely silent before this — no sound, no flourish
+      if (lvl) { levelUpFlourish(this.ctx); toast(`Combat reached level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Combat reached level ${lvl}`, state.clock); }
       if (state.player.equip?.charm) {
         const cl = awardSoulXp(state, 'charm', CFG.soulgear.charmXpPerKill);
         if (cl) { toast(`Your charm drinks the kill — soul level ${cl}!`, 'good'); this.ctx.log?.push('level', `Charm reached soul level ${cl}`, state.clock); }

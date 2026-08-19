@@ -4652,6 +4652,61 @@ async function testGroundDropDisabled(nw: any) {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// B6 — Level-Up Flourish
+// ---------------------------------------------------------------------------
+async function testLevelUpFlourish(nw: any) {
+  const { CFG } = await import('../data/config');
+  const { PARTICLE_DEFS } = await import('../../engine/particles');
+  const { levelUpFlourish } = await import('./flourish');
+
+  const def = (PARTICLE_DEFS as any).levelup;
+  ok(def !== undefined, 'a levelup particle row exists');
+  // Negative gravity is the whole trick: motes that RISE read as an upgrade,
+  // motes that fall read as debris. A sign flip here silently ruins the effect
+  // and nothing else in the suite would notice.
+  ok(def.gravity < 0, `levelup motes rise, not fall (gravity ${def.gravity})`);
+  ok(def.lifetime[1] >= 1.0, `and hang around long enough to be seen (${def.lifetime[1]}s)`);
+
+  ok(typeof nw.ctx.views.addLevelUpBurst === 'function',
+    'views.addLevelUpBurst exists — the ring is drawn, not just particles');
+
+  // Matched pair on the config gate, through a spy ctx: with the flag off
+  // NOTHING fires, with it on BOTH halves fire. A test that only checked the
+  // "on" case would pass with the gate wired to a constant.
+  const spy = () => {
+    const hits: string[] = [];
+    return {
+      hits,
+      player: { x: 100, y: 100 },
+      views: { addLevelUpBurst: () => hits.push('ring') },
+      particles: { spawn: (k: string) => hits.push('particles:' + k) },
+    };
+  };
+  const saved = CFG.ui.levelFlourish;
+  try {
+    CFG.ui.levelFlourish = false;
+    const off = spy();
+    levelUpFlourish(off);
+    eq(off.hits.length, 0, 'CFG.ui.levelFlourish=false fires nothing at all');
+
+    CFG.ui.levelFlourish = true;
+    const on = spy();
+    levelUpFlourish(on);
+    ok(on.hits.includes('ring'), 'CFG.ui.levelFlourish=true draws the ring');
+    ok(on.hits.includes('particles:levelup'), '...and spawns the levelup motes');
+  } finally {
+    CFG.ui.levelFlourish = saved;
+  }
+
+  // Skill levels only. Soul-gear levels and Loom points are frequent, and a
+  // flourish that fires several times a minute stops reading as an achievement
+  // — the same always-on-intensity failure as the rolled-back combat music.
+  ok(!/soulItems|loomPoints/.test(levelUpFlourish.toString()),
+    'the flourish is not wired to soul-gear or Loom levels');
+}
+
 const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Boot & state integrity', fn: testBoot },
   { name: 'Starting inventory', fn: testStartingInventory },
@@ -4751,6 +4806,8 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Ground drops - materials rot, gear never does', fn: testGroundDropDespawn },
   { name: 'Ground drops - cap holds and never evicts gear', fn: testGroundDropCap },
   { name: 'Ground drops - CFG.drops.enabled=false restores instant pickup', fn: testGroundDropDisabled },
+  // ---- B6: Level-Up Flourish ----
+  { name: 'Level-up flourish - rising motes, ring, config gate', fn: testLevelUpFlourish },
 ];
 
 /** Run all registered tests sequentially. Returns { pass, fail, total, report }. */

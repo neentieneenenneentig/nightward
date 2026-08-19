@@ -343,7 +343,7 @@ async function boot() {
     enterBuild: (id: string) => (id ? build.enter(id) : build.cancel()),
     startBuild: () => build.start(),
     cycleBuild: (dir: number) => build.cycle(dir),
-    craft: (id: string) => { const ok = craft(state, id, ctx.toast, log, net, loom); if (ok) vitals.markAction(); ui.rebuildPanel(); },
+    craft: (id: string) => { const ok = craft(state, id, ctx.toast, log, net, loom, ctx); if (ok) vitals.markAction(); ui.rebuildPanel(); },
     // B3.b: the Loom's first production caller. Until this line existed the tree
     // was unreachable — points accrued and could never be spent.
     allocateLoom: (id: string) => loom.allocate(id),
@@ -491,7 +491,7 @@ async function boot() {
     get log() { return log; },  // expose full GameLog (entries + export + download)
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
-    craft: (id: string) => craft(state, id, ctx.toast, log, net, loom),
+    craft: (id: string) => craft(state, id, ctx.toast, log, net, loom, ctx),
     // R1: the writable-world seam. __nw.core is the WorldCore wrapper (materialAt,
     // setMaterial, overrideAt, pushMaterials, stats, _activate, _deactivate).
     core: worldCore,

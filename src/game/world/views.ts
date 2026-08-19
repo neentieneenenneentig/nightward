@@ -433,6 +433,33 @@ export class Views {
     });
   }
 
+  /** B6: the level-up flourish — two rings racing outward and a soft ground
+   *  bloom, drawn ON the character. The WoW read the request was pointing at is
+   *  that a level-up happens to YOU; a toast in the corner is information, not
+   *  an event. Deliberately gold and deliberately brief — this fires on every
+   *  skill level, and an effect that outstays its welcome at level 4 is
+   *  unbearable by level 40. */
+  addLevelUpBurst(x: number, y: number) {
+    const g = new Graphics();
+    g.position.set(x, y - 6);
+    this.fx.addChild(g);
+    this.animate(g, 0.65, (t) => {
+      g.clear();
+      const ease = 1 - (1 - t) * (1 - t);        // fast out, slow settle
+      // ground bloom first so the rings read on top of it
+      g.ellipse(0, 12, 26 * ease, 10 * ease).fill({ color: 0xffd870, alpha: (1 - t) * 0.22 });
+      g.circle(0, 0, 10 + 34 * ease)
+        .stroke({ width: 3 - 2 * t, color: 0xfff0b8, alpha: (1 - t) * 0.95 });
+      // the second ring trails the first, which is what stops it reading as a
+      // single expanding circle and starts it reading as a pulse
+      const t2 = Math.max(0, t - 0.18) / 0.82;
+      if (t2 > 0) {
+        g.circle(0, 0, 6 + 26 * (1 - (1 - t2) * (1 - t2)))
+          .stroke({ width: 2, color: 0xffc24d, alpha: (1 - t2) * 0.6 });
+      }
+    });
+  }
+
   /** C1: a smouldering ground patch (Cinder Trail) — glows, gutters, fades. */
   addBurnPatch(x: number, y: number, sec: number) {
     const g = new Graphics();

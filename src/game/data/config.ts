@@ -275,6 +275,9 @@ export const CFG = {
 
   ui: {
     toastSec: 3.2,
+    // B6: the level-up flourish. A toast in the corner is information; the
+    // point of the ask was that it should happen ON the character.
+    levelFlourish: true,
   },
 
   debug: {

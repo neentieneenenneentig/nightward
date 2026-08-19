@@ -9,6 +9,7 @@ import { BUILDINGS } from '../data/buildings';
 import type { SoulSlot } from '../data/soulgear';
 import { TILE, type MegaCluster } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
+import { levelUpFlourish } from './flourish';
 
 // a couple of alternates per skill so gathering doesn't sound identical every hit
 const GATHER_SFX: Record<string, string[]> = {
@@ -227,7 +228,8 @@ export class GatherSystem {
     }
 
     if (newLevel) {
-      Sound.play('levelup'); toast(`${SKILL_NAME[a.def.skill]} reached level ${newLevel}!`, 'good');
+      levelUpFlourish(this.ctx);   // B6 (plays the sound too)
+      toast(`${SKILL_NAME[a.def.skill]} reached level ${newLevel}!`, 'good');
       this.ctx.log?.push('level', `${SKILL_NAME[a.def.skill]} reached level ${newLevel}`, state.clock);
     }
   }

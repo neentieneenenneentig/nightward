@@ -11,6 +11,7 @@ import { TILE } from '../world/worldgen';
 import { REGION, domainAtRegion, regionCenterPx } from '../world/domains';
 import { hash2 } from '../../engine/rng';
 import { Sound } from '../../engine/audio';
+import { levelUpFlourish } from './flourish';
 
 const defOf = (id: string): EnemyDef => ENEMIES.find((e) => e.id === id)!;
 
@@ -234,7 +235,7 @@ export class WorldBossSystem {
     this.ctx.drops.spawn(rollLoot(def.loot), b.x, b.y, { spread: 1.8 });
     if (fromPlayer) {
       const lvl = addXp(state, 'combat', def.xp);
-      if (lvl) { this.ctx.toast(`Combat reached level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Combat reached level ${lvl}`, state.clock); }
+      if (lvl) { levelUpFlourish(this.ctx); this.ctx.toast(`Combat reached level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Combat reached level ${lvl}`, state.clock); }
       if (state.player.equip?.charm) {
         const cl = awardSoulXp(state, 'charm', CFG.soulgear.charmXpPerKill * 10); // bosses feed charms well
         if (cl) { this.ctx.toast(`Your charm drinks deep — soul level ${cl}!`, 'good'); this.ctx.log?.push('level', `Charm reached soul level ${cl}`, state.clock); }
