@@ -216,7 +216,7 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 >
 > ### Evidence — including what went wrong
 >
-> Typecheck clean on both configs · build green · **Gauntlet 1548/1548 across 93 tests**
+> Typecheck clean on both configs · build green · **Gauntlet 1553/1553 across 94 tests**
 > (up from 1337/1337 across 85: 21 new assertions worth of B5/B6/N4 coverage plus rewrites).
 >
 > **A correction to my own first conclusion, recorded because the first version of this
@@ -262,6 +262,36 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 > origin, and wrong by exactly the camera offset everywhere else, which is why it never
 > looked broken so much as sparse. One line: `new ParticleSystem(stage.world, 400)`.
 > Verified in a 4× clipped capture, not by reasoning about it.
+
+> **And the 4× capture immediately found a second one.** Every stack count lying on the
+> ground was an unreadable smudge. `stage.world` is scaled 2× and Pixi renders `Text` into
+> a texture at **resolution 1**, so each label was a low-res bitmap linearly upscaled — a
+> thin glyph with a dark stroke blurs into grey mush. It presented as a *colour* bug, and
+> every property was already correct: fill cream, alpha 1, tint white, no filter anywhere
+> in the ancestor chain. What settled it was forcing the fill bright red and getting a dark
+> red smudge, which ruled the fill out and pointed at filtering. `resolution = 4`.
+>
+> Looking at the picture found two more things in the same 30 lines: the count was drawn at
+> `(0, 5)`, directly on top of its own contact shadow (an ellipse centred at `(0, 7)`, ry
+> 3), so the top half of every digit sat in the darkest pixels of the frame; and `fontSize
+> 9` with a **3 px** stroke leaves nothing, because Pixi draws the stroke *over* the fill
+> and centres it on the outline, eating 1.5 px inward from each side of a ~2 px stem.
+> `BuildingView`'s name label had the same resolution bug and is fixed with it. Floaters are
+> unaffected — they convert world→screen and live in an unscaled layer.
+>
+> **Both of these are the same lesson twice in one night: a renderer cannot be verified by
+> reading it.** Two bugs, both months old, both invisible to a suite of 1500 assertions,
+> both obvious within seconds of actually looking at a magnified frame. The gate
+> screenshots are not decoration for the report; they are the only instrument that catches
+> this class of defect.
+
+> **One more flake, and this one N4.1 caused.** The Night Market assertion is
+> `round(pop × goldMul × 1.4) > round(pop × goldMul)` with `pop = 2` — false for any
+> `goldMul` near 0.8, since `round(1.6)` and `round(2.24)` are both 2. It was stable before
+> because `goldRate` was a quantised `downlink` bucket; N4.1 made it a **continuous measured
+> value**, so it started landing in the dead band. That is the cost of measuring things
+> honestly, and the fix is on the test, not the feature: six huts put the base near 14,
+> where a 40% rise cannot round away.
 
 > **The fourth tautological test in this suite.** `testGatherEveryFeature` reported
 > "tested === found" and had **never gathered anything**. `world.activeFeatureAt` returns a
