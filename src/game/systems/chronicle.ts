@@ -155,7 +155,19 @@ export class ChronicleStore {
    *  epoch — an exported chronicle should not carry a wall-clock timestamp the
    *  player did not ask to share. */
   readonly bootMs = Date.now();
+  /** The PERMANENT record. The Lens CHANGES panel and the export both read this
+   *  and neither may drain it.
+   *
+   *  N4.3: it used to be the drain queue as well, and `main()` calls takeEvents()
+   *  at 1 Hz to turn steps into Feed lines — so by the time a player opened the
+   *  Lens the array had been emptied, every time. The CHANGES panel could only
+   *  ever have shown something if a refresh landed inside the same second as a
+   *  detection, and the export's `events` field was `[]` in every chronicle ever
+   *  written. Nothing went red: `testChronicleStore` builds its own store and
+   *  never calls takeEvents(), so the drain was invisible to it. */
   events: ChronicleEvent[] = [];
+  /** Undelivered events, for consumers that must see each one exactly once. */
+  private pending: ChronicleEvent[] = [];
   private lastEventAt = new Map<string, number>();
 
   /** Seconds between repeat events for the same series. Without this a network
@@ -202,19 +214,28 @@ export class ChronicleStore {
     const lastAt = this.lastEventAt.get(s.meta.key) ?? -1e9;
     if (now - lastAt < ChronicleStore.EVENT_COOLDOWN) return;
     this.lastEventAt.set(s.meta.key, now);
-    this.events.push({
+    const ev: ChronicleEvent = {
       t: now, key: s.meta.key, label: s.meta.label,
       dir: sigma > 0 ? 'up' : 'down',
       from: base.mean, to: recent.mean, sigma,
-    });
+    };
+    this.events.push(ev);
+    this.pending.push(ev);
     if (this.events.length > ChronicleStore.MAX_EVENTS) this.events.shift();
+    if (this.pending.length > ChronicleStore.MAX_EVENTS) this.pending.shift();
   }
 
-  /** Drain events for the caller to turn into Feed lines / world events. */
+  /** Drain UNDELIVERED events for the caller to turn into Feed lines and world
+   *  events. Drains `pending` only — `events` is the permanent record. */
   takeEvents(): ChronicleEvent[] {
-    const out = this.events.slice();
-    this.events.length = 0;
+    const out = this.pending.slice();
+    this.pending.length = 0;
     return out;
+  }
+
+  /** The most recent events, newest last. Never drains. */
+  recentEvents(n = 8): ChronicleEvent[] {
+    return this.events.slice(-n);
   }
 
   /** The export. The panel is a data-collection instrument, so the data has to
@@ -275,11 +296,18 @@ export function sampleChronicle(store: ChronicleStore, net: any, tSec: number) {
 /** The export button. The Lens is a data-collection instrument, so the data has
  *  to be able to leave it. Nothing here is uploaded anywhere — it is a local
  *  download, and the session start is the only timestamp included. */
-export function exportChronicle(store: ChronicleStore, net: any, state: any) {
+export function exportChronicle(store: ChronicleStore, net: any, state: any, omens?: any) {
   const s = net.snap;
   const payload = store.toJSON({
     seed: state?.seed,
     realm: net.getBiome?.()?.id,
+    // N4.3: what the wire actually DID to the run. A chronicle that recorded a
+    // throughput collapse but not the famine it caused would be half the story.
+    omens: (omens?.history ?? []).map((o: any) => ({
+      kind: o.kind, t: o.t0, until: o.until, from: o.from, to: o.to,
+      sigma: o.sigma, target: o.def?.target ?? null, mul: o.def?.mul ?? 1,
+      endedAt: o.endedAt ?? null, endedBy: o.endedBy ?? null,
+    })),
     snapshot: {
       deepLive: s.deepLive,
       rtt: s.rtt, downlink: s.downlink, jitter: s.jitter,
