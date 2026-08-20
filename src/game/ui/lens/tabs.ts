@@ -225,8 +225,32 @@ const vessel: LensTab = {
 const threads: LensTab = {
   id: 'threads',
   title: 'THREADS',
-  render({ net, log, chronicle }) {
+  render({ net, log, chronicle, omens }) {
     const ctx = { snap: net.snap, distinctRegionsProbed: net.distinctRegionsProbed ?? 0 };
+    // N4.3: OMENS goes FIRST. The Decoder Ring below it is a 25-row reference
+    // table of this connection's steady state — useful, static, and the thing a
+    // player scrolls past. An omen is transient and is changing their yields
+    // right now. The gate screenshot put OMENS under the Ring and it landed
+    // below the fold, which for a status this short-lived is the same as absent.
+    const active = omens?.active ?? [];
+    const past = (omens?.history ?? []).filter((o: any) => o.endedAt !== undefined);
+    let out = section('OMENS',
+      (active.length
+        ? active.map((o: any) => row(
+            `${escapeHtml(o.def.name)} <span style="color:#5a5a6e;">${escapeHtml(o.def.blurb)}</span>`,
+            (o.def.target ? `${escapeHtml(o.def.target)} ×${o.def.mul}` : 'realm tear')
+            + ` <span style="color:#5a5a6e;">${o.from.toFixed(1)} → ${o.to.toFixed(1)}</span>`,
+            { quality: 'derived', color: o.def.good ? '#8fd98f' : '#f08a6a' })).join('')
+        : row('the world is steady', '—', { quality: 'derived', why: 'no reading has stepped far enough to raise one' }))
+      + (past.length
+        ? past.slice(-4).reverse().map((o: any) => row(
+            `<span style="opacity:0.5;">${escapeHtml(o.def.name)}</span>`,
+            `<span style="opacity:0.5;">${o.endedBy}</span>`, { dim: true })).join('')
+        : '')
+      + note('An omen is a STEP, not a level. The Decoder Ring below is the steady state of this '
+        + 'connection; an omen is the moment it changed. Bad ones lift when the reading recovers — '
+        + 'the countdown on the HUD chip is a safety valve, not a promise.'));
+
     let body = '';
     for (const gm of NET_GAME_MAP) {
       const raw = net.get(gm.netKey);
@@ -237,11 +261,13 @@ const threads: LensTab = {
         `×${val.toFixed(2)} <span style="color:#5a5a6e;">← ${escapeHtml(gm.netKey)} ${raw.toFixed(1)}</span>`,
         { inspect: gm.target, quality: 'derived', dim: !!(gm as any).dormant });
     }
-    let out = section('THE DECODER RING', body
+    out += section('THE DECODER RING', body
       + note('Each row is a live measurement being turned into a game number. The clamp bands are in '
         + 'data/network.ts and are editable at runtime through window.NW.'));
 
-    const events = chronicle?.events ?? [];
+    // Read the PERMANENT record, not the drain queue: main() calls takeEvents()
+    // once a second to turn steps into Feed lines and omens.
+    const events = chronicle?.recentEvents?.(8) ?? chronicle?.events ?? [];
     out += section('CHANGES',
       events.length
         ? events.slice(-8).reverse().map((e: any) => row(

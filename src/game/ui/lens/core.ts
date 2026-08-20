@@ -109,6 +109,9 @@ export interface LensCtx {
   net: any;
   chronicle: any;
   log: any;
+  /** N4.3: the OmenSystem. Read-only here — a tab that could raise an omen
+   *  would eventually raise one by accident. */
+  omens: any;
   inspectFor(key: string): NetInspect | null;
 }
 

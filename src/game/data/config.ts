@@ -333,6 +333,20 @@ export const CFG = {
     toastWindowSec: 0.4,     // pickups inside this window collapse into one toast line
     goldDrops: false,        // B5 Q2 — gold stays a direct credit until decided
   },
+
+  // N4.3: Omens — a detected step change on the wire becomes a temporary world
+  // state. See systems/omens.ts; the per-kind numbers live in OMEN_DEFS, which
+  // is a table, so balance is a row edit rather than a code change.
+  omens: {
+    enabled: true,
+    // The safety valve on the whole feature: no more than this many omens may be
+    // active at once, so a network having a genuinely terrible minute cannot
+    // stack five multipliers onto a run at the same time.
+    maxActive: 3,
+    // Screen-space corruption when a Surge is up (0 = off). The wire fraying is
+    // the one omen the plan explicitly asks to be *frightening*.
+    surgeFxStrength: 0.5,
+  },
 };
 
 export type Config = typeof CFG;

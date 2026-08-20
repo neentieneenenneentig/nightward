@@ -20,6 +20,7 @@ import { Camera } from './game/world/camera';
 import { UI, NET_LOG_LABELS, styleNetworkMsg } from './game/ui/ui';
 import { Lens } from './game/ui/lens';
 import { ChronicleStore, CHRONICLE_SERIES, exportChronicle, sampleChronicle } from './game/systems/chronicle';
+import { OmenSystem } from './game/systems/omens';
 import { DropSystem } from './game/systems/drops';
 import { GatherSystem, VERB } from './game/systems/gather';
 import { EconomySystem } from './game/systems/economy';
@@ -242,11 +243,30 @@ async function boot() {
   for (const m of CHRONICLE_SERIES) chronicle.define(m);
   net.chronicle = chronicle;
 
+  // N4.3: Omens — the Chronicle's detected step changes stop being Feed lines
+  // and become world states with real multipliers. This is the half of N4 that
+  // makes the network the world rather than a readout beside it.
+  const omens = new OmenSystem({
+    clock: () => state.clock,
+    chronicle,
+    toast: (m, k) => ui.toast(m, (k ?? 'bad') as any),
+    log,
+    rift: (reason) => net.riftFromWire(reason),
+    fx: (o) => {
+      // Good omens rise off the player as wisps; bad ones tear like a rift. The
+      // rift kind spawns nothing here because net.onRift() already does the
+      // full-screen flash — doubling it would just be loud.
+      if (o.kind === 'rift') return;
+      particles.spawn(o.def.good ? 'wisp' : 'rift', player.x, player.y - 8, o.def.good ? 14 : 22);
+    },
+  });
+  ctx.omens = omens;
+
   let lastChronicleT = -1;
 
   const lens = new Lens(
-    { net, chronicle, log, inspectFor: getInspectData },
-    () => exportChronicle(chronicle, net, state),
+    { net, chronicle, log, omens, inspectFor: getInspectData },
+    () => exportChronicle(chronicle, net, state, omens),
   );
 
   // O key toggles the Lens
@@ -321,6 +341,12 @@ async function boot() {
       if (gather.target) return { label: labelFor(gather.target.def) + ' (E)', frac: 0 };
       return null;
     },
+    omenView: () => omens.active.map((o) => ({
+      name: o.def.name,
+      good: o.def.good,
+      secs: Math.max(0, Math.ceil(o.until - state.clock)),
+      blurb: o.def.blurb,
+    })),
   });
 
   // hand the build system a way to drive the placement carousel banner
@@ -428,7 +454,7 @@ async function boot() {
     // observe it by driving the axis. Exposed for that; nothing in the game reads it.
     input,
     sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals, lifespan, loom, scoreboard, net, drops }, world, player, gen, chunks,
-    lens, chronicle,          // N4.2 test seam: the drawer and the series store
+    lens, chronicle, omens,   // N4.2/N4.3 test seam: drawer, series store, omens
     get log() { return log; },  // expose full GameLog (entries + export + download)
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
@@ -516,8 +542,11 @@ async function boot() {
     const loomSpeedMul = loom.getMoveSpeedMul();
     // N2b: material speed burst (e.g. Flux Crystal exit)
     const matSpeedMul = matFx.speedBurst;
+    // N4.3: Quickening speeds the world up, Miring thickens it. They share this
+    // target deliberately, so a link that is both fast and bloated cancels out.
+    const omenSpeedMul = omens.mul('moveSpeed');
     const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y),
-      feetSpeed * moveSpeedMul * resolveSpeedMul * loomSpeedMul * matSpeedMul * siltMul);
+      feetSpeed * moveSpeedMul * resolveSpeedMul * loomSpeedMul * matSpeedMul * siltMul * omenSpeedMul);
     state.player.x = player.x;
     state.player.y = player.y;
 
@@ -702,12 +731,23 @@ async function boot() {
         'cellular': [255, 192, 192],  // harsh red
         'unknown': [200, 200, 200],   // neutral
       };
-      const gradeTint = gradeColors[biome.id] ?? gradeColors['unknown'];
-      const gradeStrength = 0.06; // subtle — per G1 spec (5-10%)
+      let gradeTint = gradeColors[biome.id] ?? gradeColors['unknown'];
+      let gradeStrength = 0.06; // subtle — per G1 spec (5-10%)
 
       // Vignette: darker at night, darker when offline
       let vignetteI = ph.isNight ? 0.25 : 0.10;
       if (!net.snap.online) vignetteI += 0.15;
+      // N4.3: a Surge is packet loss made visible. The plan asks for loss to be
+      // FRIGHTENING, and a number in a panel is not frightening — the vignette
+      // closes in and the grade turns hostile for as long as the wire is
+      // fraying. Scaled by CFG.omens.surgeFxStrength so it is one number to
+      // turn down if it reads as too much in playtest.
+      if (omens.has('surge')) {
+        const k = Math.max(0, Math.min(1, CFG.omens.surgeFxStrength));
+        vignetteI += 0.22 * k;
+        gradeTint = [255, 120, 120];
+        gradeStrength = 0.06 + 0.10 * k;
+      }
 
       const ppCfg: PostProcessConfig = {
         bloomSpots,
@@ -738,12 +778,16 @@ async function boot() {
     if (state.clock - lastChronicleT >= 1) {
       lastChronicleT = state.clock;
       sampleChronicle(chronicle, net, state.clock);
-      // A detected step is content: the Feed says the network changed, in the
-      // Feed's own voice, and N4.3 turns the same event into a world event.
+      // A detected step is content twice over: a Feed line in the Feed's own
+      // voice, and an offer to the Omen system, which may raise a world state
+      // with a multiplier behind it. takeEvents() drains only the undelivered
+      // queue — `chronicle.events` stays intact for the Lens and the export.
       for (const ev of chronicle.takeEvents()) {
         log.push('resonance', `${ev.label} stepped ${ev.dir === 'up' ? 'up' : 'down'}: `
           + `${ev.from.toFixed(1)} → ${ev.to.toFixed(1)} (${Math.abs(ev.sigma).toFixed(1)}σ)`, state.clock);
+        omens.consider(ev);
       }
+      omens.tick();
     }
     worldCore.pushNetworkParams(net.packForCore());
     const changed = worldCore.drainEvents();

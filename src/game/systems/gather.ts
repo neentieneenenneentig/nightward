@@ -155,6 +155,17 @@ export class GatherSystem {
         d.n = Math.max(0, Math.floor(scaled) + (Math.random() < scaled % 1 ? 1 : 0));
       }
     }
+    // N4.3: Famine thins the land, Bounty fattens it. Applied with the same
+    // stochastic rounding as the scarcity modifier above, so a 0.65x famine on a
+    // single-item drop is a 35% chance of nothing rather than a guaranteed
+    // floor(0.65) = 0 that would make every small node worthless.
+    const omenYield = this.ctx.omens?.mul?.('resourceYield') ?? 1;
+    if (omenYield !== 1) {
+      for (const d of drops) {
+        const scaled = d.n * omenYield;
+        d.n = Math.max(0, Math.floor(scaled) + (Math.random() < scaled % 1 ? 1 : 0));
+      }
+    }
     // N2b: material effect — Verdant Bloom tiles boost gather yield
     const matYieldMul = this.ctx.matFx?.mods?.gatherYieldMult ?? 1;
     if (matYieldMul !== 1) {

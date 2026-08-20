@@ -477,7 +477,13 @@ export class HordeSystem {
     // horde press harder. 1.0 when the deep wire is silent, so a filtered
     // network plays a balanced game rather than an accidentally easy one.
     const fray = this.ctx.net?.getGameValue?.('hordeAggression') ?? 1;
-    let step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain * fear * chill * towerSlow * tarSlow * fray;
+    // N4.3: a Surge is the STEP, where fray above is the LEVEL. A link that has
+    // always lost 2% plays a permanently harder game through the mapping row; a
+    // link that suddenly starts losing 2% gets a named event on top of it. The
+    // two are deliberately separate — steady-state hostility and a shock are not
+    // the same experience.
+    const surge = this.ctx.omens?.mul?.('hordeAggression') ?? 1;
+    let step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain * fear * chill * towerSlow * tarSlow * fray * surge;
     step *= buffSpeedMul;
     if (stunned) step = 0;
     let blocked: Building | null = null;

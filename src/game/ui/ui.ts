@@ -38,6 +38,10 @@ export interface UIHooks {
   newWorld(): void;
   isPlacing(): boolean;
   gatherView(): { label: string; frac: number } | null;
+  /** N4.3: active Omens, for the HUD chip. An omen changes how the game plays,
+   *  so it has to be visible without opening the Lens — a hidden multiplier is
+   *  indistinguishable from the game being broken. */
+  omenView(): { name: string; good: boolean; secs: number; blurb: string }[];
   /** L1: current age/lifespan-remaining reading — drives the HUD chip+bar. */
   lifespanView(): { age: number; frac: number; minutesRemaining: number; warning: boolean; critical: boolean };
   logEntries(): LogEntry[];
@@ -101,6 +105,8 @@ export class UI {
   private domainEl!: HTMLElement;
   private muteEl!: HTMLElement;
   private echoEl!: HTMLElement;
+  private omenEl!: HTMLElement;
+  private omenChipsCache = '';
   private echoChipsCache = '';
   private vigorText!: HTMLElement;
   private resolveText!: HTMLElement;
@@ -158,6 +164,7 @@ export class UI {
       <div class="nw-badge nw-clock" id="nw-clock"></div>
       <div class="nw-badge" id="nw-nights" title="damage · defense · population · territory"></div>
       <div class="nw-badge" id="nw-echoes" style="display:none" title="echoes of the slain"></div>
+      <div class="nw-badge" id="nw-omens" style="display:none" title="omens — the wire is changing the world"></div>
       <div class="nw-badge nw-domain" id="nw-domain" title="the realm you stand in"></div>
       <div class="nw-spacer"></div>
       <div class="nw-badge nw-btn" id="nw-mute" style="pointer-events:auto" title="sound on/off">&#128266;</div>
@@ -173,6 +180,7 @@ export class UI {
     this.clock = top.querySelector('#nw-clock')!;
     this.nights = top.querySelector('#nw-nights')!;
     this.echoEl = top.querySelector('#nw-echoes')!;
+    this.omenEl = top.querySelector('#nw-omens')!;
     this.vigorText = top.querySelector('#nw-vigor-text')!;
     this.resolveText = top.querySelector('#nw-resolve-text')!;
     this.domainEl = top.querySelector('#nw-domain')!;
@@ -814,6 +822,17 @@ export class UI {
       this.echoChipsCache = chips;
       this.echoEl.style.display = chips ? '' : 'none';
       this.echoEl.innerHTML = chips;
+    }
+
+    // N4.3: omen chips. The countdown is the safety-valve expiry, not a promise
+    // — a Famine can lift the moment throughput recovers, which is the point.
+    const omenChips = this.hooks.omenView().map((o) =>
+      `<span title="${o.blurb} — lifts when the reading recovers, or in ${o.secs}s"`
+      + ` style="color:${o.good ? '#8fd98f' : '#f08a6a'};">${o.name} ${o.secs}s</span>`).join(' &middot; ');
+    if (omenChips !== this.omenChipsCache) {
+      this.omenChipsCache = omenChips;
+      this.omenEl.style.display = omenChips ? '' : 'none';
+      this.omenEl.innerHTML = omenChips;
     }
 
     // gather progress ring
