@@ -4505,7 +4505,20 @@ async function testExhaustivePlaythrough(nw: any) {
     state.player.inv['copper_ore'] = (state.player.inv['copper_ore'] ?? 0) + 20;
     state.player.inv['iron_ore'] = (state.player.inv['iron_ore'] ?? 0) + 20;
 
-    const hall = state.buildings.find((b: any) => b.type === 'hall');
+    // The horde eats the hall. It is a 400hp building standing through several
+    // nights, and when it falls this whole phase used to do nothing at all and
+    // say nothing about it - `waystones` was unexercised in 16 of 16 measured
+    // runs for exactly this reason. Waystones need a hall for territory, so if
+    // the old one died, stand a new one up: this phase exists to exercise
+    // WAYSTONES, and hall survival is phase 4's business, not phase 6's.
+    let hall = state.buildings.find((b: any) => b.type === 'hall');
+    if (!hall) {
+      const htx2 = Math.floor(nw.player.x / 32), hty2 = Math.floor(nw.player.y / 32) - 3;
+      hall = { uid: state.nextUid++, type: 'hall', tx: htx2, ty: hty2, hp: 400 } as any;
+      state.buildings.push(hall as any);
+      world.reindexBuildings();
+      console.log('  [hall] did not survive the nights - rebuilt one so phase 6 can run');
+    }
     if (hall) {
       for (let i = 0; i < 3; i++) {
         const wsx = hall.tx + 4 + i * 5;
