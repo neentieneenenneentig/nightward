@@ -25,7 +25,12 @@ function toText(event) {
 
 function cdpRecv(ws) {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('CDP timeout')), 30000);
+    // 30s was too tight. This waits for the NEXT message of any kind, and the
+    // exhaustive playthrough is one long synchronous JS block that emits nothing
+    // between phase logs — so a slow machine looked exactly like a hung page and
+    // killed 2 runs in 8 with no assertion having failed. 120s still catches a
+    // genuine hang; it just stops calling a slow run a broken one.
+    const timeout = setTimeout(() => reject(new Error('CDP timeout')), 120000);
     const handler = (event) => {
       clearTimeout(timeout);
       ws.removeEventListener('message', handler);

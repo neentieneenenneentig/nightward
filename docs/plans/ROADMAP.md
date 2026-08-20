@@ -216,12 +216,19 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 >
 > ### Evidence — including what went wrong
 >
-> Typecheck clean on both configs · build green · **Gauntlet 1545/1545 across 93 tests**
+> Typecheck clean on both configs · build green · **Gauntlet 1548/1548 across 93 tests**
 > (up from 1337/1337 across 85: 21 new assertions worth of B5/B6/N4 coverage plus rewrites).
 >
-> **The suite went intermittently red and it was mine.** Six consecutive runs at the
-> pre-feature integration commit were green, which is what made the diagnosis possible
-> rather than a guess. Two causes, both in B5's own test changes:
+> **A correction to my own first conclusion, recorded because the first version of this
+> entry was wrong.** I wrote that the intermittent redness was mine, on the strength of six
+> consecutive green runs at the pre-feature commit. Six runs is not a measurement of a
+> one-in-four event. A proper 8-run baseline at `e7a3ee3` came back **6 green / 2 red, both
+> reds on `5/12 systems exercised`** — so the suite already flaked at roughly one run in
+> four before any of this work existed. What my changes did was move *which* assertion
+> caught it. The two causes below were real and are fixed; they were not the whole story,
+> and claiming they were would have buried a pre-existing defect under a tidy narrative.
+>
+> Two causes that genuinely were mine, both in B5's own test changes:
 >
 > 1. `testBossDeathPaysOut` walks the player to a lord's corpse now, and restored the
 >    position through `state.player.x`. **That is the projection — `main()` overwrites it
@@ -245,14 +252,72 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 > everything older than the fine window meant one sample aged out per push, so every
 > "bucket" held a single sample and a 900 ms spike reported `med=900`; and rewriting the tab
 > bar's `innerHTML` on every selection detached the node the click came from.
+
+> **A rendering bug that predates all four milestones, found by B6.** The level-up burst
+> drew its rings and none of its motes. The rings are `views.fx`, which lives inside the
+> camera-transformed container; `ParticleSystem` was parented to `app.stage`, which is
+> **screen space**. Every call site has always passed world pixels, so since G1
+> (2026-07-18) every particle in the game — embers, hit sparks, gather puffs — has been
+> drawn at its world coordinate treated as a screen coordinate. Correct only near the
+> origin, and wrong by exactly the camera offset everywhere else, which is why it never
+> looked broken so much as sparse. One line: `new ParticleSystem(stage.world, 400)`.
+> Verified in a 4× clipped capture, not by reasoning about it.
+
+> **The fourth tautological test in this suite.** `testGatherEveryFeature` reported
+> "tested === found" and had **never gathered anything**. `world.activeFeatureAt` returns a
+> `FeatureDef` directly; the test read `f.def?.id`, which is `undefined` for every tile ever
+> scanned, so `found` stayed 0 and the assertion passed as `0 === 0`. Fixing that exposed a
+> second bug behind it (the same `state.player` projection write — it located 12 feature
+> types and moved to none of them) and a third (the fixture ran with flint tools and
+> leftover xp, so only 6 of 10 were reachable). With all three fixed it gathers **11 of 11**
+> located feature types. A test whose precondition never holds is not a weak test, it is a
+> **green light wired to nothing**, and this suite has now shipped four of them.
 >
-> **A pre-existing fragility, now diagnosable rather than mysterious.** PHASE 0 of the
-> exhaustive playthrough wipes `state.player.xp`, so every skill returns to level 1; if the
-> preceding tests leave the player in a patch whose features all have `levelReq > 1`, the
-> run reports "features in reach, zero gathers" and looks like a broken gather system. It is
-> not one. The phase log now names the features and their level gates. This is **not**
-> caused by B5 — it reproduces on the pre-feature commit — but B5 made it more visible by
-> moving the player around more.
+> **The pre-existing flake, chased to its root rather than documented as weather.** Eight
+> instrumented runs printing which systems each playthrough actually touched turned
+> `5/12 systems exercised` from a mystery into one line of code. `gather` and `crafting`
+> never dropped separately — they dropped **as a pair**, in 3 of the 6 runs that completed,
+> and phase 1 reported `0 gathers, 0 crafts` every time. They are a pair because phase 1
+> crafts from what phase 1 gathered.
+>
+> The cause is `state.player` versus `nw.player` **for the sixth time this session**. The
+> phase-1 gather loop scans ±3 tiles for a feature and walks to it by assigning
+> `state.player.x`. That is the projection, which `main()` overwrites from `nw.player` on
+> every sim tick, so the loop moved the player nowhere and could only ever harvest what was
+> already inside the 1.6-tile reach. A feature 3 tiles out at 96 px is unreachable, the
+> phase logs "13 feature(s) in reach" and gathers none of them, and on a run that also
+> happens to miss hordes/echoes/bosses the count lands on exactly 5. It now teleports
+> through `nw.player` and stands *beside* the node — a tree tile is not standable, and
+> teleporting into one silently leaves the player where they were.
+>
+> **This projection trap has now caused six bugs in one session and deserves a rule:** in
+> tests, read whatever is convenient, but *write* only to `nw.player`. A write to
+> `state.player` is not an error, does not warn, and disappears within one tick.
+>
+> The other 2 of 8 runs died on **`CDP timeout`** with no assertion having failed — a
+> harness limit, not a product signal. `cdpRecv` waited 30 s for the next message of any
+> kind, and the exhaustive playthrough is one long synchronous block that emits nothing
+> between phase logs, so a slow machine was indistinguishable from a hung page. Raised to
+> 120 s, which still catches a genuine hang.
+>
+> The `levelReq` diagnosis in the first draft of this entry was a real fragility and the
+> phase log still names gated features — but it was **not** what was firing. It was the
+> plausible explanation, and it survived because it was never tested against a measurement.
+
+> **Measured before and after, 8 runs each on the same machine and the same seed:**
+>
+> | | before | after |
+> |---|---|---|
+> | runs green | 6 of 8 (2 died on `CDP timeout`, 1 of the 6 red) | **8 of 8** |
+> | `gather` exercised | 3 of 6 completed runs | **8 of 8** |
+> | fewest systems exercised | **5** of 12 | **8** of 12 |
+> | `soulfeed` exercised | **0** of 8 | 6 of 8 |
+>
+> The last row is the one that matters more than the flake. Soul-feed consumes gathered
+> materials, so a playthrough that never gathered could never reach it — the
+> "exhaustive" playthrough had been skipping an entire system every single run, and the
+> suite reported that as a passing test the whole time. Fixing one projection write did not
+> just stop a red light; it turned a third of the playthrough back on.
 >
 > ### What is NOT done
 >

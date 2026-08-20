@@ -4193,8 +4193,21 @@ async function testExhaustivePlaythrough(nw: any) {
       for (let dx = -3; dx <= 3; dx++) {
         const f = world.activeFeatureAt(ptx + dx, pty + dy);
         if (f) {
-          state.player.x = (ptx + dx + 0.5) * 32;
-          state.player.y = (pty + dy + 0.5) * 32;
+          // `state.player` is a PROJECTION: main() overwrites it from nw.player
+          // every sim tick, so assigning to it here moved the player NOWHERE and
+          // this loop only ever gathered what was already inside the 1.6-tile
+          // reach. That is the whole of the `5/12 systems exercised` flake — no
+          // gather, and therefore no craft either, since phase 1 crafts from what
+          // phase 1 gathered. Two systems drop as a pair. Measured over 8 runs:
+          // gather+crafting vanished together in 2 of them.
+          const cx = (ptx + dx + 0.5) * 32, cy = (pty + dy + 0.5) * 32;
+          // Stand BESIDE the node, not on it — a tree tile is not standable, and
+          // teleporting into one silently leaves the player where they were.
+          for (const [ox, oy] of [[22, 0], [-22, 0], [0, 22], [0, -22], [0, 0]]) {
+            if (!world.canStand(cx + ox, cy + oy)) continue;
+            nw.player.teleport(cx + ox, cy + oy);
+            break;
+          }
           nw.step(2);
           sys.gather.tryStart();
           if (sys.gather.active) {
