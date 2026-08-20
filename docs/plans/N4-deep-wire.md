@@ -585,7 +585,7 @@ already be the largest single upgrade to the game's premise since N1.**
 | **N4.0 — Right of way** | Retire the favicon-fetch beacons; rate-limit the attack path; global backoff + `Retry-After`; same-origin baseline beacon; `NW_NO_NET`; drop `ipapi.co` + `ipify`. | **Goes first.** Removes the only part of the system that contacts hosts which have not invited us (§6.2), and removes ~1,000 requests/run of traffic that N4's own measurements would otherwise be layered on top of. Deletes code; adds none. |
 | **N4.1 — The Deep Wire** | `cfL4` parsing, TAO waterfalls, `PerformanceObserver` on resources, real `min_rtt`/`rtt_var`/loss. Identity consolidated onto Cloudflare; `ipify` dropped, `ipapi.co` decided per §2.5. | Highest value, lowest risk, **zero new bandwidth cost** — it reads headers on requests we already make. Also retires the 429-flaky endpoint. |
 | **N4.2 — The Side Cart** | Drawer, five tabs, Chronicle strip, honesty tags, export. Extract `updateObservatory()` into `ui/lens/`. | The user asked for the panel first. It also makes everything after it *visible*, which is how we'll know the measurements are right. |
-| **N4.3 — The Chronicle** | `ChronicleStore`, tiered retention, scheduled jittered probes, change detection. | Needs N4.1's signals and N4.2's surface to be worth anything. |
+| **N4.3 — The Chronicle** ✅ | `ChronicleStore`, tiered retention, scheduled jittered probes, change detection **+ Omens: detected changes become world events (§5.3)**. | Needs N4.1's signals and N4.2's surface to be worth anything. Store shipped early with N4.2; jitter + Omens shipped 2026-08-20. |
 | **N4.4 — Scrying** | DoH: resolver race, PTR on own IP, AAAA/IPv6, TTL, DNSSEC `AD`, per-beacon real IPs. | Self-contained. Tiny bandwidth. Delivers a ROADMAP promise outstanding since N1. |
 | **N4.5 — The Sounding** | Download/upload soundings, bufferbloat sweep, data budget + consent UI, the Sounding Stone building and its game rewards. | Deliberately last: it is the only phase that spends the player's data, and it should sit on top of a system that's already proven. |
 | **N4.6 — Deep Vessel** | High-entropy UA, unmasked GPU, storage estimate, audio hardware, `PressureObserver`, LoAF, media-device counts, privacy posture. | Pure local reads, no network. Can slot in anywhere; parked here because it's flavour-dense and mechanically light. |
@@ -607,12 +607,47 @@ already be the largest single upgrade to the game's premise since N1.**
 - **Q6 favicon beacons: approved for retirement.** Done in N4.0.
 
 **N4.1 and N4.2 shipped 2026-08-19** on `dev/night-build`, unmerged. N4.2 additionally
-carries the `ChronicleStore`, tiered retention and change detection that §7 assigns to
-N4.3 — the Chronicle strip and the export both needed a real backing store. **N4.3 still
-owes the scheduled jittered probes and the wiring of detected changes into world events.**
+carried the `ChronicleStore`, tiered retention and change detection that §7 assigns to
+N4.3 — the Chronicle strip and the export both needed a real backing store.
 N4.1 did NOT take up the suggestion to depend on `@cloudflare/speedtest`: that package is
 a full throughput engine and N4.1 spends no bandwidth, so it belongs with N4.5.
-See the dated ROADMAP entry for measurements.
+
+**N4.3 shipped 2026-08-20**, same branch, closing out both outstanding items:
+
+- **Jittered scheduling.** Three of the four schedulers were on fixed periods. The
+  same-origin baseline's 20 s divides the 340 s day/night cycle *exactly 17 times*, so it
+  sampled the same seventeen phases of every day forever — a measurement-validity bug, not
+  a politeness one. All four now go through one `jitteredGap()`. Measured: 17 → 67 of 68
+  phase buckets over 300 probes, with the mean gap unchanged (19.98 s vs 20 s over 2000
+  samples), so the request *rate* is untouched. No new outbound requests.
+- **Network events as world events (§5.3).** `systems/omens.ts` turns the Chronicle's
+  detected steps into six named world states: **Surge** (fray ▲ → horde aggression ×1.25 +
+  the screen frays), **Famine** (flow ▼ → yields ×0.65), **Bounty** (flow ▲ → ×1.30),
+  **Quickening** (pulse ▼ → move ×1.10), **Miring** (silt ▲ → ×0.88), and **Rift**
+  (pulse ▲ → the realm tears). Table-driven; adding one is a row.
+
+Three things §5.3 did not say, decided during implementation:
+
+1. **Omens go both ways.** The plan lists only bad ones. A mapping that can only punish is
+   a penalty box. Bounty and Quickening are the counterparts.
+2. **A Famine lifts on recovery, not on a timer** — the plan says "until it recovers", and
+   that is the better mechanic. Measured against the *pre-step baseline* with a 10%
+   hysteresis band; the duration cap is a safety valve for a permanently degraded link.
+3. **An omen is a step, not a level.** The `Horde Aggression (Fray)` row already makes a
+   lossy link permanently harder; a Surge is the moment it *starts*. They multiply
+   separately because a steady hostile network and a shock are different experiences.
+
+**The rift system turned out to be dead code on desktop.** Its only trigger since N2 was a
+`connection.type` transition, which desktop browsers do not report at all — the flash, the
+particles, the biome swap and the scoreboard counter were all built, tested, and unable to
+fire on the platform the game is played on. `riftFromWire()` is its first real trigger, and
+it returns false when the biome selector returns the realm we are already in rather than
+claiming a `Vale → Vale` rift.
+
+**Separately, the Lens CHANGES panel had never once shown anything.** `main()` drains
+`takeEvents()` at 1 Hz and that drained the same array the panel and the export read, so
+every exported chronicle carried `"events": []`. The permanent record and the delivery
+queue are now separate. See the dated ROADMAP entry for measurements.
 
 **N4.0 shipped 2026-08-17.** Measured: 117 swings in 70 s produced **9 outbound requests**
 (5 `cloudflare-dns.com`, 4 `dns.google`, 3 same-origin) — ~7.7/min against a 20/min gate,

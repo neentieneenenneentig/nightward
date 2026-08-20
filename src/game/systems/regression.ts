@@ -170,8 +170,8 @@ async function testGathering(nw: any) {
 
   // Teleport next to the node (within reach)
   const cx = (gtx + 0.5) * 32, cy = (gty + 0.5) * 32;
-  state.player.x = cx + 20;
-  state.player.y = cy;
+  const gatherHome = { x: nw.player.x, y: nw.player.y };
+  nw.player.teleport(cx + 20, cy);
   nw.step(1);
 
   ok(sys.gather.target !== null, 'gather target found after stepping near node');
@@ -190,6 +190,11 @@ async function testGathering(nw: any) {
   let stepped = 0;
   while (sys.gather.active !== null && stepped < cap) { nw.step(1); stepped++; }
   ok(sys.gather.active === null, `gather completed (active cleared after ${stepped} steps, cap ${cap})`);
+  // Leave the world as we found it. This probe used to write to `state.player`,
+  // which main() overwrites every tick, so it moved nobody and had nothing to
+  // restore; now it moves the authoritative player and every later test reads
+  // the terrain wherever this one leaves them.
+  nw.player.teleport(gatherHome.x, gatherHome.y);
 }
 
 async function testCrafting(nw: any) {
@@ -374,14 +379,17 @@ async function testFireIgnite(nw: any) {
   let ftx = -1, fty = -1;
 
   const { MATERIALS } = await import('../data/materials');
+  const firePos = { x: nw.player.x, y: nw.player.y };
   for (let dy = -2; dy <= 2 && ftx < 0; dy++) {
     for (let dx = -2; dx <= 2 && ftx < 0; dx++) {
       const matId = world.materialAt(ptx + dx, pty + dy);
       if (MATERIALS[matId]?.flammable > 0 && !nw.core.isBurning(ptx + dx, pty + dy)) {
         ftx = ptx + dx;
         fty = pty + dy;
-        state.player.x = ftx * 32 + 16;
-        state.player.y = fty * 32 + 16 - 20;
+        // teleport(), not a write to state.player: that is a projection main()
+        // overwrites from nw.player every tick, so the nw.step(2) below would
+        // silently put the player back and ignite from the ORIGINAL tile.
+        nw.player.teleport(ftx * 32 + 16, fty * 32 + 16 - 20);
       }
     }
   }
@@ -396,6 +404,7 @@ async function testFireIgnite(nw: any) {
   sys.fire.tryIgnite();
   nw.step(5);
   ok(true, 'fire tryIgnite() did not throw');
+  nw.player.teleport(firePos.x, firePos.y);
 }
 
 async function testLogEntries(nw: any) {
@@ -504,12 +513,53 @@ async function testCollisionWalls(nw: any) {
   state.buildings.push({ uid: state.nextUid++, type: 'wall', tx: ptx + 1, ty: pty, hp: 80 });
   world.reindexBuildings();
   nw.step(2);
-  // Walk into the wall
-  const origX = state.player.x;
-  state.player.x = (ptx + 1) * 32 + 16;
-  state.player.y = pty * 32 + 16;
-  nw.step(5);
-  ok(Math.abs(state.player.x - origX) < 35, 'position blocked by Palisade wall');
+  // Walk into the wall.
+  //
+  // This assertion used to be a TAUTOLOGY. It wrote the target position to
+  // `state.player`, which is a PROJECTION that main() overwrites from nw.player
+  // at the end of every sim tick — so the very next nw.step() discarded it, the
+  // player never moved anywhere, and "position blocked by Palisade wall" was
+  // true because nothing had happened. It would have passed with the wall
+  // deleted, with collision disabled, with the building system removed entirely.
+  //
+  // The honest form asks the world directly AND drives the authoritative
+  // position, with a matched control on an adjacent open tile so that "cannot
+  // stand" is shown to mean the wall rather than the terrain.
+  const wallX = (ptx + 1) * 32 + 16, wallY = pty * 32 + 16;
+  ok(world.canStand(wallX, wallY) === false, 'the wall tile is not standable');
+  const openX = (ptx + 1) * 32 + 16, openY = (pty - 2) * 32 + 16;
+  if (world.canStand(openX, openY)) {
+    ok(true, 'and an adjacent tile with no wall on it IS standable — the refusal is the wall');
+  } else {
+    ok(true, `(no open control tile at ${ptx + 1},${pty - 2} on this seed)`);
+  }
+  // teleport() bypasses collision by design — it is a debug verb, and putting
+  // the player inside the wall with it proves nothing either. The only probe
+  // that means anything is to stand OUTSIDE and walk in.
+  const origX = nw.player.x, origY = nw.player.y;
+  const savedAxis = nw.input?.axis;
+  const fromX = (ptx - 1) * 32 + 16, fromY = pty * 32 + 16;
+  if (savedAxis && world.canStand(fromX, fromY)) {
+    try {
+      nw.player.teleport(fromX, fromY);
+      nw.input.axis = () => ({ x: 1, y: 0 });
+      nw.step(40);
+      // The wall occupies tile ptx+1, so its left edge is at (ptx+1)*32. A
+      // player who walked THROUGH it would be past that edge.
+      ok(nw.player.x < (ptx + 1) * 32,
+        `walking east for 40 ticks does not pass through the Palisade`
+        + ` (stopped at x=${nw.player.x.toFixed(1)}, wall edge ${(ptx + 1) * 32})`);
+      ok(nw.player.x > fromX - 1, '...and the player did try to move east, rather than not moving at all');
+    } finally {
+      nw.input.axis = savedAxis;
+    }
+  } else {
+    ok(true, `(no standable tile west of the wall at ${ptx - 1},${pty} to walk in from)`);
+  }
+  // Leave the world as we found it: these probes now move the AUTHORITATIVE
+  // player, where the old projection writes moved nothing, and every later test
+  // reads the terrain wherever this one leaves them.
+  nw.player.teleport(origX, origY);
   // Water check: paint water tile (M.WATER = 1), try to stand on it
   nw.paint(1, ptx + 2, pty); // M.WATER
   nw.step(1);
@@ -1076,15 +1126,29 @@ async function testWaystoneChain(nw: any) {
   ok(state.buildings.filter((b: any) => b.type === 'waystone').length >= 2,
     'waystone chain extended (2+ waystones)');
 
-  // Place a wall near the second waystone (should work via chain)
-  const wallX = ws2x + 1, wallY = ws2y;
+  // Place a wall near the second waystone (should work via chain).
+  //
+  // This guarded the PLACEMENT on canPlaceAt() and then asserted unconditionally
+  // that the wall was there — so a hardcoded +1 landing in water went red with a
+  // message about waystone chaining, which is not what failed. The sibling
+  // search for spot2 above already carries exactly this fix and its comment; this
+  // one was missed. Search for a placeable tile in the chain's radius instead.
   sys.build.enter('wall');
-  if (sys.build.mode && world.canPlaceAt(wallX, wallY, false)) {
-    state.buildings.push({ uid: state.nextUid++, type: 'wall', tx: wallX, ty: wallY, hp: 80 });
-    world.reindexBuildings();
+  let wallX = ws2x + 1, wallY = ws2y, placedWall = false;
+  outer3:
+  for (let r = 1; r <= 3 && !placedWall; r++) {
+    for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, -r], [r, -r], [-r, r]] as [number, number][]) {
+      if (!sys.build.mode || !world.canPlaceAt(ws2x + dx, ws2y + dy, false)) continue;
+      wallX = ws2x + dx; wallY = ws2y + dy;
+      state.buildings.push({ uid: state.nextUid++, type: 'wall', tx: wallX, ty: wallY, hp: 80 });
+      world.reindexBuildings();
+      placedWall = true;
+      break outer3;
+    }
   }
   sys.build.cancel();
-  ok(state.buildings.some((b: any) => b.type === 'wall' && b.tx === wallX),
+  ok(placedWall, `a placeable tile for a wall exists within 3 of the chained waystone ${ws2x},${ws2y}`);
+  ok(state.buildings.some((b: any) => b.type === 'wall' && b.tx === wallX && b.ty === wallY),
     'wall placed near chained waystone');
 
   // (anchor-destruction decay is exercised by the Waystone disconnect test)
@@ -1669,16 +1733,41 @@ async function testLoomPayoffLayerIsReal(nw: any) {
     // left the suite green. Found by mutation, not by reading.
     state.player.inv.axe_flint = (state.player.inv.axe_flint ?? 0) + 1;
     state.player.inv.pick_flint = (state.player.inv.pick_flint ?? 0) + 1;
+    // Finding a feature tile is not the same as finding one this player can
+    // WORK. The old probe wrote the approach position to `state.player`, which
+    // main() overwrites every tick — so it moved nobody, and it only ever
+    // measured nodes that happened to be inside the 1.6-tile reach already.
+    // Teleporting for real exposed that immediately: a hardcoded +20px east of
+    // the node lands in water or in the trunk often enough that tryStart()
+    // returns nothing and `need` reads -1. Try each side, and keep the first
+    // node that actually starts.
+    const savedPos = { x: nw.player.x, y: nw.player.y };
     const gtx0 = Math.floor(state.player.x / 32), gty0 = Math.floor(state.player.y / 32);
+    const nodeCands: { tx: number; ty: number }[] = [];
+    for (let dy = -4; dy <= 4; dy++)
+      for (let dx = -4; dx <= 4; dx++)
+        if (world.activeFeatureAt(gtx0 + dx, gty0 + dy)) nodeCands.push({ tx: gtx0 + dx, ty: gty0 + dy });
+
     let node: { tx: number; ty: number } | null = null;
-    for (let dy = -3; dy <= 3 && !node; dy++)
-      for (let dx = -3; dx <= 3 && !node; dx++)
-        if (world.activeFeatureAt(gtx0 + dx, gty0 + dy)) node = { tx: gtx0 + dx, ty: gty0 + dy };
+    for (const cand of nodeCands.slice(0, 24)) {
+      const ncx = (cand.tx + 0.5) * 32, ncy = (cand.ty + 0.5) * 32;
+      let stood = false;
+      for (const [ox, oy] of [[20, 0], [-20, 0], [0, 20], [0, -20]]) {
+        if (!world.canStand(ncx + ox, ncy + oy)) continue;
+        nw.player.teleport(ncx + ox, ncy + oy);
+        stood = true;
+        break;
+      }
+      if (!stood) continue;
+      nw.step(1);
+      sys.gather.active = null;
+      sys.gather.tryStart();
+      if (sys.gather.active) { sys.gather.active = null; node = cand; break; }
+    }
+    ok(node !== null || nodeCands.length === 0,
+      `a workable node was found among ${nodeCands.length} feature tiles within 4`);
 
     if (node) {
-      const savedPos = { x: state.player.x, y: state.player.y };
-      state.player.x = (node.tx + 0.5) * 32 + 20;
-      state.player.y = (node.ty + 0.5) * 32;
       nw.step(1);
 
       // gatherSpeedPct shortens the work: `need` is gatherSec / speed.
@@ -1734,7 +1823,7 @@ async function testLoomPayoffLayerIsReal(nw: any) {
       ok(plainYield > 0, `a real harvest yields ${plainYield} items`);
       ok(doubledYield > plainYield,
         `doubleYieldChance adds a real second roll: ${plainYield} → ${doubledYield} items`);
-      state.player.x = savedPos.x; state.player.y = savedPos.y;
+      nw.player.teleport(savedPos.x, savedPos.y);
       sys.gather.active = null;
     }
 
@@ -3155,9 +3244,8 @@ async function testSurvivalPlaythrough(nw: any) {
   const { toggleEquip } = await import('../rules');
   toggleEquip(state, 'sword_copper');
 
-  // Move player near hall
-  state.player.x = htx * 32 + 16;
-  state.player.y = hty * 32 + 16;
+  // Move player near hall. teleport(), not a projection write — see below.
+  nw.player.teleport(htx * 32 + 16, hty * 32 + 16);
   state.player.hp = 100;
   nw.step(5);
 
@@ -3246,8 +3334,24 @@ async function testSurvivalPlaythrough(nw: any) {
             }
           }
           if (feature) {
-            state.player.x = (ftx + 0.5) * 32 + 20;
-            state.player.y = (fty + 0.5) * 32;
+            // `state.player` is a PROJECTION: main() overwrites it from nw.player
+            // at the end of every sim tick, so this used to move the player
+            // NOWHERE and the playthrough only ever gathered what happened to be
+            // inside the 1.6-tile reach already. Same bug as the exhaustive
+            // playthrough's phase-1 loop, in a different function, missed when
+            // that one was fixed. It is why "at least one productive action
+            // performed" went red on 1 run in 12 with buildings.length >= 3
+            // passing on the line above: the buildings came from setup, and the
+            // playthrough itself had done nothing.
+            //
+            // Stand BESIDE the node — a tree tile is not standable, and
+            // teleporting into one silently leaves the player where they were.
+            const fcx = (ftx + 0.5) * 32, fcy = (fty + 0.5) * 32;
+            for (const [ox, oy] of [[22, 0], [-22, 0], [0, 22], [0, -22], [0, 0]]) {
+              if (!world.canStand(fcx + ox, fcy + oy)) continue;
+              nw.player.teleport(fcx + ox, fcy + oy);
+              break;
+            }
             nw.step(2);
             sys.gather.tryStart();
             if (sys.gather.active) {

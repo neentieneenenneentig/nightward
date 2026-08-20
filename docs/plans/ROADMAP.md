@@ -55,6 +55,249 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 
 ---
 
+> ## N4.3 — Omens, 2026-08-20 (branch `dev/night-build`, unmerged)
+>
+> The half of N4 that stops the Lens being a diagnostics panel bolted to a game. N4.2 shipped
+> the `ChronicleStore` and its change detection early; §7 assigned N4.3 the two things that
+> were still outstanding — **scheduled jittered probes**, and **wiring detected changes into
+> world events** (§5.3). Both now ship. **Gauntlet 1645/1645 across 100 tests, 12 runs green
+> out of 12** (a couple of probes branch on terrain, so a run can report 1640 or 1644).
+>
+> ### The probes were phase-locked to the day/night cycle, and it is exact arithmetic
+>
+> N4.0 jittered the DoH beacons and stated why: *"so probes never phase-lock."* Three of the
+> four schedulers were left on fixed periods, and one of them is a clean divisor:
+>
+> | scheduler | period | day/night cycle | result |
+> |---|---|---|---|
+> | DoH beacons | 6 s ±40% | 340 s | already jittered (N4.0) |
+> | **same-origin baseline** | **20 s fixed** | **340 s** | **340 / 20 = 17, exactly** |
+> | Cloudflare trace | 300 s fixed | 340 s | walks slowly, deterministic within a run |
+> | deep-wire (`cfL4`) | 45 s fixed | 340 s | walks, deterministic within a run |
+>
+> The baseline probe therefore sampled the **same seventeen phases of the cycle on every day
+> of every run, forever**. Anything that tracks the cycle — and the whole premise of this game
+> is that the network and the world move together — was structurally invisible to it. That is
+> not a politeness problem, it is a measurement-validity problem, and no number of assertions
+> about the *value* of a sample would ever have found it.
+>
+> All four now re-roll their next gap through one shared `jitteredGap()` in `data/network.ts`.
+> Measured over 300 simulated probes against 68 five-second phase buckets:
+>
+> | | fixed 20 s | jittered |
+> |---|---|---|
+> | phase buckets reached | **17 of 68** | **67 of 68** |
+> | mean gap | 20.000 s | 19.98 s over 2000 samples |
+>
+> Live off a running game, the four schedulers' next gaps read `beacon 6.84 s · baseline 14.01 s ·
+> trace 345.53 s · deep 56.79 s` — against base intervals of 6 / 20 / 300 / 45, all four now
+> off their nominal period and none of them the same twice.
+>
+> The mean is the load-bearing half of that table. Spreading probes out is fine; quietly
+> firing more of them is not, and N4.0 spent an entire phase getting this volume down. The
+> test asserts the mean stays within 2% of the configured interval, and the matched control
+> asserts `jitteredGap(20, 0)` returns exactly 20000 every time — so the spread above is
+> demonstrably the jitter and not the test.
+>
+> The jitter also multiplies **on top of** the deep wire's failure backoff, so two clients that
+> failed at the same moment no longer retry at the same moment.
+>
+> ### The Lens CHANGES panel has never once shown anything
+>
+> `main()` calls `chronicle.takeEvents()` at 1 Hz to turn detected steps into Feed lines. That
+> drained the same array `tabs.ts` reads for its CHANGES panel and `toJSON()` reads for the
+> export. So:
+>
+> - the CHANGES panel could only ever have shown something if a Lens refresh landed inside the
+>   same second as a detection — in practice, never;
+> - **every chronicle ever exported carried `"events": []`**, in a file whose entire purpose is
+>   to be evidence.
+>
+> Nothing went red. `testChronicleStore` builds its own store and never calls `takeEvents()`,
+> so the drain was invisible to it — the same shape as the four tautologies this suite has
+> already shipped. `events` is now the permanent record and a private `pending` queue is what
+> `takeEvents()` drains; the test asserts both halves, including the matched control that the
+> queue *does* still drain, because a `takeEvents()` that stopped draining would re-log and
+> re-raise the same omen once a second forever.
+>
+> ### Omens — a change on the wire becomes a change in the world
+>
+> §5.3 asks for three: a latency step-change is a rift, a retransmission burst is a surge, a
+> throughput collapse is a famine. `systems/omens.ts` is a table, so adding one is a row:
+>
+> | series · direction | Omen | effect | gate |
+> |---|---|---|---|
+> | `fray` ▲ | **Surge** | `hordeAggression` ×1.25 + the screen frays | 3σ |
+> | `flow` ▼ | **Famine** | `resourceYield` ×0.65 | 3.5σ |
+> | `flow` ▲ | **Bounty** | `resourceYield` ×1.30 | 3.5σ |
+> | `pulse` ▼ | **Quickening** | `moveSpeed` ×1.10 | 3σ |
+> | `silt` ▲ | **Miring** | `moveSpeed` ×0.88 | 3σ |
+> | `pulse` ▲ | **Rift** | fires the realm rift | 4.5σ |
+>
+> Three decisions in there were choices, not defaults, and are worth stating:
+>
+> **Omens go both ways.** §5.3 lists only bad ones. A system that can only ever punish teaches
+> a player to resent their own connection, and it makes the mapping a penalty box rather than a
+> mapping. A latency *drop* is a Quickening and a throughput *surge* is a Bounty.
+>
+> **A Famine lifts when the network recovers, not when a timer expires.** The plan says "yields
+> drop until it recovers" and that is the better mechanic: the player's route out is the
+> network coming back, which they can watch happen in the Lens. Recovery is measured against
+> the *pre-step baseline* with a 10% hysteresis band and is direction-dependent — a down-step
+> recovers by coming back up. The duration cap is a safety valve for a permanently degraded
+> link, not the primary exit, and the test distinguishes `recovered` from `expired`.
+>
+> **An omen is a STEP, not a level.** The `Horde Aggression (Fray)` mapping row already makes a
+> lossy link permanently harder. A Surge is what happens the moment it *starts* being lossy.
+> Steady-state hostility and a shock are not the same experience and they multiply separately.
+>
+> ### The rift system has been dead code on desktop since N2
+>
+> Its only trigger was a `connection.type` transition. **Desktop browsers do not report
+> `connection.type` at all** — the flash, the particles, the biome swap, the scoreboard counter,
+> all built and tested and unable to fire on the platform this game is played on. A hard latency
+> step is the trigger it always needed. `NetworkSystem.riftFromWire()` honours the same 30 s
+> cooldown as the transition path, and **returns false when the biome selector returns the realm
+> we are already in** — the realm holds and no rift is claimed. Reporting `Vale → Vale` would be
+> a lie in the one panel that is not allowed to lie, and the omen is asked-then-raised rather
+> than raised-then-asked so a refusal leaves nothing phantom behind.
+>
+> ### What the tests actually prove
+>
+> 61 new assertions across 5 tests. Two are worth naming, because both are the kind that would
+> have passed on a broken implementation:
+>
+> **Movement is measured, not read back.** The probe drives the input axis and measures the
+> distance the player covers. Reading `omens.mul()` back would pass while `main.ts` computed the
+> value and discarded it, which is exactly what shipped in G1 and in the Loom. Measured:
+> **1.100× for a Quickening and 0.880× for a Miring**, against configured values of 1.10 and 0.88.
+>
+> Getting that to three decimals took two goes, and the second one fixed a **pre-existing flake
+> in the Loom test**. The Loom's movement probe trials all four directions and keeps the longest
+> corridor — an idiom that was itself a flake fix. But *longest* is not *fair*: terrain speed
+> varies tile by tile, so a faster player ends up further along and can enter slow ground the
+> plain run never reached, and on a short corridor that noise is larger than the modifier. It
+> failed as `Deep Roots slows real movement: 28.4 → 29.2px` on a 28 px corridor, with nothing
+> wrong in the Loom at all — found while chasing the identical flake in my own probe.
+>
+> Both now use a shared `findUniformCorridor()`: a straight run of seven tiles that are all
+> standable **and all report the same `world.speedAt()`**. On uniform ground distance is exactly
+> proportional to the multiplier. The Loom probe consequently gained an assertion it could never
+> make before — that Deep Roots' advertised **−12% is 0.880×**, not merely "smaller".
+>
+> A third cause was underneath both: **a death respawn teleports the player to the hall
+> mid-measurement**, which measured 2934.8 px against an expected ~90 on 1 run in 10. Both probes
+> now clear the field, restore HP, and reject any run longer than the corridor it was walked down —
+> a distance that did not come from walking is not a movement measurement.
+>
+> **`recovered()` is asserted not to lift on the tick it was raised.** If that comparison were
+> inverted, every omen would lift immediately and the entire system would be a no-op that still
+> passed an "an omen can be raised" test.
+>
+> ### Two bugs in my own tests, both instructive
+>
+> **The stub inverted the thing it was pinning.** The yield thinning uses stochastic rounding —
+> `floor(x) + (random() < frac ? 1 : 0)` — and I copied the Loom probe's `Math.random = () => 0`.
+> But `0 < frac` is **true for every fractional part**, so the stub made the famine round *up*
+> every time and a 2-item harvest thinned to exactly 2. It read as missing wiring. `0.999`
+> floors instead, and `floor(n × 0.65) < n` for every `n ≥ 1`.
+>
+> **A test asked the detector to find a step against a baseline containing that step.** The
+> follow-up assertion pushed 60 s of the new level and then stepped back; `detect()` compares
+> `now-15..now` against `now-105..now-15`, so the baseline window straddled both levels, its
+> standard deviation was the size of the step, and sigma collapsed. The store was right and the
+> test was wrong.
+>
+> Also: the harvest probe took the first feature tile within 6 tiles without checking the player
+> could *work* it, got `-1`, and — because `ok()` throws — took the move-speed section down with
+> it, leaving `main.ts`'s wiring unverified. It now tries candidates until one actually starts.
+> That is the same silently-skipped-phase failure the waystone bug had, caught this time by the
+> guard written for it.
+>
+> ### Live, off a running game
+>
+> Raised through the real path — a step pushed into the Chronicle, drained by `main()`'s 1 Hz
+> tick, handed to `omens.consider()`. Nothing reached into `omens.active`:
+>
+> ```
+> raised:  ["Surge x1.25"]      hud chip: "Surge 73s"
+> active:  [{ kind: surge, target: hordeAggression, mul: 1.25, from: 0.5, to: 1.03, sigma: 21.3 }]
+> muls:    { horde: 1.25, yield: 1, move: 1 }
+> chronicle.events kept after the 1 Hz drain: 2
+> l4: { proto: TCP, minRtt: 1.519, lost: 3, retrans: 4, cwnd: 53 }   ← fray 0.75
+> ```
+>
+> **Two attempts at that capture failed, and both failures were the system working.** The first
+> raised a Surge and it lifted one second later — because the real reading is a Cloudflare edge
+> honestly reporting `lost=0`, so `recovered()` fired correctly. The second wrote to
+> `net.snap.fray` to hold it, which did nothing: `net.update()` recomputes the snapshot from
+> `deep` every frame, so that write is **the same transient-projection trap as writing to
+> `state.player`** — its seventh occurrence. The capture only worked once the *kernel dump* was
+> degraded, which is the only authoritative value in the chain.
+>
+> ### Two things for the playtest verdict
+>
+> Both are single numbers, flagged rather than pre-emptively tuned:
+>
+> - **The Surge screen effect may be too much.** `CFG.omens.surgeFxStrength` at 0.5 drives the
+>   vignette +0.22 and pushes the grade to `[255,120,120]` at 0.11 strength. In the gate shot it
+>   reads close to a damage flash that never ends. The plan asks for loss to be *frightening*;
+>   whether it is frightening or just loud is a feel call.
+> - **Fray and Surge compound to ×1.81 horde speed.** The Decoder Ring clamps `hordeAggression`
+>   at ×1.45 for a badly lossy link, and a Surge multiplies ×1.25 on top. That separation is
+>   deliberate — level and step are different experiences — but the product is the number that
+>   gets played.
+>
+> ### The `state.player` projection trap, occurrences eight through twelve
+>
+> The 12-run baseline went red once on `at least one productive action performed`, in the
+> **survival** playthrough. The line above it — `buildings exist at end (3 total)` — passed, so
+> the world had buildings but the playthrough had produced none of them. They came from setup.
+>
+> The cause is the one this project keeps rediscovering. `state.player` is a **projection**;
+> `main()` overwrites it from `nw.player` at the end of every sim tick. A write to it is not an
+> error, does not warn, and disappears on the next `nw.step()`. The survival playthrough's
+> gather loop did exactly this, so it never walked to anything and only gathered what happened
+> to be inside the 1.6-tile reach already. **It is the same bug I fixed in the *exhaustive*
+> playthrough's phase-1 loop yesterday, in a different function, and I did not check for
+> siblings.** Grepping `state.player.x = ` found four more:
+>
+> | site | what it silently did |
+> |---|---|
+> | survival playthrough, gather loop | never walked to a node — over 12 runs the playthrough went from **0 crafts and 0 builds** to a steady **12–19 gathers, 12–13 crafts, 8–9 builds** |
+> | survival playthrough, setup | "move player near hall" moved nobody |
+> | Loom gather-yield probe | only measured nodes already in reach |
+> | `testFireIgnite` | ignited from the original tile, not the flammable one |
+> | **`testCollisionWalls`** | **a tautology — see below** |
+>
+> **The wall test was a green light wired to nothing.** It wrote a position on the far side of
+> a Palisade, stepped, and asserted the player had not moved far. The player had not moved
+> *at all*, because the write was discarded — so `position blocked by Palisade wall` was true
+> for the same reason `1 === 1` is true. It would have passed with the wall deleted, with
+> collision disabled, with the building system removed entirely. **The fifth tautology found in
+> this suite.** It now stands on open ground west of the wall, drives the input axis east for 40
+> ticks, and asserts the player stops short of the wall's edge — measured `x=-1163.4` against an
+> edge at `-1152` — with a matched control that the player did move east at all, and a second
+> that an adjacent wall-free tile *is* standable so the refusal is the wall and not the terrain.
+>
+> Fixing those changed where the player stands during later tests, which exposed two more latent
+> flakes that had been masked by the trap: the Loom's yield probe hardcodes a +20px approach that
+> lands in water or in the trunk (it now tries each side and keeps the first node that actually
+> *starts*), and `wall placed near chained waystone` guarded its placement on `canPlaceAt()` and
+> then asserted unconditionally that the wall was there — the sibling search ten lines above it
+> already carries exactly that fix and its comment, and this one was missed.
+>
+> Twelve runs green out of twelve after all of it, against 11/12 before — and the one that was
+> red was red for a real reason.
+>
+> ### Budget
+>
+> No new outbound requests. The jitter changes *when* four existing schedulers fire, not how
+> often — asserted. N4.5 remains the only phase that will spend the player's data, and it stays
+> behind the opt-in that doubles as the difficulty selector.
+
+---
+
 > ## Night build 2026-08-19 — B5, B6, N4.1, N4.2 (branch `dev/night-build`, unmerged)
 >
 > ⚠️ **This branch is an INTEGRATION branch, not a feature branch.** It is

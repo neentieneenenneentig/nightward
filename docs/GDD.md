@@ -147,11 +147,11 @@ real fire (fuel/burn/wet fields, wind-driven spread, glow overlay), and everythi
 the JS/wasm boundary as batched, zero-copy typed-array uploads — never per-tile calls.
 
 ### 4.2 The Wire: your connection is the physics
-Live browser network metrics don't just flavor the game — they parameterize it. **19
-tracked metrics** (RTT, downlink, jitter, an internally-computed "echo jitter," connection
+Live browser network metrics don't just flavor the game — they parameterize it. **Two dozen
+tracked metrics** (RTT, throughput, jitter, an internally-computed "echo jitter," connection
 effective-type/type, online state, time-of-day, CPU cores, device memory, endpoint
 latency, page DNS/TLS/TTFB timing, battery level/charging, locale, timezone, JS heap used)
-feed **22 game-facing mappings**: sim speed, gold rate, enemy scale, day-phase pacing,
+feed **game-facing mappings**: sim speed, gold rate, enemy scale, day-phase pacing,
 realm selection, damage roll, move speed, gather speed, xp rate, every vigor/resolve
 decay-and-restore rate, resource yield, and regen rate. Every mapping is a data row
 (`src/game/data/network.ts`), transform function included, editable live via
@@ -162,6 +162,41 @@ wider band (roughly 0.3–1.5×) because that reads as *the world responding to 
 
 Every metric has a neutral fallback default so unsupported browsers (Firefox, Safari lack
 `navigator.connection` entirely) still play a complete, balanced game.
+
+**The Deep Wire (N4.1).** Until 2026-08-19 every one of those numbers was an *inference*.
+`connection.rtt` is quantised to 25 ms buckets, `connection.downlink` is capped at 10 Mbps
+and absent outside Chromium, and packet loss was believed unreadable from a browser at all.
+It is not: a Cloudflare edge that terminates our TCP connection returns its own kernel
+socket statistics in a `Server-Timing: cfL4` header — `min_rtt`, `rtt_var`, `lost`,
+`retrans`, `delivery_rate`, `cwnd`, in microseconds, for our own socket. Measured live, the
+browser's own estimate was off by roughly 40× (reported 100 ms / 1.6 Mbps against a real
+2.5 ms / 13.9 Mbps). The deep readings drive **Pulse** (sim speed), **Flow** (gold rate,
+gather speed), **Fray** (horde aggression), **Silt** (movement drag) and **Aperture**
+(carrying capacity), and each falls back to the browser estimate when the edge is
+unreachable — a filtered network plays a balanced game, never an accidentally easy one.
+
+**Omens (N4.3): the level and the step are different things.** The mappings above describe
+your connection's *steady state* — a permanently lossy link plays a permanently harder
+game. An **Omen** is the moment it *changes*. A session-long time series (the Chronicle)
+compares a short window against a longer baseline that excludes it, in standard deviations
+rather than percent, so a link that always wobbles does not cry wolf and a steady one
+reports a small step. A step that clears its threshold raises a named, temporary world
+state with a real multiplier, a toast, a HUD chip and a countdown:
+
+| the wire | Omen | the world |
+|---|---|---|
+| packet loss steps up | **Surge** | the horde presses (×1.25) and the screen frays |
+| throughput collapses | **Famine** | the land gives less (×0.65), tribute included |
+| throughput surges | **Bounty** | the land gives freely (×1.30) |
+| latency shortens | **Quickening** | the world quickens (move ×1.10) |
+| buffers fill | **Miring** | the ground thickens (move ×0.88) |
+| latency lengthens hard | **Rift** | the realm tears (see 4.4) |
+
+Omens deliberately go **both ways**: a mapping that can only punish teaches a player to
+resent their own connection. And a bad omen **lifts when the reading recovers**, measured
+against the baseline it fell from — the player's route out of a Famine is their network
+coming back, and they can watch it happen in the Lens. The duration cap is a safety valve
+for a permanently degraded link, not the primary exit.
 
 ### 4.3 Domains & lords
 The world is divided into 40×40-tile regions, each deterministically assigned one of five
@@ -186,16 +221,29 @@ derived from your beacon-echo latency **profile** (median + variance across prob
 endpoints), not raw `connection.type` — desktop browsers hide that field entirely, so
 deriving realm from it would leave desktop players permanently stuck on one realm. A large
 profile shift is a **rift**: a screen flash, a toast, and (mechanically) a fresh realm
-assignment. Identity data (IP, ISP, city, ASN) is never probed automatically — it fires
+assignment. A hard latency step-change also tears one (see 4.2) — until N4.3 the rift's
+only trigger was a `connection.type` transition, which desktop browsers never report, so on
+desktop the whole mechanic was unreachable. A rift is never *claimed* unless the realm
+actually changed; the panel does not lie about its own events. Identity data (IP, ISP, city, ASN) is never probed automatically — it fires
 only after the player's first `explore` action ("scrying reveals who you are"), and the
 Lens UI accurately reflects "unrevealed" until then.
 
-The **Lens** (`O` key) is the truth panel: eight sections — Connection, Realm Profile,
-Routes, Identity, Vessel (hardware), Threads (every live game-mapping row, with `dormant`
-rows dimmed if a system hasn't wired them yet), Feed (recent truth-kind log entries), and
-an **inspect mode** — hover or tap any row to see its SOURCE (which browser API), ACTION
-(what triggers it), and FLOWS INTO (what game values it feeds). This is deliberately
-"teach the player real network monitoring while they play," not just flavor.
+The **Lens** (`O` key) is the truth panel. It is a **right-edge drawer**, not a modal: the
+game keeps rendering and stays playable beside it, because the whole premise is that these
+numbers are driving the world in front of you and you could not watch the world react while
+the panel sat on top of it. Five tabs — PULSE, PATHS, IDENTITY, VESSEL, THREADS — over a
+persistent Chronicle strip of session-long sparklines, plus an **inspect mode**: hover or
+tap any row for its SOURCE (which browser API), ACTION (what triggers it), and FLOWS INTO
+(what game values it feeds). THREADS leads with active Omens, then the full game-mapping
+decoder ring, then detected changes, then the Feed.
+
+Every reading carries an **honesty tag** — `measured`, `reported`, `derived` or
+`unavailable` — because the difference between a kernel's `min_rtt` and a browser's
+25 ms-bucketed guess is the difference between this panel being an instrument and being
+decoration. An `unavailable` row still renders and says *why*: a missing row teaches
+nothing, and "unavailable" with no reason is indistinguishable from a bug. The whole series
+store exports to JSON, provenance included. This is deliberately "teach the player real
+network monitoring while they play," not just flavor.
 
 ---
 
