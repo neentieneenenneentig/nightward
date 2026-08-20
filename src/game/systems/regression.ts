@@ -1956,7 +1956,17 @@ async function testLoomPayoffLayerIsReal(nw: any) {
     // ---- territoryIncomePct and Night Market reach the real gold tick -----
     const heldBuildings = state.buildings;
     const ptx = Math.floor(state.player.x / 32), pty = Math.floor(state.player.y / 32);
+    // A hall alone is pop 2 (basePop 2 + hall pop 0), and the tick ROUNDS:
+    // round(2 x goldMul x 1.4) > round(2 x goldMul) is false for any goldMul
+    // near 0.8, because round(1.6) and round(2.24) are both 2. That made this
+    // assertion a coin flip on the live network multiplier — N4.1 turned
+    // goldRate from a quantised downlink bucket into a continuous measured
+    // value, so it started landing in the dead band. Six huts (pop 2 each) put
+    // the base near 14, where a 40% rise cannot round away.
     state.buildings = [{ uid: state.nextUid++, type: 'hall', tx: ptx + 3, ty: pty + 3, hp: 500, maxHp: 500 }];
+    for (let i = 0; i < 6; i++) {
+      state.buildings.push({ uid: state.nextUid++, type: 'hut', tx: ptx + 5 + i, ty: pty + 5, hp: 100, maxHp: 100 } as any);
+    }
     world.reindexBuildings();
     const goldFrom = (over: any) => {
       setMods(over);
@@ -4816,6 +4826,50 @@ async function testGroundDropCap(nw: any) {
   state.drops.length = 0;
 }
 
+// World-space text was unreadable, and it took a 4x screen capture to see why.
+// `stage.world` is scaled 2x and Pixi renders Text into a texture at resolution
+// 1, so every label was a low-res bitmap linearly upscaled into a grey smudge.
+// It looked like a colour bug — forcing the fill bright red produced a dark red
+// smudge, which is what ruled the fill out. Nothing in the suite could have
+// caught it, because every property involved was already correct.
+async function testWorldTextIsLegible(nw: any) {
+  const { state, sys, ctx } = nw;
+  const views: any = ctx.views;
+  if (!views || !views.drops) { ok(true, 'no view layer in this harness'); return; }
+  state.drops.length = 0;
+  try {
+    sys.drops.spawn([{ id: 'log', n: 9 }], nw.player.x + 400, nw.player.y + 400);
+    views.syncDrops(state.drops, state.clock);
+    const v: any = [...views.drops.values()][0];
+    ok(v !== undefined, 'the stack has a view');
+    if (!v) return;
+    eq(v.count?.text, '9', 'a stack of 9 draws its count');
+
+    // The bug, pinned. Anything at resolution 1 inside a 2x container is blurred
+    // by definition, so this asserts the RELATIONSHIP, not a magic number.
+    const worldScale = ctx.particles?.container?.parent?.scale?.x ?? 1;
+    ok(v.count.resolution >= worldScale,
+      `count renders at resolution ${v.count.resolution} into a ${worldScale}x container — not upscaled`);
+
+    // ...and it must not be drawn on top of its own contact shadow, which is an
+    // ellipse of rx 7 centred at (0, 7). A legible glyph in the darkest pixels
+    // of the frame is still not a legible glyph.
+    ok(Math.abs(v.count.position.x) >= 7,
+      `the count sits clear of its own shadow (x=${v.count.position.x}, shadow rx=7)`);
+
+    // Matched control: a single item shows no count at all. Without this, a
+    // DropView that drew "1" on every stack would pass everything above.
+    state.drops.length = 0;
+    sys.drops.spawn([{ id: 'log', n: 1 }], nw.player.x + 420, nw.player.y + 420);
+    views.syncDrops(state.drops, state.clock);
+    const v1: any = [...views.drops.values()].find((d: any) => d !== v) ?? v;
+    ok(!v1.count || v1.count.visible === false, 'a stack of 1 draws no count');
+  } finally {
+    state.drops.length = 0;
+    views.syncDrops(state.drops, state.clock);
+  }
+}
+
 async function testGroundDropDisabled(nw: any) {
   const { state, sys } = nw;
   const { CFG } = await import('../data/config');
@@ -5374,6 +5428,7 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Ground drops - materials rot, gear never does', fn: testGroundDropDespawn },
   { name: 'Ground drops - cap holds and never evicts gear', fn: testGroundDropCap },
   { name: 'Ground drops - CFG.drops.enabled=false restores instant pickup', fn: testGroundDropDisabled },
+  { name: 'Ground drops - the stack count is actually legible', fn: testWorldTextIsLegible },
   // ---- B6: Level-Up Flourish ----
   { name: 'Level-up flourish - rising motes, ring, config gate', fn: testLevelUpFlourish },
   // ---- N4.1: The Deep Wire ----

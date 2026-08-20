@@ -70,6 +70,14 @@ class FoeView {
   destroy() { this.cont.destroy({ children: true }); }
 }
 
+/** `stage.world` is scaled 2x, and Pixi renders `Text` into a texture at
+ *  resolution 1 by default — so every world-space label was a low-res bitmap
+ *  linearly upscaled, which turns a thin glyph with a dark stroke into a grey
+ *  smudge. Stack counts were unreadable for exactly this reason and it looked
+ *  like a colour bug until a 4x capture showed the blur. Rendering above the
+ *  world scale costs a few hundred texels per label and nothing else. */
+const WORLD_TEXT_RES = 4;
+
 /** B5: a stack of loot lying on the ground. Same shape as FoeView — sprite,
  *  contact shadow, y-sorted container — so an item behind a tree renders behind
  *  the tree without any new render machinery. */
@@ -111,9 +119,22 @@ class DropView {
       this.lastN = d.n;
       if (d.n > 1) {
         if (!this.count) {
-          this.count = new Text({ text: '', style: { fontFamily: 'monospace', fontSize: 9, fill: 0xf2e9d8, stroke: { color: 0x140f18, width: 3 } } });
-          this.count.anchor.set(0.5, 0);
-          this.count.position.set(0, 5);
+          // fontSize 9 with a 3px stroke rendered as a dark BLOB: the stroke is
+          // centred on the glyph outline, so it eats 1.5px inward — the entire
+          // stem of a 9px digit — and the cream fill never survives to be seen.
+          // Bigger glyph, thinner stroke, bold stems. Pixi draws the stroke OVER
+          // the fill, so at width 2 on ~2.5px bold stems only a sliver of cream
+          // survived; width 1 leaves the number actually reading as cream.
+          this.count = new Text({ text: '', style: { fontFamily: 'monospace', fontSize: 11, fontWeight: 'bold', fill: 0xf2e9d8, stroke: { color: 0x140f18, width: 1 } } });
+          // Beside the icon, NOT under it. At (0, 5) the digit was drawn straight
+          // on top of its own contact shadow — the ellipse is centred at (0, 7)
+          // with ry 3, so the top half of every glyph landed on the darkest
+          // pixels in the frame. Forcing the fill bright red proved it: the
+          // number was rendering the whole time and simply could not be seen.
+          // The shadow's rx is 7, so x=8 clears it at every lift scale.
+          this.count.resolution = WORLD_TEXT_RES;
+          this.count.anchor.set(0, 0.5);
+          this.count.position.set(8, 3);
           this.cont.addChild(this.count);
         }
         this.count.text = String(d.n);
@@ -192,6 +213,7 @@ class BossView {
       text: b.name,
       style: { fill: 0xffd2d2, fontSize: 10, fontFamily: 'monospace', stroke: { color: 0x000000, width: 3 } },
     });
+    this.label.resolution = WORLD_TEXT_RES;   // same blur, same fix
     this.label.anchor.set(0.5, 1);
     this.cont.addChild(this.shadow, this.sprite, this.bar, this.label);
   }
