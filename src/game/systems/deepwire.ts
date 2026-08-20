@@ -28,6 +28,10 @@
 // Everything here fails silently into a neutral value. A blocked probe is
 // content ("this network is filtered"), not an error, and no player is ever
 // locked out of a balanced game by a middlebox.
+//
+// The one import is the shared jitter policy. `data/network.ts` is a pure data
+// leaf with no imports of its own, so this adds no cycle.
+import { jitteredGap } from '../data/network';
 
 /** One parsed `cfL4` description — the edge's kernel TCP socket state. */
 export interface CfL4 {
@@ -206,6 +210,10 @@ export class DeepWire {
   /** Consecutive probe failures. Backs the probe off rather than hammering. */
   private fails = 0;
   private lastProbeMs = -1e9;
+  /** N4.3: re-rolled after every probe. A fixed 45 s period is deterministic
+   *  within a run, and on failure every scheduler in the game backed off in
+   *  lockstep and returned in lockstep. */
+  private nextGap = 0;
   private observer: PerformanceObserver | null = null;
 
   private static readonly MAX_HISTORY = 120;
@@ -278,10 +286,14 @@ export class DeepWire {
   tick(nowMs: number) {
     if (this.status === 'off') return;
     // Exponential-ish backoff: a network that blocks this endpoint should be
-    // asked once a minute at first and then left alone, not polled forever.
-    const gap = this.intervalSec * 1000 * Math.min(16, 1 + this.fails * 3);
+    // asked once a minute at first and then left alone, not polled forever. The
+    // jitter multiplies ON TOP of the backoff, so two clients that failed at the
+    // same moment do not retry at the same moment.
+    if (!this.nextGap) this.nextGap = jitteredGap(this.intervalSec);
+    const gap = this.nextGap * Math.min(16, 1 + this.fails * 3);
     if (nowMs - this.lastProbeMs < gap) return;
     this.lastProbeMs = nowMs;
+    this.nextGap = jitteredGap(this.intervalSec);
     void this.probe();
   }
 

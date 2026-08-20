@@ -96,6 +96,8 @@ export const WIRE_BUDGET = {
   baselineIntervalSec: 20,
   /** Seconds between Cloudflare trace refreshes (identity + TLS/colo). */
   traceIntervalSec: 300,
+  /** Seconds between deep-wire (cfL4) probes. */
+  deepIntervalSec: 45,
   /** Token bucket: sustained requests per minute across ALL outbound paths. */
   ratePerMin: 20,
   /** Token bucket depth. */
@@ -107,6 +109,22 @@ export const WIRE_BUDGET = {
   /** Echo is "fresh" for resonance purposes within this window (ms). */
   freshMs: 12000,
 };
+
+/** Every scheduled probe re-rolls its next gap through this rather than firing
+ *  on a fixed period. The reason is not politeness, it is measurement validity:
+ *  the day/night cycle is `daySec + nightSec` = 340 s, and the same-origin
+ *  baseline probe fired every 20 s exactly — 340 / 20 = 17, with no remainder.
+ *  It therefore sampled the SAME seventeen phases of the cycle on every single
+ *  day of every single run, forever, and any variation that tracks the cycle
+ *  was structurally invisible to it. The DoH beacons already jittered (N4.0);
+ *  the baseline, the Cloudflare trace and the deep-wire probe did not.
+ *
+ *  It also de-synchronises retries: when a network goes down, every scheduler
+ *  backs off together and would otherwise come back in lockstep. */
+export function jitteredGap(baseSec: number, frac = WIRE_BUDGET.beaconJitter): number {
+  const f = Math.max(0, Math.min(0.9, frac));
+  return baseSec * 1000 * (1 - f + Math.random() * 2 * f);
+}
 
 /** Passive-sample cooldowns (seconds). These gate zero-request browser reads
  *  and the scheduler's action bias — not network traffic. */

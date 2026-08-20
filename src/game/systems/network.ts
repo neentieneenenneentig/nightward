@@ -12,7 +12,7 @@ import {
   type NetworkSnapshot, type NetMapping, type NetGameMapping,
   type TraceHop, type BeaconEcho, type BeaconTarget,
   ACTION_ECHO_POOLS, ACTION_COOLDOWNS, allBeacons,
-  DOH_RESOLVERS, WIRE_BUDGET,
+  DOH_RESOLVERS, WIRE_BUDGET, jitteredGap,
 } from '../data/network';
 import { biomeForConnection, biomeForProfile, BIOMES, type BiomeDef } from '../data/biomes';
 import { DeepWire } from './deepwire';
@@ -87,9 +87,14 @@ export class NetworkSystem {
     try { return location.hostname || 'origin'; } catch { return 'origin'; }
   })();
   private lastBeaconMs = 0;
-  private nextBeaconGap = WIRE_BUDGET.beaconIntervalSec * 1000;
+  private nextBeaconGap = jitteredGap(WIRE_BUDGET.beaconIntervalSec);
   private lastBaselineMs = 0;
+  // N4.3: these three were fixed periods. The baseline's 20 s divided the 340 s
+  // day/night cycle exactly 17 times, so it sampled the same seventeen phases of
+  // every day forever. See jitteredGap() in data/network.ts.
+  private nextBaselineGap = jitteredGap(WIRE_BUDGET.baselineIntervalSec);
   private lastTraceMs = 0;
+  private nextTraceGap = jitteredGap(WIRE_BUDGET.traceIntervalSec);
   private actionBias: string[] = [];
   private resolverTurn = 0;
   /** Per-resolver latency samples — the resolver race. */
@@ -111,7 +116,11 @@ export class NetworkSystem {
     release: () => this.gate.release(),
     penalise: (h, r) => this.gate.penalise(h, r),
     log: (k, m) => this.netLog(k, m),
-  });
+  // N4.3: the interval was a default parameter on DeepWire's constructor and
+  // nowhere else, so it was the one probe cadence in the game that could not be
+  // seen from WIRE_BUDGET — which is the table this project reads to answer
+  // "how much traffic do we make".
+  }, WIRE_BUDGET.deepIntervalSec);
   snap: NetworkSnapshot;
   /** N4.2: the session-long time-series store. Assigned by main() rather than
    *  constructed here — the Lens, the export and this system all need the same
@@ -414,6 +423,35 @@ export class NetworkSystem {
     return this.riftStability / 100;
   }
 
+  /** N4.3: a rift raised by the WIRE rather than by a connection-type change.
+   *
+   *  The rift system has had exactly one trigger since N2 — a `connection.type`
+   *  transition — and desktop browsers do not report `connection.type` at all.
+   *  So on desktop, which is where this game is played, the rift machinery has
+   *  been effectively dead code: built, tested, visually complete, and unable to
+   *  fire. A hard latency step is the trigger it always needed.
+   *
+   *  Returns false when it was refused, which the caller must respect: the 30 s
+   *  cooldown is the same one the transition path honours, and re-selecting the
+   *  biome can legitimately return the realm we are already in — the beacon
+   *  profile that picks the realm is action-gated and may not have moved yet.
+   *  In that case the realm HOLDS and no rift is claimed. Reporting a
+   *  `Vale → Vale` rift would be a lie in the one panel that must not lie. */
+  riftFromWire(reason: string): boolean {
+    if (!this.snap.online) return false;
+    const now = performance.now();
+    if (now - this.lastRiftTime < 30000) return false;
+    const from = this.currentBiome;
+    const to = this.selectBiome();
+    if (to.id === from.id) return false;
+    this.currentBiome = to;
+    this.riftStability = 100;
+    this.lastRiftTime = now;
+    this.netLog('resonance-link', `Rift from the wire: ${reason}`);
+    if (this.riftCallback) this.riftCallback(from, to);
+    return true;
+  }
+
   /** Manually trigger a rift to a specific connection type (for testing). */
   triggerRift(type: string) {
     const from = this.currentBiome;
@@ -558,8 +596,7 @@ export class NetworkSystem {
     if (this.gate.off || !this.snap.online) return;
     if (nowMs - this.lastBeaconMs < this.nextBeaconGap) return;
     this.lastBeaconMs = nowMs;
-    const j = WIRE_BUDGET.beaconJitter;
-    this.nextBeaconGap = WIRE_BUDGET.beaconIntervalSec * 1000 * (1 - j + Math.random() * 2 * j);
+    this.nextBeaconGap = jitteredGap(WIRE_BUDGET.beaconIntervalSec);
     const target = this.pickBeacon();
     if (target) this.resolveBeacon(target);
   }
@@ -653,8 +690,9 @@ export class NetworkSystem {
    *  the only host we have unambiguous right to talk to. */
   private async pollBaseline(nowMs: number) {
     if (this.gate.off || !this.snap.online) return;
-    if (nowMs - this.lastBaselineMs < WIRE_BUDGET.baselineIntervalSec * 1000) return;
+    if (nowMs - this.lastBaselineMs < this.nextBaselineGap) return;
     this.lastBaselineMs = nowMs;
+    this.nextBaselineGap = jitteredGap(WIRE_BUDGET.baselineIntervalSec);
     const url = `${this.baseHref}${this.baseHref.includes('?') ? '&' : '?'}_nw=baseline&t=${Date.now()}`;
     if (!this.gate.take(this.selfHost, 5)) return;
     const ctl = new AbortController();
@@ -858,8 +896,9 @@ export class NetworkSystem {
   private pollIpInfo(nowMs: number) {
     // F8 design law: stays dark until the player's first explore action.
     if (!this.identityFetched || this.gate.off) return;
-    if (nowMs - this.lastTraceMs > WIRE_BUDGET.traceIntervalSec * 1000) {
+    if (nowMs - this.lastTraceMs > this.nextTraceGap) {
       this.lastTraceMs = nowMs;
+      this.nextTraceGap = jitteredGap(WIRE_BUDGET.traceIntervalSec);
       this.fetchCloudflareTrace();
     }
   }
