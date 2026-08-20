@@ -216,7 +216,7 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 >
 > ### Evidence — including what went wrong
 >
-> Typecheck clean on both configs · build green · **Gauntlet 1553/1553 across 94 tests**
+> Typecheck clean on both configs · build green · **Gauntlet 1553/1553 across 94 tests, 10 runs green out of 10**
 > (up from 1337/1337 across 85: 21 new assertions worth of B5/B6/N4 coverage plus rewrites).
 >
 > **A correction to my own first conclusion, recorded because the first version of this
@@ -342,12 +342,35 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 > | `gather` exercised | 3 of 6 completed runs | **8 of 8** |
 > | fewest systems exercised | **5** of 12 | **8** of 12 |
 > | `soulfeed` exercised | **0** of 8 | 6 of 8 |
+> | `waystones` exercised | **0** of 16 | exercised |
 >
 > The last row is the one that matters more than the flake. Soul-feed consumes gathered
 > materials, so a playthrough that never gathered could never reach it — the
 > "exhaustive" playthrough had been skipping an entire system every single run, and the
 > suite reported that as a passing test the whole time. Fixing one projection write did not
 > just stop a red light; it turned a third of the playthrough back on.
+
+> **Then the same instrument found a second silently-skipped system.** `waystones` was
+> unexercised in **16 of 16** runs. The phase looks up the hall to place waystones around,
+> and `exMark(m, 'waystones')` sits inside `if (hall)` — so when the hall dies the phase
+> does nothing and says nothing about it. And the hall does die: it is a 400 hp building
+> standing through several night waves, and the run log now confirms it in as many runs as
+> not. Phase 6 stands a new one up, because that phase exists to exercise waystones and
+> hall survival is phase 4's business.
+>
+> **Two of the twelve systems were quietly absent from every single run while the suite
+> reported green.** Neither was found by reading the test. Both were found by printing
+> which systems each run actually touched — the same move as the four tautologies: stop
+> trusting the pass, and make the test say what it did.
+
+> **A near-miss worth recording.** A Python patch script opened the 263 KB test file for
+> writing and then threw a `UnicodeEncodeError` mid-write on a malformed emoji escape.
+> Opening for write truncates immediately, so the source file was left at **zero bytes**,
+> and a 10-run measurement that was in flight at the time silently measured the wreckage
+> — 8 of its 10 runs were garbage. Recovered from `HEAD` in full. Every patch script now
+> encodes to bytes FIRST and writes through a temp file plus `os.replace`, so a bad encode
+> can never destroy the original. Worth stating plainly because for a few minutes the
+> failure looked like a real crash rate and was not.
 >
 > ### What is NOT done
 >
