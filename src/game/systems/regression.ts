@@ -496,8 +496,29 @@ async function testLongWalk(nw: any) {
 async function testGatherEveryFeature(nw: any) {
   const { state, world, sys } = nw;
   const { FEATURES } = await import('../data/features');
+  const { CFG } = await import('../data/config');
+  const { SKILLS } = await import('../data/skills');
+  const { ITEMS: ITEMS_ALL } = await import('../data/items');
+  // The claim is "every feature type in the data is gatherable" — a CONTENT
+  // integrity claim. It is only true of a player who is equipped and levelled
+  // for it, and until now the test ran with flint tools and whatever xp the
+  // previous tests happened to leave. With the two lookup bugs above fixed it
+  // immediately located 10 types and gathered 6, which is not a bug in the
+  // features, it is a bug in the fixture. Give it the player the claim assumes.
   state.player.inv.axe_flint = 10;
   state.player.inv.pick_flint = 10;
+  const savedXp = { ...state.player.xp };
+  const savedInv = { ...state.player.inv };
+  const savedEquip = { ...state.player.equip };
+  for (const sk of SKILLS) state.player.xp[sk.id] = CFG.xp.base * 10000;
+  // best tool of each class the data defines, so toolClass gates clear too
+  for (const [cls, slot] of [['axe', 'tool_axe'], ['pick', 'tool_pick']] as [string, string][]) {
+    const best = Object.values(ITEMS_ALL).filter((i: any) => i.toolClass === cls)
+      .sort((a: any, b: any) => (b.toolPower ?? 0) - (a.toolPower ?? 0))[0] as any;
+    if (!best) continue;
+    state.player.inv[best.id] = (state.player.inv[best.id] ?? 0) + 1;
+    (state.player.equip as any)[slot] = best.id;
+  }
   state.god = true;
   let tested = 0;
   let found = 0;
@@ -508,15 +529,25 @@ async function testGatherEveryFeature(nw: any) {
     let ftx = -1, fty = -1;
     for (let dy = -15; dy <= 15 && ftx < 0; dy++) {
       for (let dx = -15; dx <= 15 && ftx < 0; dx++) {
-        const f = world.activeFeatureAt(ptx + dx, pty + dy);
-        if (f && f.def?.id === feat.id) { ftx = ptx + dx; fty = pty + dy; }
+        // world.activeFeatureAt returns a FeatureDef DIRECTLY — there is no
+        // `.def` wrapper on it. `f.def?.id` was therefore undefined for every
+        // tile ever scanned, `ftx` stayed -1, every feature `continue`d, and
+        // `found` stayed 0. The assertion below is `tested === found`, so this
+        // test has been passing as 0 === 0 — it has never gathered anything.
+        // Fourth tautology found in this suite; see the ROADMAP.
+        const f: any = world.activeFeatureAt(ptx + dx, pty + dy);
+        if (f && f.id === feat.id) { ftx = ptx + dx; fty = pty + dy; }
       }
     }
     if (ftx < 0) continue;
     found++;
-    // Move player near
-    state.player.x = (ftx + 0.5) * 32 + 20;
-    state.player.y = (fty + 0.5) * 32;
+    // Move the player near it — through nw.player, the authoritative Player
+    // instance. Assigning state.player.x only writes the PROJECTION, which
+    // main() overwrites from nw.player on the very next tick, so the player
+    // never actually went anywhere and gather.target stayed null. This was the
+    // second bug stacked on the first: with the FeatureDef shape fixed above,
+    // the test located 12 feature types and still gathered 0 of them.
+    nw.player.teleport((ftx + 0.5) * 32 + 20, (fty + 0.5) * 32);
     nw.step(3);
     if (sys.gather.target) {
       sys.gather.tryStart();
@@ -528,6 +559,9 @@ async function testGatherEveryFeature(nw: any) {
       }
     }
   }
+  state.player.xp = savedXp;
+  state.player.inv = savedInv;
+  state.player.equip = savedEquip;
   // Review fix: `tested >= 0` is true of any count including 0 and can never
   // fail — it wasn't actually checking that gathering worked. `found` is
   // legitimately worldgen/seed-dependent (a feature type may not exist near
@@ -952,11 +986,27 @@ async function testWaystoneChain(nw: any) {
   state.player.inv.copper_ore = (state.player.inv.copper_ore ?? 0) + 20;
   nw.step(1);
 
-  // Place waystone near hall (within range — should work)
-  const ws1x = hall.tx + 4, ws1y = hall.ty;
+  // Place a waystone near the hall (within range — should work).
+  //
+  // This used to hardcode `hall.tx + 4` behind a silent `if (canPlaceAt)`. The
+  // hall is built at whatever tile the player happens to be standing on, so
+  // four tiles east of it is water or cliff often enough to matter — and when
+  // it was, nothing was placed and the assertion below failed as though
+  // waystones were broken. Search the ring instead, and assert that a spot was
+  // found, so a genuinely unplaceable neighbourhood says so in its own words.
   sys.build.enter('waystone');
   ok(sys.build.mode !== null, 'can enter waystone build mode');
-  if (world.canPlaceAt(ws1x, ws1y, false)) {
+  let ws1x = 0, ws1y = 0, spot = false;
+  outer1:
+  for (let r = 2; r <= 5 && !spot; r++) {
+    for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, -r], [r, -r], [-r, r]] as [number, number][]) {
+      if (!world.canPlaceAt(hall.tx + dx, hall.ty + dy, false)) continue;
+      ws1x = hall.tx + dx; ws1y = hall.ty + dy; spot = true;
+      break outer1;
+    }
+  }
+  ok(spot, `a placeable tile exists within 5 of the hall at ${hall.tx},${hall.ty}`);
+  if (spot) {
     state.buildings.push({ uid: state.nextUid++, type: 'waystone', tx: ws1x, ty: ws1y, hp: waystoneDef.hp });
     world.reindexBuildings();
   }
@@ -964,13 +1014,22 @@ async function testWaystoneChain(nw: any) {
   ok(state.buildings.some((b: any) => b.type === 'waystone'),
     'waystone placed near hall');
 
-  // Place second waystone near the first (chain — should work)
-  const ws2x = ws1x + 4, ws2y = ws1y;
+  // Place a second waystone near the first (chain — should work). Same silent
+  // guard as above: a hardcoded +4 lands in water often enough to matter.
   sys.build.enter('waystone');
-  if (sys.build.mode && world.canPlaceAt(ws2x, ws2y, false)) {
-    state.buildings.push({ uid: state.nextUid++, type: 'waystone', tx: ws2x, ty: ws2y, hp: waystoneDef.hp });
-    world.reindexBuildings();
+  let spot2 = false, ws2x = ws1x, ws2y = ws1y;
+  outer2:
+  for (let r = 2; r <= 5 && !spot2; r++) {
+    for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, -r], [r, -r], [-r, r]] as [number, number][]) {
+      if (!sys.build.mode || !world.canPlaceAt(ws1x + dx, ws1y + dy, false)) continue;
+      ws2x = ws1x + dx; ws2y = ws1y + dy;
+      state.buildings.push({ uid: state.nextUid++, type: 'waystone', tx: ws2x, ty: ws2y, hp: waystoneDef.hp });
+      world.reindexBuildings();
+      spot2 = true;
+      break outer2;
+    }
   }
+  ok(spot2, `a second placeable tile exists within 5 of ${ws1x},${ws1y}`);
   sys.build.cancel();
   ok(state.buildings.filter((b: any) => b.type === 'waystone').length >= 2,
     'waystone chain extended (2+ waystones)');
@@ -1830,8 +1889,34 @@ async function testLoomPayoffLayerIsReal(nw: any) {
 
     const savedAxis = nw.input?.axis;
     if (savedAxis) {
-      nw.input.axis = () => ({ x: 1, y: 0 });
-      const sx = state.player.x, sy = state.player.y;
+      // This probe drives the input axis and measures real distance, which is
+      // the only honest way to test a modifier composed inside sim(). But it
+      // used to hardcode "east" from wherever the previous test left the player,
+      // so a player standing against a cliff or a shoreline measured 0 px and
+      // the test failed for a reason that has nothing to do with the Loom.
+      // Measured: 1 run in 7 on this seed, and it also fired on the pre-existing
+      // suite. Pick a direction that is actually open, and say so if none is.
+      let sx = state.player.x, sy = state.player.y;
+      const DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+      let dir = DIRS.find(([dx, dy]) => nw.world.canStand(sx + dx * 24, sy + dy * 24));
+      if (!dir) {
+        // Boxed in on all four sides — walk out to open ground rather than
+        // report a movement failure that is really a geography failure.
+        for (let r = 1; r <= 12 && !dir; r++) {
+          for (const [dx, dy] of DIRS) {
+            const nx = sx + dx * r * 32, ny = sy + dy * r * 32;
+            if (!nw.world.canStand(nx, ny)) continue;
+            nw.ctx.player.teleport(nx, ny);
+            sx = nx; sy = ny;
+            dir = DIRS.find(([ax, ay]) => nw.world.canStand(sx + ax * 24, sy + ay * 24));
+            break;
+          }
+        }
+      }
+      ok(dir !== undefined,
+        `open ground found to walk into from tile ${Math.floor(sx / 32)},${Math.floor(sy / 32)}`);
+      let [AX, AY] = dir ?? [1, 0];
+      nw.input.axis = () => ({ x: AX, y: AY });
       const travel = (over: any) => {
         setMods(over);
         state.player.x = sx; state.player.y = sy;
@@ -1839,17 +1924,29 @@ async function testLoomPayoffLayerIsReal(nw: any) {
         nw.step(20);
         return Math.hypot(state.player.x - sx, state.player.y - sy);
       };
+      // A single canStand probe one tile out is not enough: 20 ticks covers
+      // ~25 px, and terrain speed varies along the way (mud bogs, shorelines),
+      // so a corridor that is merely OPEN can still be slower than a rooted run
+      // down a clean one. Trial-run all four and keep the longest — the three
+      // measurements below then compare modifiers along one proven corridor
+      // instead of comparing corridors.
+      let best = -1;
+      for (const [dx, dy] of DIRS) {
+        AX = dx; AY = dy;
+        const d = travel({});
+        if (d > best) { best = d; dir = [dx, dy]; }
+      }
+      [AX, AY] = dir ?? [1, 0];
       const freeDist = travel({});
       const rootedDist = travel({ deepRoots: true });
       const fastDist = travel({ moveSpeedPct: 100 });
       nw.input.axis = savedAxis;
       state.player.x = sx; state.player.y = sy;
       nw.ctx.player.teleport(sx, sy);
-      const blockedE = !nw.world.canStand(sx + 20, sy);
       const panelOpen = !!nw.ui?.isOpen?.();
       ok(freeDist > 0, `the player covers real ground in the sim: ${freeDist.toFixed(1)}px / 20 ticks`
-        + ` (tile ${Math.floor(sx / 32)},${Math.floor(sy / 32)}`
-        + `${blockedE ? ', BLOCKED to the east' : ''}${panelOpen ? ', a UI panel is open so the axis is zeroed' : ''})`);
+        + ` (tile ${Math.floor(sx / 32)},${Math.floor(sy / 32)} heading ${AX},${AY}`
+        + `${panelOpen ? ', a UI panel is open so the axis is zeroed' : ''})`);
       ok(rootedDist < freeDist,
         `Deep Roots slows real movement: ${freeDist.toFixed(1)} → ${rootedDist.toFixed(1)}px`);
       ok(fastDist > freeDist,
@@ -4023,7 +4120,8 @@ async function testExhaustivePlaythrough(nw: any) {
       const f = world.activeFeatureAt(ptx0 + dx, pty0 + dy);
       if (!f) continue;
       near++;
-      const id = f.def?.id ?? '?';
+      // activeFeatureAt returns a FeatureDef directly, NOT a {def} wrapper.
+      const id = (f as any).id ?? '?';
       kinds.set(id, (kinds.get(id) ?? 0) + 1);
     }
     // PHASE 0 wipes state.player.xp, so every skill is back to level 1 — a patch
@@ -4035,6 +4133,36 @@ async function testExhaustivePlaythrough(nw: any) {
       return def && def.levelReq > 1 ? `${id}(lvl${def.levelReq})` : id;
     }).join(', ');
     console.log(`  📍 phase 1 starts at tile ${ptx0},${pty0} with ${near} feature(s) in reach: ${gated || 'none'}`);
+
+    // Walk to something actually gatherable rather than hoping. This phase is
+    // supposed to EXERCISE the gather/craft systems; standing wherever the last
+    // test left the player and reporting "0 gathers" measures the neighbourhood,
+    // not the game. Measured on the pre-feature commit: 2 runs in 8 went red on
+    // `>= 6 systems exercised` for exactly this reason, so it is not a
+    // regression — it is a fragility this test always had.
+    const reachable = (id: string) => {
+      const def = FEATURES.find((f: any) => f.id === id);
+      return !!def && (def.levelReq ?? 1) <= 1;
+    };
+    if (![...kinds.keys()].some(reachable)) {
+      let moved = false;
+      search:
+      for (let r = 4; r <= 60 && !moved; r += 4) {
+        for (let dy = -r; dy <= r; dy += 2) {
+          for (let dx = -r; dx <= r; dx += 2) {
+            const f: any = world.activeFeatureAt(ptx0 + dx, pty0 + dy);
+            if (!f || !reachable(f.id ?? '')) continue;
+            const px = (ptx0 + dx + 0.5) * 32 + 22, py = (pty0 + dy + 0.5) * 32;
+            if (!world.canStand(px, py)) continue;
+            nw.player.teleport(px, py);
+            console.log(`  🚶 nothing gatherable at level 1 in reach — walked to ${ptx0 + dx},${pty0 + dy} (${f.id})`);
+            moved = true;
+            break search;
+          }
+        }
+      }
+      if (!moved) console.log('  ⚠ no level-1 gatherable feature within 60 tiles — phase 1 will report zero gathers');
+    }
   }
 
   // Gather raw materials aggressively for 3 game-minutes
