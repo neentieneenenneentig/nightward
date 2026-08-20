@@ -35,6 +35,48 @@ function ok(cond: boolean, msg: string) {
 
 function eq<T>(a: T, b: T, msg: string) { ok(a === b, `${msg}  (expected ${JSON.stringify(b)}, got ${JSON.stringify(a)})`); }
 
+/** A straight run of `runTiles` tiles that are all standable AND all report the
+ *  same `world.speedAt()`, plus a start point on it.
+ *
+ *  Movement modifiers can only be tested by driving the player and measuring the
+ *  distance covered — reading the multiplier back would pass while main.ts
+ *  computed the value and threw it away, which is what shipped in G1 and in the
+ *  Loom. But the measurement is only fair on UNIFORM ground: terrain speed
+ *  varies tile by tile, so a faster player ends up further along and can enter
+ *  slow ground the plain run never reached. Picking "whichever of four
+ *  directions is longest" does not fix that — it picks a corridor, not a fair
+ *  one — and it flaked red on a 28px corridor where terrain noise swamped a
+ *  0.88x modifier entirely.
+ *
+ *  On uniform ground the distance is exactly proportional to the multiplier, and
+ *  the measured ratios come out at the configured value to three decimals. */
+function findUniformCorridor(nw: any, runTiles: number, maxRadius = 14):
+    { x: number; y: number; dx: number; dy: number; speed: number } | null {
+  const DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const htx = Math.floor(nw.state.player.x / 32), hty = Math.floor(nw.state.player.y / 32);
+  for (let r = 0; r <= maxRadius; r++) {
+    for (let oy = -r; oy <= r; oy++) {
+      for (let ox = -r; ox <= r; ox++) {
+        if (Math.max(Math.abs(ox), Math.abs(oy)) !== r) continue;
+        const tx = htx + ox, ty = hty + oy;
+        if (!nw.world.canStand((tx + 0.5) * 32, (ty + 0.5) * 32)) continue;
+        const sp0 = nw.world.speedAt(tx, ty);
+        for (const [dx, dy] of DIRS) {
+          let uniform = true;
+          for (let k = 1; k <= runTiles && uniform; k++) {
+            const cx = tx + dx * k, cy = ty + dy * k;
+            uniform = nw.world.canStand((cx + 0.5) * 32, (cy + 0.5) * 32)
+              && nw.world.speedAt(cx, cy) === sp0;
+          }
+          if (uniform) return { x: (tx + 0.5) * 32, y: (ty + 0.5) * 32, dx, dy, speed: sp0 };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+
 // ---------------------------------------------------------------------------
 // test definitions — each is `(nw: any) => Promise<void>`
 // ---------------------------------------------------------------------------
@@ -1890,67 +1932,70 @@ async function testLoomPayoffLayerIsReal(nw: any) {
     const savedAxis = nw.input?.axis;
     if (savedAxis) {
       // This probe drives the input axis and measures real distance, which is
-      // the only honest way to test a modifier composed inside sim(). But it
-      // used to hardcode "east" from wherever the previous test left the player,
-      // so a player standing against a cliff or a shoreline measured 0 px and
-      // the test failed for a reason that has nothing to do with the Loom.
-      // Measured: 1 run in 7 on this seed, and it also fired on the pre-existing
-      // suite. Pick a direction that is actually open, and say so if none is.
-      let sx = state.player.x, sy = state.player.y;
-      const DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-      let dir = DIRS.find(([dx, dy]) => nw.world.canStand(sx + dx * 24, sy + dy * 24));
-      if (!dir) {
-        // Boxed in on all four sides — walk out to open ground rather than
-        // report a movement failure that is really a geography failure.
-        for (let r = 1; r <= 12 && !dir; r++) {
-          for (const [dx, dy] of DIRS) {
-            const nx = sx + dx * r * 32, ny = sy + dy * r * 32;
-            if (!nw.world.canStand(nx, ny)) continue;
-            nw.ctx.player.teleport(nx, ny);
-            sx = nx; sy = ny;
-            dir = DIRS.find(([ax, ay]) => nw.world.canStand(sx + ax * 24, sy + ay * 24));
-            break;
+      // the only honest way to test a modifier composed inside sim(). Two
+      // separate flakes have been fixed here:
+      //
+      //  1. It used to hardcode "east" from wherever the previous test left the
+      //     player, so a player against a cliff measured 0 px. (1 run in 7.)
+      //     Fixed by trial-running all four directions and keeping the longest.
+      //  2. Longest is still not FAIR. Terrain speed varies tile by tile, so a
+      //     faster player ends up further along and can enter slow ground the
+      //     plain run never reached — and on a short corridor that noise is
+      //     bigger than the modifier. Measured on 2026-08-20: a 28.4 px corridor
+      //     reported "Deep Roots slows real movement: 28.4 -> 29.2px" and went
+      //     red, with nothing wrong in the Loom at all. Found while chasing the
+      //     identical flake in the N4.3 omen probe.
+      //
+      // The corridor is now chosen for UNIFORMITY: every tile standable and
+      // every tile the same world.speedAt(). On uniform ground the distance is
+      // exactly proportional to the multiplier.
+      const RUN = 7;
+      const home = { x: state.player.x, y: state.player.y };
+      const corr = findUniformCorridor(nw, RUN);
+      ok(corr !== null, `found ${RUN} tiles of terrain-uniform corridor from tile `
+        + `${Math.floor(home.x / 32)},${Math.floor(home.y / 32)}`);
+      if (corr) {
+        nw.input.axis = () => ({ x: corr.dx, y: corr.dy });
+        // A death respawn teleports the player to the hall mid-measurement, which
+        // is not walking and is not comparable. Clear the field, top them up, and
+        // reject any run longer than the corridor it was walked down.
+        const MAXPX = RUN * 32;
+        const travel = (over: any) => {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            setMods(over);
+            nw.sys.hordes?.clearField?.();
+            state.player.hp = playerMaxHp(state);
+            state.player.x = corr.x; state.player.y = corr.y;
+            nw.ctx.player.teleport(corr.x, corr.y);
+            nw.step(18);
+            const d = Math.hypot(state.player.x - corr.x, state.player.y - corr.y);
+            if (d <= MAXPX) return d;
           }
-        }
+          return -1;
+        };
+        const freeDist = travel({});
+        const rootedDist = travel({ deepRoots: true });
+        const fastDist = travel({ moveSpeedPct: 100 });
+        nw.input.axis = savedAxis;
+        state.player.x = home.x; state.player.y = home.y;
+        nw.ctx.player.teleport(home.x, home.y);
+        const panelOpen = !!nw.ui?.isOpen?.();
+        ok(freeDist > 0 && freeDist <= MAXPX,
+          `the player covers real ground in the sim: ${freeDist.toFixed(1)}px / 18 ticks`
+          + ` (tile ${Math.floor(corr.x / 32)},${Math.floor(corr.y / 32)} heading ${corr.dx},${corr.dy},`
+          + ` terrain speed ${corr.speed.toFixed(2)} throughout`
+          + `${panelOpen ? ', a UI panel is open so the axis is zeroed' : ''})`);
+        ok(rootedDist < freeDist,
+          `Deep Roots slows real movement: ${freeDist.toFixed(1)} → ${rootedDist.toFixed(1)}px`);
+        ok(fastDist > freeDist,
+          `moveSpeedPct speeds it up: ${freeDist.toFixed(1)} → ${fastDist.toFixed(1)}px`);
+        // Uniform ground makes the RATIO meaningful, not just the ordering.
+        // Deep Roots advertises -12%; before this corridor fix the measurement
+        // was too noisy to assert a size at all.
+        const rr = rootedDist / freeDist;
+        ok(Math.abs(rr - CFG.loom.deepRootsMoveMul) < 0.04,
+          `and by the advertised ${CFG.loom.deepRootsMoveMul}x (measured ${rr.toFixed(3)}x)`);
       }
-      ok(dir !== undefined,
-        `open ground found to walk into from tile ${Math.floor(sx / 32)},${Math.floor(sy / 32)}`);
-      let [AX, AY] = dir ?? [1, 0];
-      nw.input.axis = () => ({ x: AX, y: AY });
-      const travel = (over: any) => {
-        setMods(over);
-        state.player.x = sx; state.player.y = sy;
-        nw.ctx.player.teleport(sx, sy);
-        nw.step(20);
-        return Math.hypot(state.player.x - sx, state.player.y - sy);
-      };
-      // A single canStand probe one tile out is not enough: 20 ticks covers
-      // ~25 px, and terrain speed varies along the way (mud bogs, shorelines),
-      // so a corridor that is merely OPEN can still be slower than a rooted run
-      // down a clean one. Trial-run all four and keep the longest — the three
-      // measurements below then compare modifiers along one proven corridor
-      // instead of comparing corridors.
-      let best = -1;
-      for (const [dx, dy] of DIRS) {
-        AX = dx; AY = dy;
-        const d = travel({});
-        if (d > best) { best = d; dir = [dx, dy]; }
-      }
-      [AX, AY] = dir ?? [1, 0];
-      const freeDist = travel({});
-      const rootedDist = travel({ deepRoots: true });
-      const fastDist = travel({ moveSpeedPct: 100 });
-      nw.input.axis = savedAxis;
-      state.player.x = sx; state.player.y = sy;
-      nw.ctx.player.teleport(sx, sy);
-      const panelOpen = !!nw.ui?.isOpen?.();
-      ok(freeDist > 0, `the player covers real ground in the sim: ${freeDist.toFixed(1)}px / 20 ticks`
-        + ` (tile ${Math.floor(sx / 32)},${Math.floor(sy / 32)} heading ${AX},${AY}`
-        + `${panelOpen ? ', a UI panel is open so the axis is zeroed' : ''})`);
-      ok(rootedDist < freeDist,
-        `Deep Roots slows real movement: ${freeDist.toFixed(1)} → ${rootedDist.toFixed(1)}px`);
-      ok(fastDist > freeDist,
-        `moveSpeedPct speeds it up: ${freeDist.toFixed(1)} → ${fastDist.toFixed(1)}px`);
     }
 
     // ---- territoryIncomePct and Night Market reach the real gold tick -----
@@ -5453,7 +5498,595 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Lens - third-party strings stay escaped', fn: testLensEscapesThirdPartyStrings },
   { name: 'Chronicle - aggregation keeps outliers, change detection', fn: testChronicleStore },
   { name: 'Chronicle - export carries series and provenance', fn: testChronicleExport },
+  { name: 'Chronicle - the permanent record survives the 1Hz drain', fn: testChronicleRecordSurvivesDrain },
+  // ---- N4.3: Omens + jittered probes ----
+  { name: 'Probes - jittered, and no longer phase-locked to the day cycle', fn: testProbeJitter },
+  { name: 'Omens - steps raise them, gates refuse them, they go both ways', fn: testOmensRaiseFromSteps },
+  { name: 'Omens - lift on recovery, expire on the cap, cap how many', fn: testOmensRecoverAndExpire },
+  { name: 'Omens - actually change tribute, harvests and movement', fn: testOmensDriveTheGame },
+  { name: 'Omens - named in the Lens and on the HUD', fn: testLensShowsOmens },
 ];
+
+
+// ---------------------------------------------------------------------------
+// N4.3 — Omens: a change on the wire becomes a change in the world
+// ---------------------------------------------------------------------------
+
+/** Feed a series a steady baseline and then a step, and return the event the
+ *  Chronicle raised for it. Shared by the tests below, so a change to the
+ *  detector's window sizes breaks one helper rather than five tests. */
+async function stepSeries(key: string, baseV: number, stepV: number, unit = 'ms') {
+  const { ChronicleStore } = await import('./chronicle');
+  const c: any = new ChronicleStore();
+  c.define({ key, label: key, unit });
+  // 120 s of steady baseline, then 16 s of the new value. detect() compares the
+  // last 15 s against 105..15 s ago, so both windows are fully populated.
+  for (let t = 0; t < 120; t++) c.push(key, t, baseV, 'measured');
+  for (let t = 120; t < 136; t++) c.push(key, t, stepV, 'measured');
+  return { store: c, ev: c.events[c.events.length - 1] ?? null, t: 135 };
+}
+
+/** A host that records instead of touching the game. */
+function fakeOmenHost(store: any) {
+  const calls = { toasts: [] as string[], logs: [] as string[], rifts: 0, riftAllowed: true, fx: 0 };
+  const box = {
+    calls,
+    clock: 135,
+    host: {
+      clock: () => box.clock,
+      chronicle: store,
+      toast: (m: string) => { calls.toasts.push(m); },
+      log: { push: (_k: string, m: string) => { calls.logs.push(m); } },
+      rift: () => { calls.rifts++; return calls.riftAllowed; },
+      fx: () => { calls.fx++; },
+    },
+  };
+  return box;
+}
+
+async function testProbeJitter(nw: any) {
+  const { jitteredGap, WIRE_BUDGET } = await import('../data/network');
+  const { CFG } = await import('../data/config');
+
+  // ---- the defect, stated as arithmetic ----
+  // The same-origin baseline probe fired on a FIXED 20 s period against a
+  // day/night cycle of daySec + nightSec = 340 s. 340 / 20 = 17, exactly. So it
+  // sampled the same seventeen phases of the cycle on every day of every run,
+  // forever, and any variation that tracks the cycle was structurally invisible
+  // to it. That is not a politeness bug, it is a measurement-validity bug.
+  const cycle = CFG.time.daySec + CFG.time.nightSec;
+  const period = WIRE_BUDGET.baselineIntervalSec;
+  const BUCKET = 5;                       // seconds of cycle phase per bucket
+  const buckets = Math.ceil(cycle / BUCKET);
+  const phasesOf = (gaps: number[]) => {
+    const seen = new Set<number>();
+    let t = 0;
+    for (const g of gaps) { t += g; seen.add(Math.floor(((t / 1000) % cycle) / BUCKET)); }
+    return seen.size;
+  };
+  const fixed = phasesOf(new Array(300).fill(period * 1000));
+  const jittered = phasesOf(Array.from({ length: 300 }, () => jitteredGap(period)));
+
+  eq(cycle % period, 0, `the day/night cycle is an exact multiple of the old fixed period (${cycle}s / ${period}s)`);
+  ok(fixed <= 20, `300 probes on a fixed ${period}s period reach only ${fixed} of ${buckets} phase buckets`);
+  ok(jittered > fixed * 2,
+    `300 jittered probes reach ${jittered} of ${buckets} — ${(jittered / fixed).toFixed(1)}x the coverage`);
+
+  // ---- jitter must not change the RATE ----
+  // The good-citizenship half: spreading probes out is fine, quietly firing more
+  // of them is not. N4.0 spent a whole phase getting this volume down.
+  const many = Array.from({ length: 2000 }, () => jitteredGap(period));
+  const mean = many.reduce((a, b) => a + b, 0) / many.length;
+  ok(Math.abs(mean - period * 1000) < period * 1000 * 0.02,
+    `the mean gap is still the configured interval (${(mean / 1000).toFixed(2)}s vs ${period}s)`);
+  const f = WIRE_BUDGET.beaconJitter;
+  ok(many.every((g) => g >= period * 1000 * (1 - f) - 1e-6 && g <= period * 1000 * (1 + f) + 1e-6),
+    `and every gap is inside +/-${(f * 100).toFixed(0)}% of it`);
+
+  // ---- the matched control ----
+  // If the spread above came from anything other than the jitter, this would
+  // vary too. Zero jitter has to reproduce the exact old behaviour.
+  const none = Array.from({ length: 50 }, () => jitteredGap(period, 0));
+  eq(new Set(none).size, 1, 'jitter 0 returns one exact value — the spread above is the jitter, not the test');
+  eq(none[0], period * 1000, '...and that value is the unjittered interval');
+
+  // ---- and the schedulers actually use it ----
+  const net: any = nw.sys.net;
+  for (const field of ['nextBeaconGap', 'nextBaselineGap', 'nextTraceGap']) {
+    ok(typeof net[field] === 'number' && net[field] > 0,
+      `NetworkSystem.${field} is a live re-rolled gap, not a constant (${(net[field] / 1000).toFixed(1)}s)`);
+  }
+  ok(typeof net.deep?.nextGap === 'number', 'and the deep-wire probe carries one too');
+}
+
+async function testOmensRaiseFromSteps(nw: any) {
+  const { OmenSystem, OMEN_DEFS } = await import('./omens');
+  const { CFG } = await import('../data/config');
+
+  // ---- a steady series raises nothing ----
+  // The control that has to come first: if this fired, every assertion below
+  // would pass for the wrong reason.
+  const steady = await stepSeries('fray', 1.0, 1.0, '%');
+  const sh = fakeOmenHost(steady.store);
+  const s0 = new OmenSystem(sh.host as any);
+  eq(steady.store.events.length, 0, 'a flat series produces no change event at all');
+  eq(s0.active.length, 0, 'and therefore no omen');
+  eq(s0.mul('hordeAggression'), 1, 'a quiet wire multiplies nothing');
+
+  // ---- packet loss steps up -> Surge ----
+  const surge = await stepSeries('fray', 1.0, 6.0, '%');
+  ok(surge.ev !== null, 'a hard step on fray IS detected');
+  const uh = fakeOmenHost(surge.store);
+  const om = new OmenSystem(uh.host as any);
+  const raised = om.consider(surge.ev!);
+  ok(raised !== null, 'and it raises an omen');
+  eq(raised?.kind, 'surge', 'fray stepping UP is a Surge');
+  const surgeDef = OMEN_DEFS.find((d) => d.kind === 'surge')!;
+  eq(om.mul('hordeAggression'), surgeDef.mul, `hordes press ${surgeDef.mul}x harder`);
+  // The matched negative: a Surge is packet loss, not scarcity. If mul() ignored
+  // the target and returned the multiplier for everything, the assertion above
+  // would still pass and every system in the game would be quietly affected.
+  eq(om.mul('resourceYield'), 1, 'and a Surge does NOT touch yields');
+  eq(om.mul('moveSpeed'), 1, '...or move speed');
+  eq(uh.calls.toasts.length, 1, 'the player is told');
+  ok(uh.calls.logs.some((m) => m.includes('Surge')), 'and the Feed records it with its numbers');
+
+  // ---- re-raising refreshes, it does not stack ----
+  const before = om.mul('hordeAggression');
+  om.consider(surge.ev!);
+  om.consider(surge.ev!);
+  eq(om.active.length, 1, 'considering the same step three times leaves ONE omen');
+  eq(om.mul('hordeAggression'), before, '...and the multiplier does not compound to unplayable');
+
+  // ---- the per-kind sigma gate is real ----
+  // Famine asks for more evidence than the Chronicle's own 3 sigma floor. An
+  // event just under the gate must be refused and one just over it accepted,
+  // with everything else about the two identical.
+  const fam = await stepSeries('flow', 20, 4, 'Mbps');
+  ok(fam.ev !== null && fam.ev.dir === 'down', 'throughput collapsing is a DOWN step on flow');
+  const fh = fakeOmenHost(fam.store);
+  const f1 = new OmenSystem(fh.host as any);
+  const famDef = OMEN_DEFS.find((d) => d.kind === 'famine')!;
+  eq(f1.consider({ ...fam.ev!, sigma: -(famDef.minSigma - 0.1) }),
+    null, `a ${(famDef.minSigma - 0.1).toFixed(1)} sigma step is under Famine's gate and is refused`);
+  const famineOmen = f1.consider({ ...fam.ev!, sigma: -(famDef.minSigma + 0.1) });
+  ok(famineOmen !== null, `a ${(famDef.minSigma + 0.1).toFixed(1)} sigma step clears it`);
+  eq(famineOmen?.kind, 'famine', 'flow stepping DOWN is a Famine');
+  ok(f1.mul('resourceYield') < 1, `the land gives less (${f1.mul('resourceYield')}x)`);
+
+  // ---- and it goes both ways ----
+  // A mapping that can only ever punish is a penalty box, not a mapping.
+  const boon = await stepSeries('flow', 4, 20, 'Mbps');
+  const bh = fakeOmenHost(boon.store);
+  const b1 = new OmenSystem(bh.host as any);
+  const bounty = b1.consider(boon.ev!);
+  eq(bounty?.kind, 'bounty', 'flow stepping UP is a Bounty, not a punishment');
+  ok(b1.mul('resourceYield') > 1, `the land gives more (${b1.mul('resourceYield')}x)`);
+
+  // ---- Quickening and Miring share moveSpeed on purpose ----
+  const quick = await stepSeries('pulse', 60, 20, 'ms');
+  const mire = await stepSeries('silt', 2, 30, '%');
+  const ch = fakeOmenHost(quick.store);
+  const both = new OmenSystem(ch.host as any);
+  both.consider(quick.ev!);
+  const upOnly = both.mul('moveSpeed');
+  ok(upOnly > 1, `a Quickening speeds the world up (${upOnly.toFixed(3)}x)`);
+  (ch.host as any).chronicle = mire.store;
+  both.consider(mire.ev!);
+  eq(both.active.length, 2, 'both can be up at once');
+  ok(both.mul('moveSpeed') < upOnly,
+    `and they compound rather than one winning (${both.mul('moveSpeed').toFixed(3)}x)`);
+
+  // ---- the rift asks before it claims ----
+  // The rift is the only kind whose effect can be REFUSED by the thing it
+  // drives: the realm may be on cooldown, or the biome selector may return the
+  // realm we are already in. Raising the omen anyway would put a phantom in the
+  // Lens and a "Vale -> Vale" line in the Feed.
+  const tear = await stepSeries('pulse', 20, 400, 'ms');
+  const rh = fakeOmenHost(tear.store);
+  rh.calls.riftAllowed = false;
+  const r1 = new OmenSystem(rh.host as any);
+  eq(r1.consider({ ...tear.ev!, sigma: 9 }), null, 'a rift the realm refused raises no omen');
+  eq(rh.calls.rifts, 1, '...but it WAS asked — the refusal came from the realm, not a missing call');
+  eq(r1.active.length, 0, 'and nothing phantom is left behind');
+  rh.calls.riftAllowed = true;
+  const tore = r1.consider({ ...tear.ev!, sigma: 9 });
+  eq(tore?.kind, 'rift', 'when the realm allows it, the rift is raised');
+
+  // ---- the escape hatch ----
+  const saved = CFG.omens.enabled;
+  try {
+    CFG.omens.enabled = false;
+    const off = new OmenSystem(fakeOmenHost(surge.store).host as any);
+    eq(off.consider(surge.ev!), null, 'CFG.omens.enabled=false raises nothing');
+    eq(off.mul('hordeAggression'), 1, '...and the game plays exactly as it did before N4.3');
+    // And it works MID-RUN, on a system that already has omens up. A flag that
+    // only takes effect at boot is not an escape hatch, it is a build option —
+    // and `om` above is carrying a live Surge right now.
+    eq(om.active.length, 1, '(the earlier system still has its Surge up)');
+    eq(om.mul('hordeAggression'), 1, 'flipping the flag neutralises an omen that is ALREADY active');
+    eq(om.has('surge'), false, '...and the screen effect goes with it');
+    om.tick();
+    eq(om.active.length, 0, '...and the next tick clears it rather than leaving it to expire');
+  } finally { CFG.omens.enabled = saved; }
+}
+
+async function testOmensRecoverAndExpire(nw: any) {
+  const { OmenSystem } = await import('./omens');
+  const { CFG } = await import('../data/config');
+
+  const fam = await stepSeries('flow', 20, 4, 'Mbps');
+  const h = fakeOmenHost(fam.store);
+  const om = new OmenSystem(h.host as any);
+  const omen = om.consider({ ...fam.ev!, sigma: -6 });
+  ok(omen !== null, 'a Famine is up');
+  if (!omen) return;
+
+  // The anti-tautology that matters most in this file. recovered() compares the
+  // live reading against the PRE-step baseline, and the comparison is direction
+  // -dependent: a down-step recovers by coming back UP. Invert it and every omen
+  // lifts on the tick it was raised — the system becomes a no-op that still
+  // passes an "an omen can be raised" test.
+  om.tick();
+  eq(om.active.length, 1, 'ticking immediately does NOT lift it — the reading is still bad');
+
+  for (let t = 136; t < 166; t++) fam.store.push('flow', t, 4, 'measured');
+  h.clock = 166;
+  om.tick();
+  eq(om.active.length, 1, 'and it holds while throughput stays collapsed');
+
+  // Now the network comes back — not to the post-step value, to the baseline it
+  // fell FROM, which is what "until it recovers" has to mean.
+  for (let t = 166; t < 176; t++) fam.store.push('flow', t, 19.5, 'measured');
+  h.clock = 176;
+  om.tick();
+  eq(om.active.length, 0, 'the Famine lifts when throughput returns to its baseline');
+  eq(om.history[om.history.length - 1].endedBy, 'recovered', '...and it records WHY it lifted');
+  eq(om.mul('resourceYield'), 1, 'yields are neutral again');
+
+  // ---- the safety valve ----
+  // A permanently degraded link must not famine for a whole run. Same setup, the
+  // reading never recovers, the clock walks past the cap.
+  const fam2 = await stepSeries('flow', 20, 4, 'Mbps');
+  const h2 = fakeOmenHost(fam2.store);
+  const om2 = new OmenSystem(h2.host as any);
+  const o2 = om2.consider({ ...fam2.ev!, sigma: -6 })!;
+  for (let t = 136; t < 400; t++) fam2.store.push('flow', t, 4, 'measured');
+  h2.clock = o2.until - 1;
+  om2.tick();
+  eq(om2.active.length, 1, 'one second before the cap it is still up');
+  h2.clock = o2.until + 1;
+  om2.tick();
+  eq(om2.active.length, 0, 'and the cap expires it even though the wire never recovered');
+  eq(om2.history[om2.history.length - 1].endedBy, 'expired', '...distinguishably from a recovery');
+
+  // ---- how many may be up at once ----
+  const h3 = fakeOmenHost(fam2.store);
+  const om3 = new OmenSystem(h3.host as any);
+  const four: any[] = [
+    { key: 'fray', dir: 'up', sigma: 9, from: 1, to: 9, label: 'Loss', t: 1 },
+    { key: 'flow', dir: 'down', sigma: -9, from: 20, to: 2, label: 'Throughput', t: 1 },
+    { key: 'silt', dir: 'up', sigma: 9, from: 2, to: 30, label: 'Bufferbloat', t: 1 },
+    { key: 'pulse', dir: 'down', sigma: -9, from: 60, to: 10, label: 'Latency', t: 1 },
+  ];
+  for (const k of four) om3.consider(k);
+  eq(om3.active.length, CFG.omens.maxActive,
+    'a wire having a terrible minute stacks at most CFG.omens.maxActive omens');
+  ok(om3.active.length < four.length, '...and the fourth was refused, not silently applied');
+  // Matched control: the cap must not block a REFRESH, or a run sitting at the
+  // cap would silently stop tracking the network for the rest of its life.
+  const firstUntil = om3.active[0].until;
+  h3.clock = 200;
+  om3.consider(four[0]);
+  ok(om3.active[0].until > firstUntil, 'but an omen already up can still be extended at the cap');
+}
+
+async function testChronicleRecordSurvivesDrain(nw: any) {
+  const { ChronicleStore, exportChronicle } = await import('./chronicle');
+  const c: any = new ChronicleStore();
+  c.define({ key: 'y', label: 'Y', unit: 'ms' });
+  for (let t = 0; t < 120; t++) c.push('y', t, 20 + (t % 3), 'measured');
+  for (let t = 120; t < 140; t++) c.push('y', t, 200, 'measured');
+  ok(c.events.length >= 1, `a step was detected (${c.events.length})`);
+
+  // The bug this pins: main() calls takeEvents() at 1 Hz to turn steps into Feed
+  // lines and omens, and that used to drain the SAME array the Lens CHANGES
+  // panel and the export both read. So by the time a player opened the Lens it
+  // was empty — every time, in every run, since N4.2, and every exported
+  // chronicle carried `"events": []`. Nothing went red: the existing store test
+  // builds its own store and never calls takeEvents().
+  const n = c.events.length;
+  const taken = c.takeEvents();
+  eq(taken.length, n, 'takeEvents delivers every undelivered event');
+  eq(c.events.length, n, 'and the PERMANENT record still holds them after the drain');
+  eq(c.recentEvents(8).length, Math.min(8, n), 'recentEvents() reads that permanent record');
+
+  // The matched control: the queue really did drain. If takeEvents stopped
+  // draining, the assertion above would still pass and main() would re-log and
+  // re-raise the same omen once a second forever.
+  eq(c.takeEvents().length, 0, 'a delivered event is delivered exactly once');
+
+  // ...and a new step still reaches the queue afterwards. The second baseline
+  // has to be LONG: detect() compares now-15..now against now-105..now-15, and
+  // a baseline window that straddles both levels has a standard deviation the
+  // size of the step itself, so sigma collapses and nothing fires. (That is why
+  // the first version of this assertion went red — the store was fine, the test
+  // was asking it to detect a step against a baseline containing that step.)
+  for (let t = 140; t < 300; t++) c.push('y', t, 200, 'measured');
+  for (let t = 300; t < 320; t++) c.push('y', t, 20, 'measured');
+  ok(c.takeEvents().length >= 1, 'and the queue keeps working after being drained');
+
+  // The export carried the same bug wearing a different hat.
+  const payload: any = exportChronicle(c, nw.sys.net, nw.state, nw.omens);
+  ok(Array.isArray(payload.events) && payload.events.length >= 1,
+    `the exported chronicle carries its ${payload.events?.length} change events`);
+  ok(Array.isArray(payload.omens), 'and the omens the run actually experienced');
+}
+
+async function testOmensDriveTheGame(nw: any) {
+  const { OMEN_DEFS } = await import('./omens');
+  const { CFG } = await import('../data/config');
+  const { playerMaxHp } = await import('../rules');
+  const om = nw.omens, state = nw.state;
+  ok(om !== undefined, 'the run carries an OmenSystem');
+  if (!om) return;
+
+  const raise = (kind: string) => {
+    const def = OMEN_DEFS.find((d) => d.kind === kind)!;
+    om.active.push({ kind, def, t0: state.clock, until: state.clock + 1e6, from: 0, to: 0, sigma: 9 });
+  };
+  const clear = () => { om.active.length = 0; };
+  clear();
+  eq(om.mul('resourceYield'), 1, 'baseline: no omen, no multiplier');
+
+  // ---- tribute: pure arithmetic, so this comparison is exact ----
+  const savedBuildings = state.buildings.slice();
+  const savedClock = state.clock;
+  const ptx = Math.floor(nw.player.x / 32), pty = Math.floor(nw.player.y / 32);
+  try {
+    state.clock = 10;                       // daylight — tribute is day-only
+    state.buildings = [{ uid: state.nextUid++, type: 'hall', tx: ptx + 3, ty: pty + 3, hp: 500, maxHp: 500 }];
+    for (let i = 0; i < 8; i++) {
+      state.buildings.push({ uid: state.nextUid++, type: 'hut', tx: ptx + 5 + i, ty: pty + 5, hp: 100, maxHp: 100 } as any);
+    }
+    nw.world.reindexBuildings();
+    const tribute = () => {
+      const g0 = state.player.gold;
+      nw.sys.economy.update(CFG.economy.tickSec + 0.01);
+      return state.player.gold - g0;
+    };
+    const plain = tribute();
+    raise('famine');
+    const starved = tribute();
+    clear();
+    raise('bounty');
+    const fat = tribute();
+    clear();
+    ok(plain > 0, `a hall and eight huts pay tribute (${plain} gold/tick)`);
+    ok(starved < plain, `a Famine reaches the treasury too, not just the ground (${starved} < ${plain})`);
+    ok(fat > plain, `and a Bounty fattens it (${fat} > ${plain})`);
+  } finally {
+    state.buildings = savedBuildings;
+    state.clock = savedClock;
+    nw.world.reindexBuildings();
+    clear();
+  }
+
+  // ---- move speed, end to end through main()'s sim ----
+  // Not by reading a multiplier back — by DRIVING the player and measuring how
+  // far they get. That is the only probe that proves main.ts multiplies the
+  // value into player.update() rather than computing and discarding it, which
+  // is exactly the class of bug that shipped in G1 and in the Loom.
+  //
+  // But a 1.10x modifier is a FINE measurement, and the first version of this
+  // probe compared modifiers along "whichever of four directions was longest",
+  // which is not the same as a fair corridor: terrain speed varies tile by tile,
+  // so a faster player ends up further along and can enter slow ground the plain
+  // run never reached. Measured 1 red in 8 that way — the Miring came out at
+  // 51.2px against a plain 49.9px, on a corridor only half the usual length.
+  //
+  // So the corridor is CHOSEN for uniformity rather than length: a straight run
+  // of tiles that are all standable and all report the same world.speedAt(). On
+  // uniform ground the distance is exactly proportional to the speed multiplier
+  // and the ratio is exact, not approximate.
+  const savedAxis = nw.input?.axis;
+  const haveAxis = !!savedAxis;
+  ok(haveAxis, 'the input seam is available to measure real movement');
+  if (nw.ui?.isOpen?.()) nw.ui.close?.();
+
+  if (haveAxis) {
+  const RUN = 7;                                  // tiles of corridor required
+  const home = { x: state.player.x, y: state.player.y };
+  const corridor = findUniformCorridor(nw, RUN);
+  ok(corridor !== null, `found ${RUN} tiles of terrain-uniform corridor from tile `
+    + `${Math.floor(home.x / 32)},${Math.floor(home.y / 32)}`);
+
+  if (corridor) {
+    const c = corridor;
+    nw.input.axis = () => ({ x: c.dx, y: c.dy });
+    // The sim can move the player for reasons that have nothing to do with the
+    // input axis. A death respawn teleports them to the hall, and that measured
+    // 2934.8 px on 1 run in 10 — against an expected ~90 — which makes a 1.10x
+    // comparison meaningless in whichever direction it happens to land. So:
+    // clear the field and top the player up first, and then VALIDATE each
+    // measurement against the length of the corridor it was walked down. A run
+    // longer than the corridor did not come from walking.
+    const MAXPX = RUN * 32;
+    const reset = () => {
+      nw.sys.hordes?.clearField?.();
+      state.player.hp = playerMaxHp(state);
+      nw.player.teleport(c.x, c.y);
+      state.player.x = c.x; state.player.y = c.y;
+    };
+    const travel = () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        reset();
+        nw.step(18);
+        const d = Math.hypot(state.player.x - c.x, state.player.y - c.y);
+        if (d <= MAXPX) return d;
+      }
+      return -1;
+    };
+    try {
+      clear();
+      const walkPlain = travel();
+      raise('quickening');
+      const walkFast = travel();
+      clear();
+      raise('miring');
+      const walkSlow = travel();
+      clear();
+
+      ok(walkPlain > 1 && walkPlain <= MAXPX,
+        `the player covers real ground by WALKING: ${walkPlain.toFixed(1)}px / 18 ticks`
+        + ` from tile ${Math.floor(c.x / 32)},${Math.floor(c.y / 32)} heading ${c.dx},${c.dy}`
+        + ` (terrain speed ${c.speed.toFixed(2)} throughout)`);
+      if (walkPlain > 1 && walkPlain <= MAXPX) {
+        const qDef = OMEN_DEFS.find((d) => d.kind === 'quickening')!;
+        const mDef = OMEN_DEFS.find((d) => d.kind === 'miring')!;
+        ok(walkFast > walkPlain,
+          `a Quickening carries them further (${walkFast.toFixed(1)} > ${walkPlain.toFixed(1)}px)`);
+        ok(walkSlow < walkPlain,
+          `a Miring bogs them down (${walkSlow.toFixed(1)} < ${walkPlain.toFixed(1)}px)`);
+        // And the SIZE of the change is the configured one. Without this, any
+        // accidental coupling that made the player faster would pass.
+        const rq = walkFast / walkPlain, rm = walkSlow / walkPlain;
+        ok(Math.abs(rq - qDef.mul) < 0.04, `and it is the configured ${qDef.mul}x (measured ${rq.toFixed(3)}x)`);
+        ok(Math.abs(rm - mDef.mul) < 0.04, `...as is the Miring's ${mDef.mul}x (measured ${rm.toFixed(3)}x)`);
+      }
+    } finally {
+      nw.input.axis = savedAxis;
+      nw.player.teleport(home.x, home.y);
+      state.player.x = home.x; state.player.y = home.y;
+      clear();
+    }
+  }
+  }
+
+  // ---- the ground itself: a real harvest, through the real path ----
+  // The yield modifier lives inside GatherSystem.finish(), so the only probe
+  // that proves it is a harvest of the same node twice, with Math.random pinned
+  // so the only difference between the two numbers is the omen.
+  //
+  // Pinned to 0.999, NOT to 0 like the Loom's doubleYieldChance probe. The
+  // thinning uses stochastic rounding — `floor(x) + (random() < frac ? 1 : 0)` —
+  // and `0 < frac` is TRUE for every fractional part, so a stub of 0 makes the
+  // famine round UP every time and a 2-item harvest thins to exactly 2. That is
+  // what the first version of this assertion measured, and it looked like the
+  // wiring was missing when it was the stub inverting the rounding. 0.999 floors
+  // instead, and floor(n x 0.65) < n for every n >= 1.
+  state.player.inv.axe_flint = (state.player.inv.axe_flint ?? 0) + 2;
+  state.player.inv.pick_flint = (state.player.inv.pick_flint ?? 0) + 2;
+  // Finding a feature tile is NOT the same as finding one this player can work:
+  // the tile may be unreachable, or need a tool class we are not carrying. The
+  // first version of this probe took the first feature within 6 tiles, could not
+  // start on it, and reported -1 — and because ok() throws, that took the
+  // move-speed section down with it and left main.ts's wiring unverified. So try
+  // candidates until one actually STARTS, and treat "started" as the test for
+  // whether a node is usable.
+  const back = { x: nw.player.x, y: nw.player.y };
+  const gtx = Math.floor(nw.player.x / 32), gty = Math.floor(nw.player.y / 32);
+  const cands: { tx: number; ty: number }[] = [];
+  for (let r = 1; r <= 8; r++)
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++)
+        if (Math.max(Math.abs(dx), Math.abs(dy)) === r && nw.world.activeFeatureAt(gtx + dx, gty + dy))
+          cands.push({ tx: gtx + dx, ty: gty + dy });
+
+  let node: { tx: number; ty: number } | null = null;
+  for (const c of cands.slice(0, 24)) {
+    // Stand BESIDE the node — a tree tile is not standable, and teleporting into
+    // one silently leaves the player where they were.
+    const cx = (c.tx + 0.5) * 32, cy = (c.ty + 0.5) * 32;
+    let stood = false;
+    for (const [ox, oy] of [[22, 0], [-22, 0], [0, 22], [0, -22]]) {
+      if (!nw.world.canStand(cx + ox, cy + oy)) continue;
+      nw.player.teleport(cx + ox, cy + oy);
+      stood = true;
+      break;
+    }
+    if (!stood) continue;
+    nw.step(1);
+    nw.sys.gather.active = null;
+    nw.sys.gather.tryStart();
+    if (nw.sys.gather.active) { nw.sys.gather.active = null; node = c; break; }
+  }
+  ok(node !== null, `found a node this player can actually work (${cands.length} feature tiles within 8)`);
+
+  if (node) {
+    const yieldSum = () => Object.values(state.player.inv as Record<string, number>)
+      .reduce((s: number, n: number) => s + n, 0)
+      + state.drops.reduce((s: number, d: any) => s + d.n, 0);
+    const harvest = () => {
+      for (const k of Object.keys(state.depleted)) delete state.depleted[k];
+      nw.chunks.rebakeTile(node!.tx, node!.ty);
+      nw.sys.gather.active = null;
+      nw.step(1);
+      nw.sys.gather.tryStart();
+      const a = nw.sys.gather.active;
+      if (!a) return -1;
+      const before = yieldSum();
+      const realRandom = Math.random;
+      Math.random = () => 0.999;
+      try { (nw.sys.gather as any).finish(a); } finally { Math.random = realRandom; }
+      nw.sys.gather.active = null;
+      return yieldSum() - before;
+    };
+    clear();
+    const gotPlain = harvest();
+    raise('famine');
+    const gotStarved = harvest();
+    clear();
+    ok(gotPlain > 0, `a real harvest of that node yields ${gotPlain} items`);
+    ok(gotStarved < gotPlain,
+      `and a Famine thins that same node's harvest: ${gotPlain} -> ${gotStarved} items`);
+    nw.player.teleport(back.x, back.y);
+    nw.sys.gather.active = null;
+  }
+  clear();
+}
+
+async function testLensShowsOmens(nw: any) {
+  if (typeof document === 'undefined') { ok(true, 'no DOM — skipping'); return; }
+  const { OMEN_DEFS } = await import('./omens');
+  const lens = nw.lens, om = nw.omens;
+  if (!lens || !om) { ok(false, 'lens/omens missing from the test seam'); return; }
+  const wasOpen = lens.isOpen();
+  const saved = om.active.slice();
+  try {
+    lens.setOpen(true);
+    const tabs = document.querySelectorAll('#nw-observatory [data-tab]');
+    const threads = tabs.length - 1;
+
+    // The control FIRST: with nothing active the panel must say so, and must not
+    // already contain the word it will contain afterwards.
+    om.active.length = 0;
+    (tabs[threads] as HTMLElement).click();
+    lens.refresh(true);
+    const body = document.getElementById('nw-lens-body') as HTMLElement;
+    const quiet = body.innerHTML;
+    ok(quiet.includes('OMENS'), 'the THREADS tab has an OMENS section');
+    ok(quiet.includes('the world is steady'), '...which says so when nothing is up');
+    ok(!quiet.includes('Famine'), 'and does NOT name an omen that is not active');
+
+    const def = OMEN_DEFS.find((d) => d.kind === 'famine')!;
+    om.active.push({ kind: 'famine', def, t0: nw.state.clock, until: nw.state.clock + 90, from: 20, to: 4, sigma: -6 });
+    lens.refresh(true);
+    const loud = body.innerHTML;
+    ok(loud.includes('Famine'), 'an active omen is named in the panel');
+    ok(loud.includes('resourceYield'), '...with the target it is multiplying');
+    ok(!loud.includes('the world is steady'), '...and the steady line is gone');
+
+    // The half a player sees without opening anything. A multiplier that only
+    // exists inside a diagnostics drawer is indistinguishable from a bug.
+    const chip = document.getElementById('nw-omens') as HTMLElement;
+    ok(chip !== null, 'the HUD carries an omen chip');
+  } finally {
+    om.active.length = 0;
+    for (const o of saved) om.active.push(o);
+    lens.setOpen(wasOpen);
+  }
+}
 
 /** Run all registered tests sequentially. Returns { pass, fail, total, report }. */
 export async function runAll(nw: any): Promise<{ pass: number; fail: number; total: number; report: string }> {
