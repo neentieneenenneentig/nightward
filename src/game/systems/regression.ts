@@ -3580,6 +3580,18 @@ async function testVitalsDecay(nw: any) {
   // Pin network so decay rates are deterministic regardless of live connection
   const net = nw.ctx.net;
   const saved = { downlink: net.snap.downlink, rtt: net.snap.rtt, effectiveType: net.snap.effectiveType, timeOfDay: net.snap.timeOfDay };
+  // ...and pin the WORLD, which this test never did. It measures 60 s of decay
+  // while night hordes are live: a foe that kills the player triggers
+  // VitalsSystem.onRespawn, which sets vigor to a flat 50, and the assertion
+  // then reports ~50 points of "decay" against an expected 4. Traced with a
+  // property-setter trap after it went red 1 run in 6:
+  //   set vigor <- VitalsSystem.onRespawn <- CombatSystem.damagePlayer
+  //   <- HordeSystem.updateFoe <- sim
+  // God mode blocks combat death without touching the decay path under test.
+  const savedGod = state.god;
+  const savedFoes = nw.sys.hordes.foes.slice();
+  state.god = true;
+  nw.sys.hordes.foes.length = 0;
   net.snap.downlink = 10;     // ≥10 Mbps → vigorDecay ×1.0
   net.snap.rtt = 50;          // 20–50ms → simSpeed ×1.0
   net.snap.effectiveType = '4g'; // → resolveDecay ×1.0
@@ -3589,8 +3601,11 @@ async function testVitalsDecay(nw: any) {
   p.vigor = 100;
   p.resolve = 100;
   nw.step(60 * 30); // 60s at 30Hz
-  // Restore network
+  // Restore network and world
   Object.assign(net.snap, saved);
+  state.god = savedGod;
+  nw.sys.hordes.foes.length = 0;
+  for (const f of savedFoes) nw.sys.hordes.foes.push(f);
   ok(p.vigor < 100, `vigor decayed after 60s: ${p.vigor.toFixed(1)}`);
   ok(p.resolve < 100, `resolve decayed after 60s: ${p.resolve.toFixed(1)}`);
   // With network pinned to neutral: vigor decay = 60 × (1/15) × 1.0 = 4 pts

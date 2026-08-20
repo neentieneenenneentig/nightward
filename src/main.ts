@@ -130,7 +130,18 @@ async function boot() {
   };
 
   // G1: particle system — pre-allocated pool for gather poofs, fire embers, slash trails, etc.
-  const particles = new ParticleSystem(stage.app.stage, 400);
+  //
+  // Parented to stage.world, NOT to app.stage. Every call site passes WORLD
+  // pixels (the module's own doc comment says so, and the wisp/ember/heal sites
+  // all derive their coordinates from the player's world position), but
+  // app.stage is screen space — the camera only ever transforms stage.world.
+  // So every particle in the game was being drawn at its world coordinate as
+  // though that were a screen coordinate, which is correct only while the
+  // player is near the origin. That is where a run starts, which is why this
+  // survived since G1: walk a few hundred tiles and the effects silently leave
+  // the viewport. Found while capturing B6 gate shots — the level-up burst drew
+  // its rings (views.fx, world-space) and none of its motes.
+  const particles = new ParticleSystem(stage.world, 400);
   ctx.particles = particles;
 
   // G1: post-processing — bloom, color grading, vignette (between world and UI)

@@ -122,7 +122,10 @@ export class ParticleSystem {
     this.particles = [];
     this.container = new Container();
     this.container.label = 'particles';
-    this.container.zIndex = 50; // above entities, below UI
+    // Inside stage.world, added after `entities`, so it draws above every foe,
+    // building and drop. The zIndex only matters if the parent sorts; keeping
+    // it high means either ordering rule puts particles on top.
+    this.container.zIndex = 1e9;
     parent.addChild(this.container);
 
     // Pre-allocate particles
