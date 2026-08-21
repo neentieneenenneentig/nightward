@@ -16,6 +16,7 @@ import { itemDef, itemName, rolledOf } from '../data/items';
 import { slotOf } from '../rules';
 import { CFG } from '../data/config';
 import { affixLines, escapeHtml, primaryStat, rarityDef, rarityOf } from './rarity';
+import { matchWeaves, threadById } from '../data/weaves';
 
 let host: HTMLElement | null = null;
 
@@ -75,6 +76,26 @@ export function itemTooltipHtml(state: any, id: string): string {
     if (rolledFx.has(fx)) continue;
     body.push(`<div class="nw-tip-affix" style="color:#9ec7a6">${escapeHtml(fx.replace(/_/g, ' '))}</div>`);
   }
+
+  // ---- A5: sockets & weaves ----
+  if (rolled && rolled.sockets > 0) {
+    const slotted = state.sockets?.[id] ?? [];
+    let row = '';
+    for (let i = 0; i < rolled.sockets; i++) {
+      const t = slotted[i];
+      row += t
+        ? `<span class="nw-socket" style="color:${threadById(t).color}">${threadById(t).glyph}</span>`
+        : `<span class="nw-socket empty">·</span>`;
+    }
+    body.push(`<div class="nw-tip-sockets">${row}<span class="nw-tip-socklabel">${slotted.length}/${rolled.sockets} socketed</span></div>`);
+    for (const w of matchWeaves(slotted)) {
+      body.push(`<div class="nw-tip-weave">✦ ${escapeHtml(w.name)} — ${escapeHtml(w.desc)}</div>`);
+    }
+  }
+  if (d.thread) {
+    body.push(`<div class="nw-tip-thread">a ${escapeHtml(threadById(d.thread).name)} — sockets into rolled gear, in order</div>`);
+  }
+
   if (body.length) h += `<div class="nw-tip-body">${body.join('')}</div>`;
 
   // ---- the comparison ----

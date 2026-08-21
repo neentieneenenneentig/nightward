@@ -3,11 +3,12 @@
 import { type RGB, hex } from '../../engine/procgen/palette';
 import type { RarityId } from './rarity';
 import type { GearMod } from './affixes';
+import type { ThreadId } from './weaves';
 
 export type IconKind =
   | 'log' | 'plank' | 'stone' | 'ore' | 'bar'
   | 'herb' | 'berry' | 'axe' | 'pick' | 'sword' | 'potion' | 'armor'
-  | 'ring' | 'amulet' | 'charm' | 'torch' | 'charcoal';
+  | 'ring' | 'amulet' | 'charm' | 'torch' | 'charcoal' | 'thread';
 
 export interface ItemDef {
   id: string;
@@ -31,6 +32,8 @@ export interface ItemDef {
   effects?: string[];
   /** C4: boss relic — unique drop from a specific lord (6th equip slot) */
   relic?: string;
+  /** A5: this item is a thread that sockets into rolled gear. */
+  thread?: ThreadId;
   /** W7: soul XP granted when fed to a soul-gear slot. Materials use MaterialDef.xpValue instead. */
   soulXp?: number;
 }
@@ -140,6 +143,14 @@ export const ITEMS: Record<string, ItemDef> = Object.fromEntries([
   I('wispflower', 'Wispflower', 'herb', '#6644cc', '#aaddff'),
   I('ancient_oak', 'Ancient Oak', 'log', '#3a2a10', '#88aa44'),
   I('echo_dust', 'Echo Dust', 'ore', '#aaaacc', '#ffffff'),
+
+  // ---- A5: Threads — the echo's residue, socketed into rolled gear ---------
+  // Not gear: they carry no stat column, so they never roll and never equip.
+  I('thread_rime', 'Rime Thread', 'thread', '#a9c8ea', '#ffffff', { thread: 'rime' }),
+  I('thread_ember', 'Ember Thread', 'thread', '#e8844a', '#ffd27a', { thread: 'ember' }),
+  I('thread_null', 'Null Thread', 'thread', '#8a4fc4', '#ffb0ff', { thread: 'null' }),
+  I('thread_tide', 'Tide Thread', 'thread', '#3fb0bd', '#eaffff', { thread: 'tide' }),
+  I('thread_thorn', 'Thorn Thread', 'thread', '#5aa24a', '#c9e6b0', { thread: 'thorn' }),
 ].map((d) => [d.id, d]));
 
 // ---------------------------------------------------------------------------
@@ -191,6 +202,8 @@ export interface RolledItem {
   /** "Keen Iron Blade of the Ember" — prefix + base name + suffix. */
   name: string;
   affixes: RolledAffix[];
+  /** A5: how many threads this piece can hold (0–3, by rarity). */
+  sockets: number;
   /** state.clock at the moment it was rolled, for the run trophy. */
   bornT: number;
 }
@@ -229,6 +242,12 @@ export function itemName(id: string): string {
 /** The roll behind a uid, or undefined for an ordinary authored item. */
 export function rolledOf(id: string): RolledItem | undefined {
   return ROLLED.get(id);
+}
+
+/** A5: the thread an item carries, or undefined. Authored thread items are the
+ *  only carriers; nothing rolled ever has a `thread` column. */
+export function threadOf(id: string): ThreadId | undefined {
+  return ITEMS[id]?.thread;
 }
 
 export function registerRolled(r: RolledItem, merged: ItemDef) {

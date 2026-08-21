@@ -338,7 +338,7 @@ export class HordeSystem {
       f.telegraphT -= dt;
       if (f.telegraphT <= 0) {
         const dpNow = Math.hypot(p.x - f.x, (p.y - 10) - f.y);
-        if (dpNow < 24 + CFG.combat.telegraphSlackPx) this.ctx.damagePlayer(f.dmg, f.def.name);
+        if (dpNow < 24 + CFG.combat.telegraphSlackPx) this.ctx.damagePlayer(f.dmg, f.def.name, f);
         else this.ctx.log?.push('combat', `${f.def.name} lunges and misses`, state.clock);
       }
       return;
@@ -792,6 +792,8 @@ export class HordeSystem {
     // S1: only player-swing & echo kills feed vitals — tower kills do NOT
     if (feedVitals) {
       this.ctx.vitals?.onKill?.(!!f.def.boss);
+      // A5: Hollow Song stacks on top of the S1 resolve-per-kill
+      this.ctx.weaves?.onKill?.();
     }
     // W6: track kills for scoreboard
     this.ctx.scoreboard?.onKill?.(!!f.def.boss);

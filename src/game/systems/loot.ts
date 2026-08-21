@@ -22,6 +22,7 @@ import {
   LOOT_BANDS, RARITIES, RARITY_ORDER, rarityDef, rarityIndex,
   type LootBand, type RarityId,
 } from '../data/rarity';
+import { rollSocketCount } from '../data/weaves';
 
 let uidSeq = 0;
 
@@ -235,7 +236,11 @@ export function rollItem(baseId: string, opts: RollOpts = {}): string {
   const uid = `${baseId}#${(uidSeq++).toString(36)}`;
   const name = nameFor(base, chosen);
   const rolled: RolledItem = {
-    uid, base: baseId, rarity, name, affixes: chosen, bornT: opts.clock ?? 0,
+    uid, base: baseId, rarity, name, affixes: chosen,
+    // A5: sockets roll with the item. Plain never reaches this line (it returns
+    // the authored id above), so a Plain item's zero sockets need no special case.
+    sockets: rollSocketCount(rarity),
+    bornT: opts.clock ?? 0,
   };
   registerRolled(rolled, mergeDef(base, rarity, chosen, uid, name));
   return uid;

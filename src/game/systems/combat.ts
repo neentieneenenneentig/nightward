@@ -192,7 +192,10 @@ export class CombatSystem {
     const baseDmg = CFG.player.baseDmg + equippedWeaponDmg(state) + Math.floor(skillLevel(state, 'combat') / CFG.combat.dmgBonusPerLevel);
     // C3: Loom melee damage modifier and arc width
     const loomDmgMul = loomMods ? (1 + (loomMods.meleeDmgPct ?? 0) / 100) : 1;
-    const dmg = Math.round(baseDmg * totalMul * loomDmgMul);
+    // A5: The Long Night weave — flat +25%, but only after dusk. The getter
+    // returns 1 by day, so a daylight swing is bit-identical to pre-A5.
+    const weaveDmgMul = this.ctx.weaves?.nightDmgMul?.() ?? 1;
+    const dmg = Math.round(baseDmg * totalMul * loomDmgMul * weaveDmgMul);
     const loomArcMul = loomMods ? (1 + (loomMods.arcWidthPct ?? 0) / 100) : 1;
     const arc = (CFG.combat.arcDeg * Math.PI * loomArcMul) / 180;
     // hit math anchors at the feet — same anchor as foe positions, so point-blank
@@ -457,8 +460,10 @@ export class CombatSystem {
     }
   }
 
-  /** Enemy → player damage, plus death handling. */
-  damagePlayer(dmg: number, source?: string) {
+  /** Enemy → player damage, plus death handling. `sourceFoe` is the melee
+   *  attacker, when one exists — Ironwake reflects only against a body, not a
+   *  fire or a hurled bolt. */
+  damagePlayer(dmg: number, source?: string, sourceFoe?: Foe) {
     const { state, player, toast } = this.ctx;
     if (state.gameOver) return;
     if (state.god) { this.ctx.log?.push('combat', `${source ?? 'Something'} hits you for 0 (god mode)`, state.clock); return; }
@@ -492,6 +497,17 @@ export class CombatSystem {
     if (state.player.equip?.amulet) {
       const lvl = awardSoulXp(state, 'amulet', CFG.soulgear.amuletXpPerHit);
       if (lvl) { toast(`Your amulet hums — soul level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Amulet reached soul level ${lvl}`, state.clock); }
+    }
+    // A5: Ironwake — melee attackers take a share of their own hit back, and the
+    // reflected damage stuns them. Applied before the death check so a lethal hit
+    // still exchanges. Reads the weave so a run without it pays only a null check.
+    const reflect = this.ctx.weaves?.reflect?.();
+    if (reflect && sourceFoe && taken > 0) {
+      const back = Math.max(1, Math.round(taken * reflect.pct));
+      sourceFoe.hp -= back;
+      const ef = sourceFoe as any;
+      ef._stunnedUntil = Math.max(ef._stunnedUntil ?? 0, state.clock + reflect.stunSec);
+      this.ctx.log?.push('weave', `Ironwake — ${back} back at ${sourceFoe.def?.name ?? 'the attacker'}, stunned for ${reflect.stunSec}s`, state.clock);
     }
     if (state.player.hp > 0) return;
 

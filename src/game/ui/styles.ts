@@ -525,6 +525,19 @@ html, body, #nw-observatory, .nw-pbody {
 .nw-tip-delta.down { color: #e07a6e; }
 .nw-tip-delta.same { color: var(--ink-dim); }
 
+/* ---- A5: sockets & weaves in the tooltip --------------------------------- */
+.nw-tip-sockets { margin-top: 3px; display: flex; align-items: center; gap: 4px; }
+.nw-socket {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 3px;
+  background: #14100b; box-shadow: inset 0 0 0 1px var(--metal);
+  font-size: 10px; line-height: 1;
+}
+.nw-socket.empty { color: var(--ink-dim); box-shadow: inset 0 0 0 1px rgba(147,121,74,.35); }
+.nw-tip-socklabel { color: var(--ink-dim); font-size: 10px; margin-left: 3px; }
+.nw-tip-weave { margin-top: 2px; color: #e8c34a; }
+.nw-tip-thread { margin-top: 2px; color: #9ec7a6; }
+
 /* ---- A4: the orbs -------------------------------------------------------
    HP bottom-left, Resolve bottom-right, Vigor as a ring around HP. Pure
    radial gradients and a clip-path fill — no images, pillar 1 intact.

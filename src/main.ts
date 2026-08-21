@@ -35,6 +35,7 @@ import { NetworkSystem } from './game/systems/network';
 import { VitalsSystem } from './game/systems/vitals';
 import { LifespanSystem } from './game/systems/lifespan';
 import { LoomSystem } from './game/systems/loom';
+import { WeaveSystem } from './game/systems/weaves';
 import { ScoreboardSystem } from './game/systems/scoreboard';
 import { SoulFeedSystem } from './game/systems/soulfeed';
 import { MaterialEffectSystem } from './game/systems/materialEffects';
@@ -136,7 +137,7 @@ async function boot() {
     nightIndex: () => phase(state.clock).dayIndex,
     toast: (m: string, k?: any) => ui.toast(m, k),
     onGold: () => {},
-    damagePlayer: (d: number, src?: string) => combat.damagePlayer(d, src),
+    damagePlayer: (d: number, src?: string, foe?: any) => combat.damagePlayer(d, src, foe),
     onHallDestroyed: () => triggerGameOver('hall_fallen'),
   };
 
@@ -218,6 +219,12 @@ async function boot() {
   // C3: The Loom — per-run passive tree, points from nights survived
   const loom = new LoomSystem(ctx);
   ctx.loom = loom;
+
+  // A5: Sockets & Weaves — threads socket into rolled gear, in order, and a
+  // recognised sequence completes a weave. Pure passive reads (no per-frame
+  // update); combat/vitals/worldbosses consult its typed bonus getters.
+  const weaves = new WeaveSystem(ctx);
+  ctx.weaves = weaves;
 
   // W6: Scoreboards — connection uptime, death scorecard, leaderboard
   const scoreboard = new ScoreboardSystem(ctx);
@@ -480,7 +487,7 @@ async function boot() {
     // B3.a test seam: movement is composed inside sim(), so the Gauntlet can only
     // observe it by driving the axis. Exposed for that; nothing in the game reads it.
     input,
-    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, abilities, vitals, lifespan, loom, scoreboard, net, drops }, world, player, gen, chunks,
+    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, abilities, vitals, lifespan, loom, scoreboard, net, drops, weaves }, world, player, gen, chunks,
     lens, chronicle, omens,   // N4.2/N4.3 test seam: drawer, series store, omens
     minimap,                  // A4 test seam
     mods: { rules: rulesMod, loot: lootMod, items: itemsMod, effects: effectsMod },  // A1 test seam

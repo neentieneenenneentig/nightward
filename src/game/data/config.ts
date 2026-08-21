@@ -177,6 +177,26 @@ export const CFG = {
     fizzleToastCooldownSec: 2.0, // don't spam "not enough resolve" on a held key
   },
 
+  // A5: Sockets & Weaves. Gear rolls 0–3 sockets by rarity; threads socket in
+  // order; a recognised sequence completes a weave. The socket RANGES are data
+  // (data/weaves.ts, alongside the rarity tables they decorate); the bonus
+  // NUMBERS live here with every other balance knob.
+  weaves: {
+    enabled: true,           // escape hatch, same terms as CFG.loot.enabled
+    // Threads drop from domain lords (the elite of this build until A2). Two
+    // per kill, matching the lord's element. A full clear of five lords is ten
+    // threads — enough for Long Night AND Ironwake, or Hollow Song plus two.
+    threadsPerLordKill: 2,
+    // The Long Night — Rime · Rime · Ember. Flat damage multiplier, night only.
+    longNightDmgMul: 1.25,
+    // Hollow Song — Null · Tide. Extra Resolve per kill, on top of the S1 base.
+    hollowSongResolve: 4,
+    // Ironwake — Thorn · Thorn. Melee attackers take this share of the damage
+    // they deal back, and are stunned for this long.
+    ironwakeReflectPct: 0.30,
+    ironwakeStunSec: 0.8,
+  },
+
   // C3: The Loom — per-run passive tree point income and keystone magnitudes.
   //
   // B3.a: the keystone numbers used to be literals scattered across loom.ts,

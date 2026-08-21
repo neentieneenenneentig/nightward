@@ -80,6 +80,10 @@ export interface GameState {
   worldBosses: WorldBoss[];
   /** B5: loot lying on the ground, waiting to be walked over. */
   drops: GroundDrop[];
+  /** A5: socketed threads on rolled gear. Keyed by rolled item uid; each entry
+   *  is the ORDERED thread kinds that item currently holds. Order is the whole
+   *  game — a weave is a sequence, and reordering breaks it (see data/weaves.ts). */
+  sockets: Record<string, string[]>;
   region: string;                      // region key the player is currently in
   explored: Record<string, number>;    // region key → 1 (for fog / future minimap)
   nightsSurvived: number;
@@ -169,6 +173,7 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     buildings: [],
     worldBosses: [],
     drops: [],
+    sockets: {},
     region: '',
     explored: {},
     nightsSurvived: 0,

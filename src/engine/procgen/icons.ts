@@ -121,6 +121,16 @@ export function makeIcon(spec: IconSpec): HTMLCanvasElement {
       p.rect(3, 8, 8, 12, c); p.rect(7, 6, 12, 10, darken(c, 8)); p.rect(4, 5, 9, 8, c);
       p.set(5, 9, a); p.set(9, 7, a); p.set(6, 6, lighten(a, 12));
       break;
+    case 'thread':
+      // a diagonal strand with a knot of accent at the low end — procgen like
+      // everything else, no assets (pillar 1)
+      for (let i = 0; i < 7; i++) {
+        p.set(9 - i, 3 + i, c);
+        p.set(10 - i, 3 + i, darken(c, 14));
+      }
+      p.set(2, 11, a); p.set(3, 10, a); p.set(4, 10, lighten(a, 18)); // knot
+      p.set(3, 12, darken(a, 12)); p.set(2, 12, lighten(c, 10));
+      break;
     default:
       p.rect(4, 4, 11, 11, c);
   }

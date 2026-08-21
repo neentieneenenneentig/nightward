@@ -235,6 +235,12 @@ export class WorldBossSystem {
     // A1: a domain lord is the only ordinary route to a Sovereign — floor
     // Hallowed, ceiling Sovereign. See LOOT_BANDS in data/rarity.ts.
     this.ctx.drops.spawn(rollLoot(def.loot), b.x, b.y, { spread: 1.8, band: 'lord' });
+    // A5: a lord leaves its element's thread — the elite drop this build has,
+    // until A2's elites take over the job.
+    const threadItem = this.ctx.weaves?.threadForBoss?.(b.defId);
+    if (threadItem) {
+      this.ctx.drops.spawn([{ id: threadItem, n: CFG.weaves.threadsPerLordKill }], b.x, b.y, { spread: 1.2 });
+    }
     if (fromPlayer) {
       const lvl = addXp(state, 'combat', def.xp);
       if (lvl) { levelUpFlourish(this.ctx); this.ctx.toast(`Combat reached level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Combat reached level ${lvl}`, state.clock); }
@@ -245,6 +251,8 @@ export class WorldBossSystem {
     }
     // S1: a boss kill always feeds vitals — never AFK (locked spec)
     this.ctx.vitals?.onKill?.(true);
+    // A5: Hollow Song stacks on top of the S1 resolve-per-kill
+    this.ctx.weaves?.onKill?.();
     // Review fix: this call was missing entirely — hordes.ts calls
     // scoreboard.onKill on every foe death, but world bosses (the only
     // enemies with `boss: true`) never went through that path, so
