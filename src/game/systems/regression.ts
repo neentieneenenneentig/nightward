@@ -3623,8 +3623,17 @@ async function testEchoBounds(nw: any) {
     ok(hi.projectiles >= 1 && hi.orbCount >= 1, `${def.id}: counts stay ≥ 1`);
   }
 
-  // rolled echo damage stays inside the D5 band: base × [dmgRow.min, dmgRow.max]
+  // Rolled echo damage stays inside the D5 band: base × [dmgRow.min, dmgRow.max].
+  //
+  // This band is D5 and nothing else, so everything else that scales an echo has
+  // to come off first. Since the C4 repair `echoes.roll()` also applies
+  // resonance_boost (×1.25) — and this test inherits whatever the previous test
+  // left the player wearing. With the Nullmaw relic or an 'of Resonance' suffix
+  // still on, a top-of-band roll lands at 12 in a [1, 10] band. It needs both
+  // coincidences at once, which is why five green runs missed it and a shifted
+  // RNG stream found it.
   const { NET_GAME_MAP } = await import('../data/network');
+  const { activeEffects } = await import('./effects');
   const dmgRow = NET_GAME_MAP.find((m: any) => m.target === 'damage')!;
   const thorn = ECHOES.find((e) => e.id === 'thornring')!;
   const base = statsFor(thorn, 1).dmg;
@@ -3632,20 +3641,37 @@ async function testEchoBounds(nw: any) {
   const maxDmg = Math.round(base * dmgRow.max) + 1;
   const { ENEMIES } = await import('../data/enemies');
   const dummyDef = ENEMIES.find((e: any) => !e.boss)!;
-  state.god = true; state.player.hp = 100;
-  state.player.echoes = { thornring: 1 };
-  const es: any = sys.echoes;
-  for (let i = 0; i < 10; i++) {
-    const foe: any = makeDummyFoe(nw, dummyDef, 30, 0);
-    sys.hordes.foes.push(foe);
-    es.cooldowns = {}; // force an immediate fire
-    nw.step(3);
-    const dealt = foe.maxHp - foe.hp;
-    ok(dealt >= minDmg && dealt <= maxDmg, `echo roll ${i + 1} within D5 band: ${dealt} ∈ [${minDmg}, ${maxDmg}]`);
-    sys.hordes.foes = sys.hordes.foes.filter((f: any) => f.uid !== foe.uid);
+
+  const snap = snapshotPlayer(nw);
+  const savedSockets = state.sockets;
+  try {
+    await wearOnly(nw, []);
+    state.sockets = {};
+    // Assert the isolation rather than assuming it: if a future relic, weave or
+    // affix starts feeding resonance from somewhere this does not clear, that is
+    // a red test here, not a mysteriously wider band.
+    ok(!activeEffects(state).has('resonance_boost'),
+      'D5 band is measured with resonance_boost OFF — the band is D5 and nothing else');
+
+    state.god = true; state.player.hp = 100;
+    state.player.echoes = { thornring: 1 };
+    const es: any = sys.echoes;
+    for (let i = 0; i < 10; i++) {
+      const foe: any = makeDummyFoe(nw, dummyDef, 30, 0);
+      sys.hordes.foes.push(foe);
+      es.cooldowns = {}; // force an immediate fire
+      nw.step(3);
+      const dealt = foe.maxHp - foe.hp;
+      ok(dealt >= minDmg && dealt <= maxDmg, `echo roll ${i + 1} within D5 band: ${dealt} ∈ [${minDmg}, ${maxDmg}]`);
+      sys.hordes.foes = sys.hordes.foes.filter((f: any) => f.uid !== foe.uid);
+    }
+    state.player.echoes = {};
+  } finally {
+    // ok() throws, so these belong here and not after the loop.
+    state.sockets = savedSockets;
+    state.god = false;
+    snap.restore();
   }
-  state.player.echoes = {};
-  state.god = false;
 }
 
 async function testNetMapIntegrity(nw: any) {
