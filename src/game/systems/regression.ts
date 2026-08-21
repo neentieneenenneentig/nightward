@@ -2489,18 +2489,28 @@ async function testItemEffects(nw: any) {
   }
   ok(allValid, 'all item effect keys resolve to registered effects');
 
-  // Test thorns_reflect applies damage back
+  // This block used to call applyEffect('thorns_reflect', ...) and assert it
+  // returned 6 damage. It did — and it was the only thing in the game that ever
+  // called it. Nothing dispatched that handler in play, so the assertion
+  // certified a hook that had no path to the screen, and thorns stayed placebo
+  // through C4, A1 and A5 behind a green suite.
+  //
+  // The lesson is bigger than thorns: a test that drives a handler DIRECTLY
+  // proves the handler works, never that the game calls it. What replaces it is
+  // the rule that makes such a mistake impossible to repeat — handlers are
+  // inert flags, so a hook implemented only in the registry now fails loudly
+  // and immediately. The behaviour itself is asserted through the real damage
+  // path in 'Item effects - the seven dormant hooks now reach the game'.
   const dummyFoe = { uid: 99999, hp: 100, maxHp: 100, dmg: 10, atkT: 0, telegraphT: 0, animT: 0,
     def: { id: 'dummy', name: 'Dummy', hp: 100, dmg: 10, speed: 1, weight: 1, nightMin: 0 },
     x: 0, y: 0, px: 0, py: 0 };
   const reflectDmg = applyEffect('thorns_reflect', {
     state: nw.state, player: nw.state.player, foe: dummyFoe as any, damage: 20,
   });
-  ok(typeof reflectDmg === 'number' && reflectDmg > 0,
-    `thorns_reflect returns ${reflectDmg} damage (30% of 20 = 6)`);
-  ok(dummyFoe.hp < 100, `thorns reflected damage to foe (HP: ${dummyFoe.hp})`);
-
-  ok(true, 'item effects test completed');
+  eq(reflectDmg, undefined,
+    'a registered handler is an inert flag — implementing a hook there and nowhere else is now a red test');
+  eq(dummyFoe.hp, 100,
+    'CONTROL: ...and dispatching one touches nothing, which is exactly why applyEffect could never be the seam');
 }
 
 async function testSilverStarCrafting(nw: any) {
@@ -5655,6 +5665,7 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Abilities - the bar slots itself, costs Resolve, refuses for free', fn: testAbilityBar },
   { name: 'Abilities - all five empowered forms reach the world', fn: testAbilityActives },
   // ---- A5: Sockets & Weaves ----
+  { name: 'Item effects - the seven dormant hooks now reach the game', fn: testDormantEffectsNowLive },
   { name: 'Weaves - threads, sequences, and order is load-bearing', fn: testWeaveData },
   { name: 'Weaves - slotting consumes and returns, reorder breaks the weave', fn: testWeaveSocketing },
   { name: 'Weaves - all three bonuses reach the live game', fn: testWeaveBonuses },
@@ -6880,6 +6891,11 @@ async function testAbilityBar(nw: any) {
   const A: any = sys.abilities;
   const { echoById } = await import('../data/echoes');
   state.gameOver = false;
+  // God mode keeps a stray night foe from ending the run mid-test. It MUST be
+  // restored: this file's tests share one live world, and a leaked `god = true`
+  // silently disarms every damage assertion that runs after it — which is how
+  // A5's Ironwake test came to measure nothing at all.
+  const savedGod = state.god;
   state.god = true;
 
   const savedEchoes = state.player.echoes;
@@ -6962,6 +6978,7 @@ async function testAbilityBar(nw: any) {
     state.player.echoes = savedEchoes;
     state.player.abilityBar = savedBar;
     state.player.resolve = savedResolve;
+    state.god = savedGod;
     A.readyAt = {}; A.lockUntil = 0;
   }
 }
@@ -6973,6 +6990,7 @@ async function testAbilityActives(nw: any) {
   const { ENEMIES } = await import('../data/enemies');
   const dummyDef = ENEMIES.find((e: any) => !e.boss)!;
   state.gameOver = false;
+  const savedGod = state.god;   // see the note in testAbilityBar above
   state.god = true;
 
   const savedEchoes = state.player.echoes;
@@ -7069,8 +7087,199 @@ async function testAbilityActives(nw: any) {
     state.player.echoes = savedEchoes;
     state.player.abilityBar = savedBar;
     state.player.resolve = savedResolve;
+    state.god = savedGod;
     A.readyAt = {}; A.lockUntil = 0;
     ES.orbEmpowerUntil = 0;
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// C4 REPAIR — the seven effect hooks that were registered and never consumed
+//
+// `registerEffect()` builds a registry; `applyEffect()` dispatches from it; and
+// nothing in the game has ever called `applyEffect()`. The eight LIVE hooks are
+// all read as `activeEffects(state).has(key)` at the site that cares. Seven had
+// a handler, an affix row, a tooltip label -- and no path to the screen. All
+// five domain-lord relics were placebo, and 350 of the 750 suffix weight in
+// A1's affix table did nothing.
+//
+// Every assertion below is a MATCHED PAIR: the effect on, then the same
+// measurement with it off. A one-sided "the number moved" would pass just as
+// happily if the number moved for some other reason, which is the failure mode
+// that let seven dead hooks sit behind a green suite for two milestones.
+// ---------------------------------------------------------------------------
+
+async function testDormantEffectsNowLive(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+  const { moveBurstMul } = await import('./effects');
+  const { ENEMIES } = await import('../data/enemies');
+  const dummy = ENEMIES.find((e: any) => !e.boss)!;
+  const p = state.player;
+
+  const snap = snapshotPlayer(nw);
+  const savedGod = state.god;
+  const savedFoes = sys.hordes.foes;
+  const savedSockets = state.sockets;
+  const savedGameOver = state.gameOver;
+  const savedBurst = state._moveBurstUntil;
+  const savedRoll = nw.ctx.net.rollDamageMul;
+  state.gameOver = false;
+  state.sockets = {};        // A5 weaves must not stand in for a C4 hook
+
+  const mkFoe = (dx = 0, dy = 0, hp = 400) => ({
+    uid: state.nextUid++, def: dummy,
+    x: p.x + dx, y: p.y + dy, px: p.x + dx, py: p.y + dy,
+    hp, maxHp: hp, dmg: 10, baseDmg: 10, atkT: 0, telegraphT: 0, animT: 0,
+  });
+
+  try {
+    // -- 1. thorns_reflect ---------------------------------------------------
+    // god mode OFF: damagePlayer early-returns under it, which is exactly how
+    // A5's reflect test came to measure nothing.
+    state.god = false;
+    for (const withRelic of [true, false]) {
+      await wearOnly(nw, []);
+      if (withRelic) p.relic = 'relic_thorn';
+      sys.hordes.foes = [];
+      const foe: any = mkFoe(20, 0);
+      p.hp = 200;
+      sys.combat.damagePlayer(10, 'test', foe);
+      const back = 400 - foe.hp;
+      if (withRelic) ok(back > 0, `thorns_reflect: the attacker takes ${back} back`);
+      else eq(back, 0, 'CONTROL: with no Thornwarden relic the attacker takes nothing back');
+    }
+    state.god = true;
+
+    // -- 2. fire_aura --------------------------------------------------------
+    // combat.update() also ticks the TOWERS, and by this point in the suite the
+    // world has some built near the Hall — they shot the control foe for 52 and
+    // turned a clean zero into a puzzle. Emptying the build list for the
+    // measurement leaves the aura as the only thing in the world that can burn.
+    {
+      const savedBuildings = state.buildings;
+      const burns: number[] = [];
+      try {
+        state.buildings = [];
+        for (const withRelic of [true, false]) {
+          await wearOnly(nw, []);
+          if (withRelic) p.relic = 'relic_cinder';
+          sys.hordes.foes = [];
+          const foe: any = mkFoe(24, 0);
+          sys.hordes.foes.push(foe);
+          // one tick period in slices, so the accumulator behaves as it does live
+          for (let i = 0; i < 8; i++) sys.combat.update(CFG.itemEffects.fireAuraSec / 4);
+          burns.push(400 - foe.hp);
+        }
+      } finally { state.buildings = savedBuildings; }
+      ok(burns[0] > 0, `fire_aura: a foe standing next to you burns for ${burns[0]}`);
+      eq(burns[1], 0, 'CONTROL: with no Cindermaw relic nothing burns');
+    }
+
+    // -- 3. chill_aura -------------------------------------------------------
+    // Same foe, same tile, same tick: the ONLY difference is the relic, so the
+    // distance it covers is directly proportional to the multiplier.
+    const walked: number[] = [];
+    for (const withRelic of [true, false]) {
+      await wearOnly(nw, []);
+      if (withRelic) p.relic = 'relic_rime';
+      sys.hordes.foes = [];
+      const foe: any = mkFoe(60, 0, 9999);
+      foe.dayMob = false;
+      sys.hordes.foes.push(foe);
+      sys.hordes.update(0.5);
+      walked.push(Math.hypot(foe.x - (p.x + 60), foe.y - p.y));
+    }
+    ok(walked[0] > 0 && walked[1] > 0, `chill_aura: the foe marched in both runs (${walked[0].toFixed(2)}px chilled, ${walked[1].toFixed(2)}px free)`);
+    ok(walked[0] < walked[1],
+      `chill_aura: a foe near you marches slower (${walked[0].toFixed(2)}px vs ${walked[1].toFixed(2)}px)`);
+
+    // -- 4. regen_boost ------------------------------------------------------
+    const healed: number[] = [];
+    for (const withRelic of [true, false]) {
+      await wearOnly(nw, []);
+      if (withRelic) p.relic = 'relic_tide';
+      sys.hordes.foes = [];
+      p.hp = 20;
+      const before = p.hp;
+      sys.combat.update(1.0);
+      healed.push(p.hp - before);
+    }
+    ok(healed[1] > 0, `regen_boost CONTROL: the day heals you at all (${healed[1].toFixed(3)} hp/s)`);
+    ok(healed[0] > healed[1],
+      `regen_boost: the Tideculler relic heals faster (${healed[0].toFixed(3)} vs ${healed[1].toFixed(3)} hp/s)`);
+
+    // -- 5. move_burst_on_kill ------------------------------------------------
+    for (const withRelic of [true, false]) {
+      await wearOnly(nw, []);
+      if (withRelic) p.relic = 'relic_tide';
+      sys.hordes.foes = [];
+      state._moveBurstUntil = 0;
+      const foe: any = mkFoe(20, 0, 5);
+      sys.hordes.foes.push(foe);
+      sys.hordes.hurt(foe, 9999, true, true);
+      const mul = moveBurstMul(state);
+      if (withRelic) ok(mul > 1, `move_burst_on_kill: a kill opens a ${mul}x window`);
+      else eq(mul, 1, 'CONTROL: with no Tideculler relic a kill opens nothing');
+    }
+    state._moveBurstUntil = 0;
+
+    // -- 6. see_foe_hp -------------------------------------------------------
+    // The bar always existed but only above a HURT foe, which is when you no
+    // longer need it. Read the real Pixi geometry, not a flag we passed in.
+    {
+      sys.hordes.foes = [];
+      const foe: any = mkFoe(40, 0, 400);
+      foe.hp = foe.maxHp;                 // untouched: the bar is normally hidden
+      sys.hordes.foes.push(foe);
+      // syncFoes() only drives views that already exist — addFoe() is what
+      // creates one, and the live game calls it from the spawn path.
+      nw.ctx.views.addFoe(foe);
+      nw.ctx.views.syncFoes(sys.hordes.foes, 1, false);
+      const view: any = (nw.ctx.views as any).foes.get(foe.uid);
+      ok(!!view, 'see_foe_hp: the foe has a view to draw into');
+      const drawn = (v: any) => v?.bar?.context?.instructions?.length ?? -1;
+      const hidden = drawn(view);
+      nw.ctx.views.syncFoes(sys.hordes.foes, 1, true);
+      const shown = drawn(view);
+      eq(hidden, 0, 'CONTROL: a full-health foe draws no bar without the Nullmaw relic');
+      ok(shown > 0, `see_foe_hp: ...and draws one with it (${shown} draw calls)`);
+      nw.ctx.views.removeFoe(foe.uid);
+    }
+
+    // -- 7. resonance_boost ---------------------------------------------------
+    // Pin the D5 roll to exactly 1.0 so what is left is the effect and nothing
+    // else. Reads the real private roll() both echo forms share.
+    {
+      nw.ctx.net.rollDamageMul = () => ({ mul: 1.0 });
+      await wearOnly(nw, []);
+      const plain = (sys.echoes as any).roll('test');
+      p.relic = 'relic_null';
+      const boosted = (sys.echoes as any).roll('test');
+      eq(+plain.toFixed(4), 1.0, 'CONTROL: with the roll pinned and no relic, an echo hits for exactly its base');
+      eq(+boosted.toFixed(4), +(1 + CFG.itemEffects.resonancePct).toFixed(4),
+        'resonance_boost: the Nullmaw relic lifts every echo number');
+    }
+
+    // -- 8. and the rule that let all seven hide -------------------------------
+    // applyEffect() is not a dispatch path. If a future hook is implemented
+    // ONLY as a registered handler, it is dead on arrival, and this is the
+    // assertion that says so out loud.
+    {
+      const { applyEffect } = await import('./effects');
+      const ret = applyEffect('thorns_reflect', { state, player: p, damage: 10 } as any);
+      eq(ret, undefined,
+        'the registry is a vocabulary, not a dispatch table — handlers are flags and return nothing');
+    }
+  } finally {
+    nw.ctx.net.rollDamageMul = savedRoll;
+    state._moveBurstUntil = savedBurst;
+    state.sockets = savedSockets;
+    sys.hordes.foes = savedFoes;
+    state.god = savedGod;
+    state.gameOver = savedGameOver;
+    snap.restore();
   }
 }
 
@@ -7219,6 +7428,7 @@ async function testWeaveBonuses(nw: any) {
   const savedCombatXp = p.xp.combat;
   const savedGod = state.god;
   const savedGameOver = state.gameOver;
+  const savedRandom = Math.random;
 
   try {
     p.inv = {}; p.equip = {}; p.soulItems = {}; p.relic = undefined;
@@ -7312,17 +7522,29 @@ async function testWeaveBonuses(nw: any) {
       x: 0, y: 0, px: 0, py: 0, hp: 50, maxHp: 50,
       dmg: 10, baseDmg: 10, atkT: 0, telegraphT: 0, animT: 0,
     });
+    // The weave vessel is a ROLLED item, so it can carry 'of Warding' — and
+    // dodge makes damagePlayer return before any reflect happens, 12% of the
+    // time. That is a coin flip this test never meant to include: it went red
+    // the moment an unrelated new test shifted the global RNG stream. Pin
+    // Math.random above the dodge threshold for the two measurements, so what
+    // is left is the weave.
+    Math.random = () => 0.99;
     const attacker = mkFoe();
     p.hp = 100;
     sys.combat.damagePlayer(10, 'test foe', attacker);
     ok(attacker.hp < 50, `the attacker takes its own hit back: 50 → ${attacker.hp}`);
     ok((attacker as any)._stunnedUntil > state.clock, '...and is stunned by the reflection');
 
-    state.sockets = {};
+    // Clearing the sockets removes the WEAVE, but the rolled armour worn above
+    // can carry an 'of the Thorn' affix, and C4's thorns_reflect reflects too —
+    // so this control has to strip the gear as well, or it measures the sum of
+    // two independent reflect sources and calls it Ironwake. (It caught exactly
+    // that the moment thorns_reflect stopped being placebo.)
+    state.sockets = {}; p.inv = {}; p.equip = {}; p.relic = undefined;
     const attacker2 = mkFoe();
     p.hp = 100;
     sys.combat.damagePlayer(10, 'test foe', attacker2);
-    eq(attacker2.hp, 50, 'with no Ironwake, the attacker takes nothing back');
+    eq(attacker2.hp, 50, 'with no Ironwake and no thorns, the attacker takes nothing back');
     eq((attacker2 as any)._stunnedUntil ?? 0, 0, '...and is not stunned');
   } finally {
     snap.restore();
@@ -7335,6 +7557,7 @@ async function testWeaveBonuses(nw: any) {
     p.xp.combat = savedCombatXp;
     state.god = savedGod;
     state.gameOver = savedGameOver;
+    Math.random = savedRandom;
   }
 }
 
