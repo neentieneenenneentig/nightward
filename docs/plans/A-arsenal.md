@@ -493,6 +493,14 @@ for what the build actually found.
 3. ~~§5.7~~ — **A7 merges into N4.5's selector.** One control, two vocabularies.
 4. ~~§8~~ — **first cut A1 + A4**, both shipped.
 
+**Closed by the C4 repair, 2026-08-21:**
+
+0. **A1's premise was half false and is now true.** The brief said the suffix half of the
+   affix system was "a data table over hooks that already work". Seven of the fifteen hooks
+   did not work — they had a registered handler and no consumer — so all five relics and
+   ~47% of suffix weight were placebo. All seven now have a live consumer and a matched-pair
+   test. See the ROADMAP entry for the full audit.
+
 **Still open:**
 
 5. **§5.3 — is Resolve the right ability cost?** Built on Resolve 2026-08-21 (A3 shipped).

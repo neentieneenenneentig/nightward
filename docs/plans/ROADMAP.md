@@ -12,6 +12,96 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 
 ---
 
+> ## C4 repair — seven dead effect hooks, 2026-08-21 (branch `dev/night-build`, unmerged)
+>
+> Found while auditing what A1 had actually been built on. **Gauntlet 1874/1874 across 113
+> tests, five consecutive green runs.**
+>
+> ### The shape of it
+>
+> `registerEffect()` builds a registry and `applyEffect()` dispatches from it. **Nothing in
+> the game has ever called `applyEffect()`.** Every hook that works is read a different way
+> — `activeEffects(state).has('key')` at the site that cares, with the behaviour written
+> inline there, because the behaviours need that site's locals (the swing's arc, the foe's
+> march multiplier, the fog's alpha) and an `EffectContext` big enough to carry all of them
+> would be the whole game.
+>
+> So the registry was a **vocabulary**, and seven entries in it were only ever vocabulary:
+>
+> | hook | what it cost |
+> |---|---|
+> | `thorns_reflect` | the Thornwarden relic, `of the Thorn` |
+> | `fire_aura` | the Cindermaw relic, `of the Ember` |
+> | `chill_aura` | the Rimewraith relic, `of the Rime` |
+> | `regen_boost` · `move_burst_on_kill` | the Tideculler relic, `of Mending`, `of the Tide` |
+> | `see_foe_hp` · `resonance_boost` | the Nullmaw relic, `of the Eye`, `of Resonance` |
+>
+> **All five domain-lord relics did nothing** — the rewards for the five biggest fights in
+> the game. And **350 of the 750 suffix weight** in A1's affix table was placebo: very nearly
+> every second rolled suffix. It also quietly falsified A1's own premise, that "the fifteen
+> effect hooks already work, so the suffix half is a data table over hooks that already work".
+>
+> ### Why it survived two milestones behind a green suite
+>
+> The C4 test drove the handler **directly** — `applyEffect('thorns_reflect', …)` returned 6
+> and the assertion went green. A test that calls a handler proves the handler works and
+> never that the game calls it. Worse, the code *existed*: a reader checking "is thorns
+> implemented?" found a function with real logic in it and stopped reading.
+>
+> That assertion is now replaced by the rule that makes the mistake unrepeatable — every
+> handler is an inert flag naming its real consumer, so a hook implemented only in the
+> registry is red immediately.
+>
+> ### The seven consumers
+>
+> | hook | consumer |
+> |---|---|
+> | `thorns_reflect` | `combat.damagePlayer`, beside A5's Ironwake — they stack, and log separately |
+> | `fire_aura` | `combat.updateAuras`, a standing tick (an aura you must swing for is not an aura) |
+> | `chill_aura` | the `hordes` march product, by proximity — no per-foe bookkeeping to expire |
+> | `regen_boost` | `combat.update`, in the same product as the Loom's regenPct |
+> | `move_burst_on_kill` | `hordes.hurt` arms a window; main's movement product reads `moveBurstMul()` |
+> | `see_foe_hp` | `FoeView.sync` — the bar existed but only above a *hurt* foe, which is when you no longer need it. What the effect buys is appraisal. |
+> | `resonance_boost` | `echoes.roll()` — the one place both the autofire and A3's actives derive damage, so it cannot drift between them |
+>
+> Every number is a `CFG.itemEffects` row, tunable live through `NW.CFG`.
+>
+> ### Measured, matched-pair
+>
+> | | with | without |
+> |---|---|---|
+> | chill_aura, same foe, same tile, same tick | 21.08px | 26.35px (= ×0.80, the configured value) |
+> | regen_boost | 2.250 hp/s | 1.500 hp/s (= ×1.5) |
+> | move_burst_on_kill | ×1.25 window | ×1.0 |
+> | resonance_boost, D5 roll pinned to 1.0 | 1.25 | 1.00 |
+> | see_foe_hp, full-health foe | 2 draw calls | 0 |
+>
+> ### Two flakes it shook loose, neither of them new
+>
+> 1. **Both A3 ability tests leaked `state.god = true`.** This file's tests share one live
+>    world, and a leaked god mode silently disarms every damage assertion after it — which is
+>    how A5's Ironwake test came to measure nothing. Saved and restored in both, the way the
+>    rest of the file already does.
+> 2. **A5's Ironwake test had a 12% coin flip in it.** Its weave vessel is a *rolled* item, so
+>    it can carry `of Warding`, and `dodge` returns out of `damagePlayer` before any reflect
+>    happens. It went red the moment a new test shifted the global RNG stream — the same
+>    mechanism that shook the vigor-starve flake loose during A1. `Math.random` is now pinned
+>    above the threshold for that measurement and restored in the `finally`, because `ok()`
+>    throws and an inline restore would have leaked a stubbed RNG into every later test.
+>
+> Also corrected: the Ironwake control cleared the sockets but not the *gear*, so once thorns
+> stopped being placebo it was measuring two independent reflect sources and calling it
+> Ironwake.
+>
+> ### One process note
+>
+> `scripts/run-gauntlet.mjs` drives **port 5199**, which it does not start — that is a
+> long-running `vite preview` serving `dist/`. **The gauntlet tests the last build, not the
+> working tree.** Three green runs were banked against stale code before this surfaced.
+> `npm run build` before `npm run gauntlet`, every time.
+
+---
+
 > ## A1 + A4 — The Arsenal, first cut, 2026-08-21 (branch `dev/night-build`, unmerged)
 >
 > The Hero Siege yoink, shipped. User direction: *"i agree!!! gogogo!"* — accepting the

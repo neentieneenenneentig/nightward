@@ -443,7 +443,18 @@ regen_boost, move_burst_on_kill, see_foe_hp, resonance_boost, fire_on_hit, chill
 lifesteal, chain_on_kill, dodge, gold_find, xp_boost, night_vision — fifteen in total).
 Until A1 these were reachable almost exclusively through the five relics below; they are now
 also the **suffix pool for rolled affixes** (§7), which is what made that milestone mostly a
-data edit. Five of them are **unique boss relics** — a
+data edit.
+
+> **Corrected 2026-08-21.** That paragraph was true of the *vocabulary* and false of the
+> *game*. Seven of the fifteen hooks — thorns_reflect, fire_aura, chill_aura, regen_boost,
+> move_burst_on_kill, see_foe_hp, resonance_boost — had a registered handler and **no
+> consumer anywhere**, because `registerEffect()` builds a registry that nothing dispatches
+> from: every live hook is read as `activeEffects(state).has(key)` at the site that cares.
+> The bill was that **all five relics below did nothing at all**, and 350 of the 750 suffix
+> weight in the affix table was placebo. All seven now have a real consumer and a
+> matched-pair test. The registry is documented as a vocabulary, not a dispatch table.
+
+Five of them are **unique boss relics** — a
 guaranteed drop from its lord, occupying its own 6th equip slot (separate from the normal
 weapon/armor/trinket slots):
 
