@@ -5651,6 +5651,9 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Loot - no roll can produce NaN, and junk ids degrade quietly', fn: testLootNeverProducesNaN },
   { name: 'Arsenal - the tooltip compares against what is worn', fn: testTooltipComparesGear },
   { name: 'Arsenal - the orbs track the vitals and the radar is attached', fn: testOrbsAndMinimap },
+  // ---- A3: The Bar ----
+  { name: 'Abilities - the bar slots itself, costs Resolve, refuses for free', fn: testAbilityBar },
+  { name: 'Abilities - all five empowered forms reach the world', fn: testAbilityActives },
 ];
 
 
@@ -6852,5 +6855,217 @@ async function testOrbsAndMinimap(nw: any) {
     nw.minimap.draw(state, performance.now() + 1e6, []);
     nw.minimap.draw(state, performance.now() + 2e6, [{ x: state.player.x + 40, y: state.player.y }]);
     ok(true, 'it draws without throwing, with and without foes');
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// A3 — The Bar: the echoes become something you press
+// ---------------------------------------------------------------------------
+//
+// The ability system owns the slotting, the cost and the refusals; EchoSystem
+// owns what a cast actually does. The tests below split on that line: this one
+// pins the BAR (slots, Resolve economy, the three refusal reasons), the next
+// pins that a cast reaches the world through EchoSystem. Neither test reads an
+// internal number and calls it proof — a refused cast must leave Resolve
+// untouched, a spent cast must leave it exactly `cost` lower, and an active
+// must move HP or timers on a real dummy foe.
+
+async function testAbilityBar(nw: any) {
+  const { state, sys } = nw;
+  const A: any = sys.abilities;
+  const { echoById } = await import('../data/echoes');
+  state.gameOver = false;
+  state.god = true;
+
+  const savedEchoes = state.player.echoes;
+  const savedBar = state.player.abilityBar;
+  const savedResolve = state.player.resolve;
+  try {
+    // 1. the bar fills itself from held echoes, in the canonical ECHOES order
+    state.player.echoes = { thornring: 1, cinder_trail: 1, rime_nova: 1, tide_lash: 1 };
+    state.player.abilityBar = [];
+    A.readyAt = {}; A.lockUntil = 0;
+    nw.step(2);
+    eq(state.player.abilityBar.length, 4, 'four sockets exist on the bar');
+    eq(state.player.abilityBar[0], 'thornring', 'slot 1 is the first lord to fall');
+    eq(state.player.abilityBar[3], 'tide_lash', 'slot 4 is the fourth');
+
+    // 2. the fifth echo is held but unbound — a choice, not an automatic upgrade
+    state.player.echoes['null_orb'] = 1;
+    nw.step(2);
+    eq(A.held().length, 5, 'all five echoes are held');
+    eq(state.player.abilityBar.filter(Boolean).length, 4,
+      'but the bar still holds four — the fifth lord forces a choice');
+    ok(!state.player.abilityBar.includes('null_orb'),
+      "the fifth lord's echo stays off the bar until displaced");
+
+    // 3. a cast spends exactly the active's cost
+    const cost0 = echoById('thornring')!.active.cost;
+    state.player.resolve = 100;
+    A.readyAt = {}; A.lockUntil = 0;
+    const r1 = A.cast(0);
+    ok(r1.ok, 'Bramblebreak casts with resolve in hand');
+    eq(state.player.resolve, 100 - cost0, `it spends exactly ${cost0} resolve`);
+
+    // 4. an immediate re-press is refused by the GLOBAL lock, for free
+    const r2 = A.cast(0);
+    ok(!r2.ok && r2.reason === 'locked',
+      'an immediate re-press is locked (key-repeat can not empty the meter)');
+    eq(state.player.resolve, 100 - cost0, 'and the refusal costs nothing');
+
+    // 5. the lock spans slots — it is global, not per-echo
+    const r3 = A.cast(1);
+    ok(!r3.ok && r3.reason === 'locked', 'a different slot is also locked in the same instant');
+
+    // 6. past the lock but inside the cooldown: the cooldown says so
+    nw.step(10); // 0.333s > the 0.25s global lock
+    const r4 = A.cast(0);
+    ok(!r4.ok && r4.reason === 'cooldown', 'past the lock, the per-echo cooldown refuses');
+
+    // 7. a cast you cannot afford is refused and touches nothing
+    state.player.resolve = cost0 - 1;
+    A.readyAt = {}; A.lockUntil = 0;
+    const r5 = A.cast(0);
+    ok(!r5.ok && r5.reason === 'resolve', 'a cast you cannot afford is refused');
+    eq(state.player.resolve, cost0 - 1, 'and the resolve is untouched');
+
+    // 8. casting yourself to exactly zero is allowed — walking into the penalty
+    state.player.resolve = cost0;
+    A.readyAt = {}; A.lockUntil = 0;
+    const r6 = A.cast(0);
+    ok(r6.ok, 'a cast that lands you at exactly zero resolve is allowed');
+    eq(state.player.resolve, 0, 'and leaves the meter empty, not negative');
+
+    // 9. an empty socket refuses, without throwing (only thornring held, so
+    //    sync can not backfill the gap with a fifth echo)
+    state.player.echoes = { thornring: 1 };
+    state.player.abilityBar = ['thornring', '', '', ''];
+    state.player.resolve = 100;
+    A.readyAt = {}; A.lockUntil = 0;
+    nw.step(2);
+    const r7 = A.cast(1);
+    ok(!r7.ok && r7.reason === 'empty', 'an empty socket refuses');
+
+    // 10. the tooltip names the ACTIVE and states what it costs and hits for
+    const tip = A.describe(0);
+    ok(tip && tip.title === 'Bramblebreak', 'the tooltip names the ACTIVE, not the echo');
+    ok(tip.lines.some((l: string) => l.includes('18 resolve')), 'the tooltip states the resolve cost');
+    ok(tip.lines.some((l: string) => l.includes('damage')), 'the tooltip states the damage it hits for');
+    const emptyTip = A.describe(1);
+    ok(emptyTip && /empty/i.test(emptyTip.title), "an empty socket's tooltip says it is empty");
+  } finally {
+    state.player.echoes = savedEchoes;
+    state.player.abilityBar = savedBar;
+    state.player.resolve = savedResolve;
+    A.readyAt = {}; A.lockUntil = 0;
+  }
+}
+
+async function testAbilityActives(nw: any) {
+  const { state, sys } = nw;
+  const A: any = sys.abilities;
+  const ES: any = sys.echoes;
+  const { ENEMIES } = await import('../data/enemies');
+  const dummyDef = ENEMIES.find((e: any) => !e.boss)!;
+  state.gameOver = false;
+  state.god = true;
+
+  const savedEchoes = state.player.echoes;
+  const savedBar = state.player.abilityBar;
+  const savedResolve = state.player.resolve;
+  const savedFoes = sys.hordes.foes;
+  try {
+    sys.hordes.foes = [];
+    state.player.resolve = 100;
+    A.readyAt = {}; A.lockUntil = 0;
+
+    // --- Bramblebreak: the ring bites, and throws back what survives ---
+    // Knockback only lands on standable ground, so probe the four cardinals
+    // and accept the direction the terrain allows (the Hall clearing is open).
+    state.player.echoes = { thornring: 1 };
+    state.player.abilityBar = ['thornring', '', '', ''];
+    nw.step(2);
+    {
+      let knocked = false;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as [number, number][]) {
+        sys.hordes.foes = [];
+        A.readyAt = {}; A.lockUntil = 0;
+        state.player.resolve = 100;
+        const f: any = makeDummyFoe(nw, dummyDef, dx * 40, dy * 40, 5000);
+        sys.hordes.foes.push(f);
+        const before = Math.hypot(f.x - state.player.x, f.y - state.player.y);
+        const cr = A.cast(0);
+        const after = Math.hypot(f.x - state.player.x, f.y - state.player.y);
+        if (cr.ok && f.hp < f.maxHp && after > before) { knocked = true; break; }
+      }
+      ok(knocked, 'Bramblebreak damages and throws back a survivor where the ground allows');
+    }
+
+    // --- Hoarfrost: freeze reuses the C5 stun consumer, then chills ---
+    sys.hordes.foes = [];
+    A.readyAt = {}; A.lockUntil = 0;
+    state.player.resolve = 100;
+    state.player.echoes = { rime_nova: 1 };
+    state.player.abilityBar = ['rime_nova', '', '', ''];
+    nw.step(2);
+    {
+      const f: any = makeDummyFoe(nw, dummyDef, 40, 0, 5000);
+      sys.hordes.foes.push(f);
+      ok(A.cast(0).ok, 'Hoarfrost casts');
+      ok(f.hp < f.maxHp, 'and damages a foe in the bloom');
+      ok(f._stunnedUntil > state.clock, 'and freezes solid via the existing stun consumer');
+      ok(f.chillUntil > state.clock, 'and the chill outlasts the freeze');
+      ok(f.chillMult < 1, `and the chill slows the march (${f.chillMult})`);
+    }
+
+    // --- Emberline: a line of patches along the aim ---
+    sys.hordes.foes = [];
+    A.readyAt = {}; A.lockUntil = 0;
+    state.player.resolve = 100;
+    state.player.echoes = { cinder_trail: 1 };
+    state.player.abilityBar = ['cinder_trail', '', '', ''];
+    nw.step(2);
+    {
+      ES.patches = [];
+      nw.player.aimAngle = 0; // due east, so five tiles are five distinct tiles
+      ok(A.cast(0).ok, 'Emberline casts');
+      ok(ES.patches.length >= 4, `and lays a line of patches along the aim (${ES.patches.length})`);
+    }
+
+    // --- Undertow: four lashes reach out and never lash nothing ---
+    sys.hordes.foes = [];
+    A.readyAt = {}; A.lockUntil = 0;
+    state.player.resolve = 100;
+    state.player.echoes = { tide_lash: 1 };
+    state.player.abilityBar = ['tide_lash', '', '', ''];
+    nw.step(2);
+    {
+      const f: any = makeDummyFoe(nw, dummyDef, 120, 0, 5000);
+      sys.hordes.foes.push(f);
+      ok(A.cast(0).ok, 'Undertow casts');
+      ok(f.hp < f.maxHp, 'and lashes a lone foe at range');
+    }
+
+    // --- Threefold Hollow: a window the orbit reads, that expires ---
+    sys.hordes.foes = [];
+    A.readyAt = {}; A.lockUntil = 0;
+    state.player.resolve = 100;
+    state.player.echoes = { null_orb: 1 };
+    state.player.abilityBar = ['null_orb', '', '', ''];
+    nw.step(2);
+    {
+      ok(A.cast(0).ok, 'Threefold Hollow casts');
+      ok(ES.orbEmpowerLeft() > 0, 'and opens the empowerment window');
+      nw.step(250); // 8.33s > the 8s window
+      eq(ES.orbEmpowerLeft(), 0, 'and the window closes when it expires');
+    }
+  } finally {
+    sys.hordes.foes = savedFoes;
+    state.player.echoes = savedEchoes;
+    state.player.abilityBar = savedBar;
+    state.player.resolve = savedResolve;
+    A.readyAt = {}; A.lockUntil = 0;
+    ES.orbEmpowerUntil = 0;
   }
 }
