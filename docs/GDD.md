@@ -327,6 +327,35 @@ slots, 23 raw materials/resources, 2 healing consumables, and 5 unique boss reli
 The metal progression is **copper → iron → silver → star**, unlocked by smithing level;
 the four elemental weapons sit alongside iron/silver as a sidegrade, not a strict upgrade.
 
+**Rarity & rolled affixes (A1).** Those 67 rows are *bases*, not items. Any piece of gear
+that drops or is forged rolls on a six-rung ladder — **Plain · Touched · Woven · Hallowed ·
+Sovereign · Riftborn** — and everything above Plain carries 1–5 rolled affixes, so two Iron
+Blades are genuinely different blades. Affixes are a prefix and a suffix in Diablo grammar
+(*"Keen Iron Blade of the Ember"*): prefixes write to the stat columns an item already has
+plus six named multipliers (move speed, swing speed, hunger, dread, building health, soul
+xp), and suffixes are the fifteen item-effect hooks from §9.4.
+
+A **Plain** roll returns the authored item unchanged — the ladder stays invisible until
+something actually rolls, and ordinary materials never roll at all, so the bag still stacks.
+
+Two rules here are ours rather than the genre's:
+
+- **The ladder is climbable inside one run.** Pillar 8 caps a run at ~15 minutes, and
+  Diablo-style drop rates in that window would ship four tiers no player ever sees. Weights
+  are tuned to a measured target: a competent run ends holding **2–4 Woven and about one
+  Hallowed**, and a slain lord is a **~24% shot at a Sovereign**. There is no persistence
+  (pillar 3) — what survives the run is a **trophy line on the scorecard** naming your best
+  find, which is the carve-out pillar 3 already allows.
+- **Riftborn always costs something.** One of its five affixes is a curse. A tier that is
+  strictly better than the one beneath it is a number, not a decision.
+
+Where a drop can reach on the ladder is decided by its source: ordinary kills and gathering
+top out at Hallowed, a **domain lord** is the only ordinary route to a Sovereign, a **forge**
+tops out at Touched (crafting has to stay worth doing), and **Riftborn exists only in the 60
+seconds after a rift** — which is what finally makes a rift something to chase. The wire
+tilts the whole ladder through the **Fortune** mapping: a wide, clean path (high cwnd, low
+loss) makes the top rungs reachable, a frayed one drops *more* items of *worse* quality.
+
 **Soul-feeding**: any feedable material (raw resources, not finished gear) can be consumed
 directly into a soul-gear slot's xp instead of used for crafting. Each material can carry a
 `soulAffinity` toward one specific slot — feeding it there is a 1.5× xp bonus, feeding an
@@ -410,8 +439,11 @@ Points come from **surviving a night** (flat 1/night) and, as of L1, **slaying a
 
 ### 9.4 The Armory (relics & item effects)
 Items can declare data-driven `effects` hooks (thorns_reflect, fire_aura, chill_aura,
-regen_boost, move_burst_on_kill, see_foe_hp, resonance_boost, lifesteal, chain_on_kill,
-dodge, gold_find, xp_boost, night_vision). Five of these are **unique boss relics** — a
+regen_boost, move_burst_on_kill, see_foe_hp, resonance_boost, fire_on_hit, chill_on_hit,
+lifesteal, chain_on_kill, dodge, gold_find, xp_boost, night_vision — fifteen in total).
+Until A1 these were reachable almost exclusively through the five relics below; they are now
+also the **suffix pool for rolled affixes** (§7), which is what made that milestone mostly a
+data edit. Five of them are **unique boss relics** — a
 guaranteed drop from its lord, occupying its own 6th equip slot (separate from the normal
 weapon/armor/trinket slots):
 
@@ -525,6 +557,21 @@ overlays — keyboard-navigable (Tab/arrows/Enter/Escape). Building placement is
 press-to-aim, release-to-place carousel banner (no popup menu; Tab/wheel/arrows cycle
 blueprints), with hold-drag wall painting.
 
+**Orbs, tooltips and the radar (A4).** Two globes flank the action bar — **HP** bottom-left
+with **Vigor** as a ring around it (a rate, not a pool), **Resolve** bottom-right — as pure
+radial gradients and a clipped fill. They *add to* the top-bar numbers rather than replacing
+them: a number answers "how much", an orb answers "how bad is this" without moving your eye
+off the middle of the screen, which is where a night fight happens.
+
+Hovering or focusing any item shows a **comparison tooltip**: the name in its rarity colour,
+each rolled affix in plain language ("*of the Ember — burns what stands near you*"), and a
+green or red delta against whatever occupies that slot right now. This is the loot loop —
+before A4 the game had no tooltips of any kind, and a rolled item would have been a
+differently-coloured name with no way to interrogate it. Ground drops at Woven and above
+throw a rarity-coloured **light beam** with the item's name floating above it, and a
+corner **minimap** shows the Hall (with a rim arrow when it is off the edge), your
+territory, live drops in their tier colours, and everything hunting you.
+
 **The Lens** (`O`) is deliberately visually distinct from the rest of the chrome —
 clinical dark monospace, zero CSS-variable coupling to the main theme — because it's a
 diegetic instrument (raw truth), not game chrome (fiction), and should never be mistaken
@@ -616,7 +663,7 @@ Honest inventory — don't describe these as live if you're extending the game:
 |---|---|
 | Master balance file (every tunable number) | `src/game/data/config.ts` |
 | Game state shape | `src/game/state.ts` |
-| Content tables (items/recipes/buildings/enemies/echoes/loom/materials/skills/domains/network) | `src/game/data/*.ts` |
+| Content tables (items/rarity/affixes/recipes/buildings/enemies/echoes/loom/materials/skills/domains/network) | `src/game/data/*.ts` |
 | Systems (one file per major mechanic) | `src/game/systems/*.ts` |
 | Boot + game loop | `src/main.ts` |
 | UI | `src/game/ui/*.ts` |

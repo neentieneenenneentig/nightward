@@ -12,6 +12,141 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 
 ---
 
+> ## A1 + A4 — The Arsenal, first cut, 2026-08-21 (branch `dev/night-build`, unmerged)
+>
+> The Hero Siege yoink, shipped. User direction: *"i agree!!! gogogo!"* — accepting the
+> brief's three recommendations (§4.2 (a)+(b): compress the ladder into one run and put a
+> trophy on the scorecard, pillar 3 intact; §4.3: no classes; §5.7: A7 merges into N4.5's
+> selector). **Gauntlet 1744/1744 across 107 tests, 20 consecutive green runs.**
+>
+> ### The architecture decision that made A1 small
+>
+> The whole game is **id-keyed**: `inv` is `Record<itemId, count>`, `equip` is
+> `Record<slot, itemId>`, soul items bind by id, `bestTool()` scans inventory keys. A rolled
+> item is *unique*, and forcing uniqueness into that shape by hand would have meant touching
+> every one of those structures — plus the ground drops, the merge logic, and the bag.
+>
+> So a rolled item gets a **synthetic id**: `iron_blade#7f3a`. Every structure above keeps
+> working completely untouched. Exactly one thing breaks — `ITEMS[id]` returns undefined for
+> a synthetic id — and that is what `itemDef()` is for. It was the only change the other
+> **33 lookup sites** needed.
+>
+> `itemDef()` returns the base def with the affixes **already merged into the stat columns**,
+> which is the load-bearing half: `bestWeaponDmg`, `baseStatFor`, `wornStat`, `armorDef`,
+> `charmRegen` and `activeEffects` all pick up affixes for free, with no knowledge that
+> rarity exists. Affixes are invisible everywhere except where we deliberately show them.
+>
+> **Plain returns the authored id unchanged.** If every plain flint axe became a unique
+> instance the bag would end a run holding forty singleton stacks of identical icons and
+> stacking would be dead. Plain *is* the authored item, byte for byte, exactly as before.
+>
+> ### The fifteen hooks C4 already built
+>
+> `grep registerEffect` returns **fifteen live, already-consumed effect hooks** — `fire_aura`,
+> `lifesteal`, `chain_on_kill`, `dodge`, `gold_find`, `thorns_reflect` and the rest. They were
+> built in C4 to serve **five relics**, and fourteen were reachable from exactly one item each
+> in the entire game. The whole *suffix* half of the affix system is a data table over hooks
+> that already work and are already Gauntlet-covered.
+>
+> The *prefix* half writes to the four stat columns `ItemDef` already had, plus six named
+> multipliers read through `gearMod()` — each with a consumer wired in the same commit, because
+> an affix nothing reads is a dormant row and this project knows what those cost:
+>
+> | modifier | consumer |
+> |---|---|
+> | `moveSpeed` | `main.ts`, into the same product as the Loom / silt / omen multipliers |
+> | `swingSpeed` | `combat.ts` envelope, **inside** the existing `attackSpeedFloor` clamp |
+> | `vigorDecay` · `resolveDecay` | `vitals.ts` |
+> | `buildHp` | `build.ts`, scaled once at placement like the Loom multiplier above it |
+> | `soulXp` | `rules.awardSoulXp` |
+>
+> Tools count as carried gear in `gearMod()` and `activeEffects()`. They are never in `equip`
+> — `bestTool()` decides which axe is in your hands — so without that, every affix that rolled
+> onto a tool would have been dead on arrival.
+>
+> ### The wire decides what the world gives up
+>
+> One new `NET_GAME_MAP` row, `Fortune (Aperture · Fray)`, clamped 0.75–1.35 off two measured
+> kernel readings. A wide clean path tilts the rarity ladder up; a frayed one tilts it down
+> **but raises drop quantity**, so a bad connection is a different kind of run rather than a
+> strictly worse one. That distinction is the difference between a mapping and a punishment,
+> and it is the same lesson the Omens learned in N4.3. Neutral 1.0 whenever the deep wire is
+> silent (pillar 5).
+>
+> A rift now opens the `rift` band for 60 s — **the only route to a Riftborn item**. N4.3 gave
+> the rift its first working trigger on desktop; this gives it its first reason to want one.
+>
+> ### Measured, not asserted
+>
+> | | measured |
+> |---|---|
+> | common band (4000 draws) | plain 54.5% · touched 26.6% · woven 13.6% · hallowed 5.3% |
+> | → per 20-drop run | **2.8 Woven, 1.05 Hallowed** — the §4.2(a) target |
+> | lord band | hallowed 76% · **sovereign 23.9%** — the "~25% shot" target |
+> | Fortune 0.75 → 1.00 → 1.35 | hallowed 3.0% → 5.3% → 10.3%, monotone |
+> | a Hallowed blade, equipped | **17.74 damage vs a plain 9**, read back through `equippedWeaponDmg()` |
+> | a Swift chestplate | measured **×1.061** movement against a rolled ×1.06 |
+>
+> ### A4: shipping A1 without it would have shipped an invisible feature
+>
+> Before this commit there were **zero tooltips anywhere in the codebase**. The Bag set
+> `cell.title` — a browser tooltip that cannot be styled, cannot be coloured by tier, and
+> cannot show a green +3.4 against a red −2. A rolled item would have been a differently
+> coloured name with no way to interrogate it.
+>
+> `ui/rarity.ts` is the single place that knows what a tier looks like; six copies of a hex
+> value is five chances for the ladder to disagree with itself. Plus the comparison tooltip,
+> HP/Resolve orbs with Vigor as a ring (it is a rate, not a pool), loot beams gated at Woven,
+> rarity colour in the pickup toast and on the leaderboard trophy row, and a minimap —
+> `state.explored` has carried a `// future minimap` comment since it was written.
+>
+> ### Three defects found by live capture, not by reading the code
+>
+> 1. **The minimap silently vanished.** `new UI()` does `root.innerHTML = ''` on `#hud` at
+>    line 312, deleting the canvas appended at line 185. Now self-attaching like the tooltip
+>    host — immune to construction order instead of dependent on it.
+> 2. **The Vigor ring was not there at all.** It sits outside the orb's circle and the orb had
+>    `overflow: hidden`. The fill is now clipped by an inner `.bowl`.
+> 3. **The beams were invisible over daytime grass.** At normal blending a translucent shaft
+>    reads as a painted rectangle. Additive blending is what makes it read as light.
+>
+> This is why the capture happens before the commit and not after.
+>
+> ### The flake A1 shook loose, which was not A1's
+>
+> `testVigorStarve` went red 2 runs in 8 reporting *"vigor 49.88 after 5s"* against an expected
+> 0. **49.88 is the death scatter's 50/50 reset.** The test steps five seconds with night
+> hordes live and never cleared the field — while `testVitalsDecay`, *immediately above it in
+> the same file*, carries a comment describing that exact failure and guards against it with
+> god mode and a cleared field.
+>
+> A1 did not cause it: rolling loot consumes `Math.random()` on every gear drop, which shifts
+> the global RNG stream for every horde spawn and damage roll downstream, and that was enough
+> to move a latent flake into view. Guarded the same way its neighbour is — god mode lifted
+> for the starvation phase, which is the one that needs the player hurtable — plus a positive
+> guard asserting the player was never scattered mid-measurement, so it can never again pass
+> *or* fail silently. The diagnostic that found it is retained in the assertion message:
+> printing only the number could never have said the player died.
+>
+> ### Two balance items for the playtest verdict, deliberately not pre-tuned
+>
+> 1. **`heavy` rolls `+2–6` flat damage and can land at Touched**, so a lucky blue copper
+>    blade beats a plain iron one. That is the Diablo experience working as intended — it is
+>    what makes a low-tier drop worth reading — but it deliberately inverts the
+>    copper→iron→silver→star ladder.
+> 2. **A Riftborn weapon measured ×2.23 base damage** (9 → 20.08). ~0.35% of rift-band drops,
+>    always carrying a curse, and rift-band drops only happen for 60 s after a rift — but it
+>    is the largest single number A1 can produce.
+>
+> `CFG.loot.enabled = false` is a real escape hatch on the same terms as `CFG.drops.enabled`:
+> with it off, `rollItem()` returns the id it was handed and the game is byte-for-byte its
+> pre-A1 self.
+>
+> **Next: A3 (the ability bar)** — independent of A1/A2, ready to start, blocked only on
+> whether Resolve is the right cost (A-arsenal §9.5). A2 stays gated on the N4.3 verdict.
+
+---
+
 > ## Direction update (2026-08-21) — the Hero Siege yoink → Batch A "The Arsenal"
 >
 > User direction, verbatim: *"update our plan to yoink all the UI, gameplay, etc from hero

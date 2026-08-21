@@ -1,6 +1,7 @@
 # A — The Arsenal (the Hero Siege yoink)
 
-> **Status:** PLANNED, nothing implemented. Written 2026-08-21.
+> **Status:** **A1 + A4 SHIPPED 2026-08-21** (branch `dev/night-build`, unmerged).
+> A2/A3/A5–A8 planned, not implemented. Written 2026-08-21.
 > **Supersedes nothing.** Additive to everything shipped through N4.3.
 > **Touches:** `data/items.ts`, `data/enemies.ts`, `data/echoes.ts`, `ui/ui.ts`,
 > `systems/drops.ts`, `systems/combat.ts`, `systems/hordes.ts`, plus new files
@@ -148,6 +149,10 @@ file — which is precisely the "dormant row" failure mode the Lens work spent t
 stamping out.
 
 ### 4.2 The three ways out
+>
+> **DECIDED 2026-08-21 — the user chose (a) + (b), as recommended.** Drop rates are
+> tuned so the ladder is traversable inside one run, and a finished run's scorecard
+> carries its best find as a trophy. Pillar 3 stands. Option (c) was not taken.
 
 | | Approach | Cost | Keeps pillar 3? |
 |---|---|---|---|
@@ -164,6 +169,9 @@ Everything in §5 is written assuming (a) + (b). If you pick (c), A1's drop rate
 tier structure change and nothing else does.
 
 ### 4.3 Classes: the one Hero Siege system we should decline
+>
+> **DECIDED 2026-08-21 — declined, as recommended.** No classes. Build identity
+> continues to come from the Loom.
 
 Hero Siege's classes are a *retention* mechanism — each unlock is a reason to start over
 with a different kit. NIGHTWARD already has a per-run build system that does the same job
@@ -456,36 +464,49 @@ everything after is depth.
 
 | Phase | Contents | Why here |
 |---|---|---|
-| **A1 — The Roll** | `rarity.ts`, `affixes.ts`, `systems/loot.ts`, the `fortune` mapping row, drop-histogram tests | Everything else decorates this. Mostly data, because the 15 effect hooks already work. |
+| **A1 — The Roll** ✅ | `rarity.ts`, `affixes.ts`, `systems/loot.ts`, the `fortune` mapping row, drop-histogram tests | Everything else decorates this. Mostly data, because the 15 effect hooks already work. **Shipped 2026-08-21.** |
 | **A2 — Elites** | `ENEMY_AFFIXES`, spawn-time roll, nameplates, aura rings, conflict table | Needs A1 to have something to drop. **Gated on the N4.3 balance verdict.** |
 | **A3 — The Bar** | `abilities.ts`, Echoes promoted to actives, Resolve as the cost, cooldown sweeps | Independent of A1/A2; can run in parallel. |
-| **A4 — The Face** | orbs, comparison tooltips, loot beams, rarity colour everywhere, minimap | Makes A1 visible. **Shipping A1 without A4 ships an invisible feature.** |
+| **A4 — The Face** ✅ | orbs, comparison tooltips, loot beams, rarity colour everywhere, minimap | Makes A1 visible. **Shipping A1 without A4 ships an invisible feature.** **Shipped 2026-08-21.** |
 | **A5 — Weaves** | sockets, threads, `weaves.ts` | Multiplies A1's space; wants A1 tuned first. |
 | **A6 — The Hub** | Reliquary, Forge-Warden, gold retune | Wants A1's tier weights settled. |
 | **A7 — Covenants** | merge with N4.5's data-budget tier selector | **Blocked on N4.5.** Do not start early. |
 | **A8 — Cairns & the Hoarder** | chests, shrines, loot goblin, `flee` behaviour | Pure flavour. Slot anywhere after A1. |
 
-**Suggested first cut: A1 + A4.** That is the Hero Siege loop — kill, see a coloured beam,
-walk over, read a tooltip, feel the upgrade — and it is deliverable without touching combat
-balance or the N4 file set.
+**First cut A1 + A4 — shipped 2026-08-21.** That is the Hero Siege loop: kill, see a
+coloured beam, walk over, read a tooltip, feel the upgrade. Gauntlet 1744/1744 across 107
+tests, 20 consecutive green runs, typecheck clean on both configs. See the ROADMAP entry
+for what the build actually found.
+
+**Next in this batch: A3 (the ability bar)** — it is independent of A1/A2 and can start
+immediately. A2 remains gated on the N4.3 balance verdict.
 
 ---
 
-## 9. Open questions — need your call
+## 9. Open questions
 
-1. **§4.2 — which one?** (a) compress the ladder into one run, (b) + trophies on the
-   scorecard, or (c) break pillar 3 and build a persistent stash. **My recommendation is
-   (a)+(b).** (c) is buildable but it changes what NIGHTWARD is, and pillar 2's own words
-   are that changing a pillar "is a conversation, not a commit."
-2. **§4.3 — classes: confirmed declined?** I want to build the Loom out instead. If you
-   actually want Hero Siege's class roster, say so and I will scope it separately — but it
-   is the one borrowed system I think makes the game worse.
-3. **§5.3 — is Resolve the right ability cost?** It makes a currently-passive meter the most
-   active number on screen, but it also means a bad Resolve run has no abilities at all,
-   which may read as a punishment stacked on a punishment.
-4. **§5.7 — confirm A7 merges into N4.5's selector** rather than being its own ladder.
-5. **§8 — first cut A1 + A4?** Or do you want the whole batch queued and run overnight the
-   way the N4 phases were?
-6. Two N4.3 balance items are still awaiting your verdict and **A2 is gated on them**:
+**Answered 2026-08-21** (user: *"i agree!!! gogogo!"*):
+
+1. ~~§4.2~~ — **(a) + (b).** Ladder compressed into one run; trophy on the scorecard.
+   Pillar 3 stands.
+2. ~~§4.3~~ — **classes declined.** Build the Loom out instead.
+3. ~~§5.7~~ — **A7 merges into N4.5's selector.** One control, two vocabularies.
+4. ~~§8~~ — **first cut A1 + A4**, both shipped.
+
+**Still open:**
+
+5. **§5.3 — is Resolve the right ability cost?** Blocks A3, which is otherwise ready to
+   start. It makes a currently-passive meter the most active number on screen, but it also
+   means a bad Resolve run has no abilities at all, which may read as a punishment stacked
+   on a punishment. I will build it on Resolve unless told otherwise, since the alternative
+   is inventing a mana bar the game has never had.
+6. Two N4.3 balance items still await a verdict and **A2 is gated on them**:
    `CFG.omens.surgeFxStrength` (0.5 may be too strong) and Fray × Surge compounding to
    ×1.81 horde speed.
+7. **New, from the A1 build:** `heavy` can roll `+2–6` flat damage at Touched, so a lucky
+   blue copper blade can beat a plain iron one. That is the Diablo experience working as
+   intended — it is what makes a low-tier drop worth reading — but it is a deliberate
+   inversion of the copper→iron→silver→star ladder and worth a look in the playtest.
+8. **New:** a Riftborn weapon measured ×2.23 base damage (9 → 20.08) in the smoke probe.
+   It is ~0.35% of rift-band drops, it always carries a curse, and rift-band drops only
+   happen for 60 s after a rift — but it is the largest single number A1 can produce.
