@@ -3169,7 +3169,6 @@ async function testDataIntegrity(nw: any) {
   }
 
   ok(checks >= 100, `data integrity: ${checks} structural checks passed across all data files`);
-  ok(true, 'data integrity sweep completed');
 }
 
 // =========================================================================
@@ -5695,6 +5694,14 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Weaves - threads, sequences, and order is load-bearing', fn: testWeaveData },
   { name: 'Weaves - slotting consumes and returns, reorder breaks the weave', fn: testWeaveSocketing },
   { name: 'Weaves - all three bonuses reach the live game', fn: testWeaveBonuses },
+  // ---- A8: Cairns, Wardstones & the Hoarder ----
+  { name: 'Loot groups - a pick-one group yields exactly one, by weight', fn: testLootGroups },
+  { name: 'A8 - the rows are real, and every boon names a hook that works', fn: testA8DataRows },
+  { name: 'A8 - a run meets about one Cairn and a handful of Wardstones', fn: testA8Density },
+  { name: 'A8 - the flag off restores the pre-A8 world tile for tile', fn: testA8EscapeHatch },
+  { name: 'Cairn - opens on the Hallowed band, and wakes what it buried', fn: testCairnPayout },
+  { name: 'Wardstone - the blessing reaches the same sites an affix does', fn: testWardstoneBoons },
+  { name: 'Hoarder - it runs, it never bites, and it can get away', fn: testHoarderChase },
 ];
 
 
@@ -6423,11 +6430,22 @@ function snapshotPlayer(nw: any) {
   };
 }
 
-/** Strip to nothing, then put exactly `ids` in the bag and wear them. */
+/** Strip to nothing, then put exactly `ids` in the bag and wear them.
+ *
+ *  A8: this clears BOONS as well, and it has to. `activeEffects()` now folds
+ *  live boons in beside gear, so a Wardstone the playthrough tests happened to
+ *  walk over leaves the player carrying `resonance_boost` or `regen_boost` into
+ *  every isolation measurement that runs in the next two game-minutes. That is
+ *  not hypothetical: testEchoBounds' isolation assertion — written during the
+ *  debloat pass precisely to catch "a future source of resonance we do not
+ *  clear" — caught exactly this, twice in six runs, the day boons shipped. The
+ *  helper is where the fix belongs: every test that isolates already calls it,
+ *  and fixing it at each call site is how one of them gets missed. */
 async function wearOnly(nw: any, ids: string[]) {
   const { invAdd, acquireGear } = await import('../rules');
   const p = nw.state.player;
   p.inv = {}; p.equip = {}; p.soulItems = {}; p.relic = undefined;
+  nw.state.boons = [];
   for (const id of ids) { invAdd(nw.state, id, 1); acquireGear(nw.state, id); }
 }
 
@@ -7206,32 +7224,60 @@ async function testDormantEffectsNowLive(nw: any) {
     // -- 3. chill_aura -------------------------------------------------------
     // Same foe, same tile, same tick: the ONLY difference is the relic, so the
     // distance it covers is directly proportional to the multiplier.
-    const walked: number[] = [];
-    for (const withRelic of [true, false]) {
-      await wearOnly(nw, []);
-      if (withRelic) p.relic = 'relic_rime';
-      sys.hordes.foes = [];
-      const foe: any = mkFoe(60, 0, 9999);
-      foe.dayMob = false;
-      sys.hordes.foes.push(foe);
-      sys.hordes.update(0.5);
-      walked.push(Math.hypot(foe.x - (p.x + 60), foe.y - p.y));
+    //
+    // Measured on a UNIFORM CORRIDOR rather than from wherever the suite happens
+    // to have left the player standing. The old version put the foe 60px east
+    // and marched it west: if the player was against water, a cliff or a tree,
+    // canStand() refused both axes, the foe covered 0.00px in BOTH halves, and
+    // an assertion about chill failed for a reason that had nothing to do with
+    // chill. Surfaced by an RNG-stream shift during A8's mutation testing — the
+    // fifth time that mechanism has exposed something latent, and the second
+    // time the fix has been "stop measuring movement on ground you did not
+    // choose". findUniformCorridor exists for exactly this.
+    const lane = findUniformCorridor(nw, 6);
+    ok(!!lane, 'chill_aura: found uniform ground to march a foe across');
+    if (lane) {
+      nw.player.teleport(lane.x, lane.y);
+      nw.step(1);
+      const ox = lane.dx * 60, oy = lane.dy * 60;
+      const walked: number[] = [];
+      for (const withRelic of [true, false]) {
+        await wearOnly(nw, []);
+        if (withRelic) p.relic = 'relic_rime';
+        sys.hordes.foes = [];
+        const foe: any = mkFoe(ox, oy, 9999);
+        foe.dayMob = false;
+        sys.hordes.foes.push(foe);
+        sys.hordes.update(0.5);
+        walked.push(Math.hypot(foe.x - (p.x + ox), foe.y - (p.y + oy)));
+      }
+      ok(walked[0] > 0 && walked[1] > 0, `chill_aura: the foe marched in both runs (${walked[0].toFixed(2)}px chilled, ${walked[1].toFixed(2)}px free)`);
+      ok(walked[0] < walked[1],
+        `chill_aura: a foe near you marches slower (${walked[0].toFixed(2)}px vs ${walked[1].toFixed(2)}px)`);
     }
-    ok(walked[0] > 0 && walked[1] > 0, `chill_aura: the foe marched in both runs (${walked[0].toFixed(2)}px chilled, ${walked[1].toFixed(2)}px free)`);
-    ok(walked[0] < walked[1],
-      `chill_aura: a foe near you marches slower (${walked[0].toFixed(2)}px vs ${walked[1].toFixed(2)}px)`);
 
     // -- 4. regen_boost ------------------------------------------------------
+    // combat.update() only regenerates during the DAY, and this test runs
+    // wherever the suite's clock has drifted to — which by here is minutes of
+    // simulated time after two playthrough tests. When it drifted into a night
+    // the CONTROL half measured 0.000 hp/s and failed an assertion about the
+    // Tideculler relic for a reason that had nothing to do with the relic.
+    // Pinning the phase is a PRECONDITION, not the measurement: both halves
+    // still run through the real combat.update().
+    const savedIsNight = nw.ctx.isNight;
     const healed: number[] = [];
-    for (const withRelic of [true, false]) {
-      await wearOnly(nw, []);
-      if (withRelic) p.relic = 'relic_tide';
-      sys.hordes.foes = [];
-      p.hp = 20;
-      const before = p.hp;
-      sys.combat.update(1.0);
-      healed.push(p.hp - before);
-    }
+    try {
+      nw.ctx.isNight = () => false;
+      for (const withRelic of [true, false]) {
+        await wearOnly(nw, []);
+        if (withRelic) p.relic = 'relic_tide';
+        sys.hordes.foes = [];
+        p.hp = 20;
+        const before = p.hp;
+        sys.combat.update(1.0);
+        healed.push(p.hp - before);
+      }
+    } finally { nw.ctx.isNight = savedIsNight; }
     ok(healed[1] > 0, `regen_boost CONTROL: the day heals you at all (${healed[1].toFixed(3)} hp/s)`);
     ok(healed[0] > healed[1],
       `regen_boost: the Tideculler relic heals faster (${healed[0].toFixed(3)} vs ${healed[1].toFixed(3)} hp/s)`);
@@ -7587,3 +7633,660 @@ async function testWeaveBonuses(nw: any) {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// A8 — Cairns, Wardstones and the Hoarder
+// ---------------------------------------------------------------------------
+
+/** One wide worldgen sweep, shared by every A8 test that needs to find a real
+ *  Cairn or Wardstone in the real world.
+ *
+ *  A8's whole premise is that these are RARE — ~2e-4 per tile — so a ±15 tile
+ *  scan of the sort the other feature tests use would find nothing on almost
+ *  every seed and the tests would degrade into skips. One sweep of ~100k tiles
+ *  costs a few hundred ms, finds both kinds, and doubles as the density
+ *  measurement, so it is paid for once and cached. */
+let _a8Scan: { cairns: [number, number][]; wardstones: [number, number][]; tiles: number } | null = null;
+function scanForA8(nw: any, half = 160) {
+  if (_a8Scan) return _a8Scan;
+  const gen = nw.gen;
+  const cairns: [number, number][] = [];
+  const wardstones: [number, number][] = [];
+  let tiles = 0;
+  for (let ty = -half; ty < half; ty++) {
+    for (let tx = -half; tx < half; tx++) {
+      tiles++;
+      const f: any = gen.featureAt(tx, ty);
+      if (!f) continue;
+      if (f.id === 'cairn') cairns.push([tx, ty]);
+      else if (f.id === 'wardstone') wardstones.push([tx, ty]);
+    }
+  }
+  _a8Scan = { cairns, wardstones, tiles };
+  return _a8Scan;
+}
+
+/** Standable tiles within `r` of a tile — a Cairn boxed in by forest can only
+ *  wake what fits beside it, so the wake tests pick an open one rather than
+ *  weakening the assertion to "0 or more". */
+function openNeighbours(nw: any, tx: number, ty: number, r = 3): number {
+  let n = 0;
+  for (let dy = -r; dy <= r; dy++) {
+    for (let dx = -r; dx <= r; dx++) {
+      if (!dx && !dy) continue;
+      if (nw.world.canStand((tx + dx + 0.5) * 32, (ty + dy + 0.5) * 32, 5)) n++;
+    }
+  }
+  return n;
+}
+
+async function testA8DataRows(nw: any) {
+  const { BOONS, rollBoon } = await import('../data/boons');
+  const { FEATURES } = await import('../data/features');
+  const { ENEMIES } = await import('../data/enemies');
+  const { ITEMS } = await import('../data/items');
+  const { LOOT_BANDS, rarityIndex } = await import('../data/rarity');
+  const { hasEffect } = await import('./effects');
+  const { CFG } = await import('../data/config');
+  const { isRollable } = await import('./loot');
+
+  // ---- the boon table is a view onto hooks that already work ---------------
+  //
+  // This is the one assertion A8's whole design rests on. A boon that named an
+  // unregistered key would compile, roll, display a chip, and do nothing — the
+  // exact dormant-hook failure the C4 repair spent a milestone undoing, wearing
+  // a Wardstone as a costume. `hasEffect` proves the key is spelled right;
+  // testDormantEffectsNowLive is what proves each of those keys reaches the
+  // game, and together the two close the loop.
+  ok(BOONS.length >= 8, `the boon table is worth rolling on: ${BOONS.length} rows`);
+  const seenIds = new Set<string>();
+  for (const b of BOONS) {
+    ok(!seenIds.has(b.id), `boon ${b.id}: id is unique`);
+    seenIds.add(b.id);
+    ok(b.effects.length > 0, `boon ${b.id}: names at least one effect`);
+    for (const e of b.effects) ok(hasEffect(e), `boon ${b.id}: '${e}' is a REGISTERED effect hook`);
+    ok(b.sec >= 30 && b.sec <= 240, `boon ${b.id}: ${b.sec}s is a slice of a run, not the run`);
+    ok(b.weight > 0, `boon ${b.id}: weight ${b.weight} > 0 — a zero-weight row can never roll`);
+    ok(/^#[0-9a-f]{6}$/i.test(b.color), `boon ${b.id}: color is a hex value`);
+  }
+  // Negative control for the same claim: a made-up key must NOT pass the gate
+  // the loop above just used. Without this the loop proves only that hasEffect
+  // returns something, not that it discriminates.
+  ok(!hasEffect('boon_that_does_not_exist'),
+    'hasEffect() refuses a key nothing registered — the check above discriminates');
+
+  // rollBoon() reaches every row given enough draws, so no row is unreachable
+  const drawn = new Set<string>();
+  for (let i = 0; i < 4000; i++) drawn.add(rollBoon().id);
+  ok(drawn.size === BOONS.length,
+    `rollBoon() reaches every row: ${drawn.size}/${BOONS.length} in 4000 draws`);
+
+  // ---- the two features ----------------------------------------------------
+  const cairn: any = FEATURES.find((f) => f.id === 'cairn');
+  const ward: any = FEATURES.find((f) => f.id === 'wardstone');
+  ok(!!cairn, 'the Cairn is a real FEATURES row');
+  ok(!!ward, 'the Wardstone is a real FEATURES row');
+
+  ok(!!LOOT_BANDS[cairn.band], `Cairn band '${cairn.band}' resolves to a real LOOT_BAND`);
+  ok(rarityIndex(LOOT_BANDS[cairn.band].floor) >= rarityIndex('hallowed'),
+    'the Cairn band floors at Hallowed or better — the whole promise of the brief');
+  ok(cairn.wake && cairn.wake.count > 0, `the Cairn wakes ${cairn.wake?.count} — it is not free`);
+  ok(!cairn.toolClass, 'the Cairn needs no tool — the player who most needs it may have lost theirs');
+  ok(cairn.levelReq === 1, 'the Cairn needs no skill level either');
+  ok(cairn.respawnSec > 900, `the Cairn is opened once a run (${cairn.respawnSec}s vs a ~900s run)`);
+  ok(ward.respawnSec > 900, `so is the Wardstone (${ward.respawnSec}s)`);
+  ok(ward.boon === true, 'the Wardstone grants a boon');
+  ok(!ward.band && !ward.wake, 'the Wardstone pays in a blessing only — no band, no pack');
+  ok(ward.loot.length === 0, 'and drops nothing, so it never reads as a node with a bonus');
+
+  let cairnGear = 0;
+  for (const row of cairn.loot) {
+    ok(!!ITEMS[row.id], `Cairn loot '${row.id}' is a real item`);
+    if (isRollable(row.id)) cairnGear++;
+  }
+  ok(cairnGear >= 4, `the Cairn can pay into ${cairnGear} distinct gear slots — the band cannot dead-end`);
+
+  // ---- the Hoarder ---------------------------------------------------------
+  const h: any = ENEMIES.find((e) => e.id === 'hoarder');
+  ok(!!h, 'the Hoarder is a real ENEMIES row');
+  ok(h.behavior?.kind === 'flee', 'the Hoarder flees');
+  ok(h.dayOnly === true, 'and never joins a night wave');
+  ok(h.daytime === true, 'and does roam by day');
+  ok(!!LOOT_BANDS[h.lootBand], `Hoarder band '${h.lootBand}' resolves to a real LOOT_BAND`);
+  ok(rarityIndex(LOOT_BANDS[h.lootBand].floor) < rarityIndex(LOOT_BANDS[cairn.band].floor),
+    'the Hoarder pays below a Cairn — a chase you can lose must not be the best source in the game');
+
+  // The chase is only a chase if it is actually faster than you. This is the
+  // number the design argument in enemies.ts turns on, so it is asserted rather
+  // than left in a comment where a later speed tweak could quietly falsify it.
+  const fleeSpeed = h.speed * (h.behavior.fleeSpeedMul ?? 1);
+  ok(fleeSpeed > CFG.player.speed,
+    `a running Hoarder outruns the player: ${fleeSpeed.toFixed(0)} > ${CFG.player.speed} px/s`);
+  ok(fleeSpeed < CFG.player.speed * 1.25,
+    `...but only just (×${(fleeSpeed / CFG.player.speed).toFixed(2)}) — a rout is not a chase`);
+  // The escape MESSAGE depends on this ordering: escapeTiles has to fire before
+  // the silent day-mob fade, or losing a Hoarder becomes a thing that merely
+  // stops existing.
+  ok(h.behavior.escapeTiles < CFG.dayspawn.despawnTiles,
+    `the Hoarder's escape (${h.behavior.escapeTiles}t) fires inside the day-mob fade (${CFG.dayspawn.despawnTiles}t)`);
+  ok(h.behavior.spookTiles < h.behavior.escapeTiles,
+    'it starts running before it can escape, or it could never run at all');
+
+  void nw;
+}
+
+async function testA8Density(nw: any) {
+  const scan = scanForA8(nw);
+  const { cairns, wardstones, tiles } = scan;
+
+  // The claim under test is the DESIGN's, in the design's own units: "often
+  // one, sometimes none, occasionally two" Cairns in a run. Stating it as a
+  // per-run count rather than as a per-tile rate is deliberate — a per-tile
+  // assertion would just be the density table read back to itself, which is
+  // the tautology this suite keeps finding in its own history.
+  //
+  // TILES_PER_RUN is the fixture's assumption, not a measurement: a 15-minute
+  // run at 160 px/s covers roughly 4,500 tiles of path, and seeing a feature
+  // needs only that it pass through the viewport, so ~3,500 distinct tiles
+  // actually looked at is a conservative reading of it.
+  const TILES_PER_RUN = 3500;
+  const perRun = (n: number) => (n / tiles) * TILES_PER_RUN;
+
+  ok(cairns.length > 0, `Cairns exist in the world at all: ${cairns.length} in ${tiles} tiles`);
+  ok(wardstones.length > 0, `so do Wardstones: ${wardstones.length} in ${tiles} tiles`);
+
+  const cPerRun = perRun(cairns.length);
+  const wPerRun = perRun(wardstones.length);
+  ok(cPerRun >= 0.25 && cPerRun <= 3.5,
+    `a run meets about one Cairn: ${cPerRun.toFixed(2)} expected per ${TILES_PER_RUN} tiles`);
+  ok(wPerRun >= 0.8 && wPerRun <= 9,
+    `and a handful of Wardstones: ${wPerRun.toFixed(2)} expected per ${TILES_PER_RUN} tiles`);
+  ok(wardstones.length > cairns.length,
+    `Wardstones are the common one (${wardstones.length}) and Cairns the event (${cairns.length})`);
+}
+
+async function testA8EscapeHatch(nw: any) {
+  const { CFG } = await import('../data/config');
+  const { WorldGen } = await import('../world/worldgen');
+
+  // CFG.a8.enabled = false must restore the PRE-A8 world tile for tile, not a
+  // world that merely looks similar. Both A8 rows are appended last in FEATURES
+  // and the density table is a running cumulative sum, so this is true by
+  // construction — which is exactly the kind of claim that stops being true the
+  // moment somebody inserts a row in the middle, and exactly why it is measured
+  // here instead of trusted.
+  const saved = CFG.a8.enabled;
+  try {
+    CFG.a8.enabled = true;
+    const on = new WorldGen(nw.state.seed);
+    CFG.a8.enabled = false;
+    const off = new WorldGen(nw.state.seed);
+
+    let a8On = 0, a8Off = 0, differed = 0, compared = 0;
+    for (let ty = -70; ty < 70; ty++) {
+      for (let tx = -70; tx < 70; tx++) {
+        const a = on.featureAt(tx, ty);
+        const b = off.featureAt(tx, ty);
+        const aIsA8 = a?.id === 'cairn' || a?.id === 'wardstone';
+        const bIsA8 = b?.id === 'cairn' || b?.id === 'wardstone';
+        if (aIsA8) a8On++;
+        if (bIsA8) a8Off++;
+        compared++;
+        // Every tile that is not an A8 feature has to agree exactly.
+        if (!aIsA8 && (a?.id ?? null) !== (b?.id ?? null)) differed++;
+      }
+    }
+    ok(a8On > 0, `with the flag on the sample holds ${a8On} A8 features`);
+    ok(a8Off === 0, 'with the flag off it holds none');
+    ok(differed === 0,
+      `and every one of the other ${compared} tiles is unchanged — the revert restores the old world, not a similar one`);
+  } finally {
+    CFG.a8.enabled = saved;
+  }
+}
+
+async function testCairnPayout(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+  const { rolledOf } = await import('../data/items');
+  const { rarityIndex } = await import('../data/rarity');
+
+  const scan = scanForA8(nw);
+  // An open Cairn, so the wake has somewhere to stand. Picking the fixture is
+  // not the same as weakening the assertion: "five foes wake" is the claim, and
+  // a Cairn walled in by forest can only ever produce a smaller true answer.
+  const spot = scan.cairns.find(([tx, ty]) => openNeighbours(nw, tx, ty) >= 12);
+  ok(!!spot, `found an open Cairn to test (${scan.cairns.length} in the sample)`);
+  if (!spot) return;
+  const [ctx, cty] = spot;
+
+  const snap = snapshotPlayer(nw);
+  const savedFoes = sys.hordes.foes.slice();
+  const savedDrops = state.drops.slice();
+  const savedWake = CFG.a8.cairnWake;
+  const savedGod = state.god;
+  const key = `${ctx},${cty}`;
+  try {
+    state.god = true;
+    state.player.inv.pick_flint = (state.player.inv.pick_flint ?? 0) + 1;
+
+    // ---- open it, for real, through the gather interaction ------------------
+    sys.hordes.foes.length = 0;
+    state.drops.length = 0;
+    delete state.depleted[key];
+    nw.player.teleport((ctx + 0.5) * 32 + 20, (cty + 0.5) * 32);
+    nw.step(2);
+    ok(sys.gather.target?.def?.id === 'cairn', 'standing beside a Cairn targets it');
+    sys.gather.tryStart();
+    ok(sys.gather.active !== null, 'a Cairn opens through the ordinary gather interaction');
+
+    const need = sys.gather.active ? sys.gather.active.need : 5;
+    const cap = Math.ceil(need * 45) + 120;
+    let stepped = 0;
+    while (sys.gather.active !== null && stepped < cap) { nw.step(1); stepped++; }
+    ok(sys.gather.active === null, `the Cairn opens (${stepped} steps, cap ${cap})`);
+    ok(!!state.depleted[key], 'and stays open — one Cairn is opened once');
+
+    // ---- the payout ---------------------------------------------------------
+    const gear = state.drops.filter((d: any) => rolledOf(d.id));
+    ok(state.drops.length > 0, `the Cairn pays: ${state.drops.length} stacks on the floor`);
+    ok(gear.length > 0, `...including ${gear.length} rolled gear piece(s)`);
+    const floor = rarityIndex('hallowed');
+    for (const d of gear) {
+      const r = rolledOf(d.id)!;
+      ok(rarityIndex(r.rarity) >= floor,
+        `${r.name} is ${r.rarity} — at or above the Cairn band's Hallowed floor`);
+    }
+
+    // ---- the price ----------------------------------------------------------
+    //
+    // Counted as NON-day-mobs rather than as "every foe on the field". Opening a
+    // Cairn takes five sim-seconds and CFG.dayspawn spawns prey every three, so
+    // the field also holds whatever wandered in while the player was digging.
+    // That is not noise to be tolerated — it is the discriminator: `spawn()`
+    // only runs while a night wave is draining, so during the day a foe that is
+    // not a day mob can ONLY have come out of wake().
+    const woken = () => sys.hordes.foes.filter((f: any) => !f.dayMob);
+    ok(woken().length > 0,
+      `opening it woke ${woken().length} — a Cairn is not free loot`);
+    ok(woken().length >= 3,
+      'and it woke a PACK, not a straggler — the price has to read as a price');
+
+    // ---- the matched negative: the wake is a switch, not scenery -------------
+    sys.hordes.foes.length = 0;
+    state.drops.length = 0;
+    delete state.depleted[key];
+    CFG.a8.cairnWake = false;
+    nw.player.teleport((ctx + 0.5) * 32 + 20, (cty + 0.5) * 32);
+    nw.step(2);
+    sys.gather.tryStart();
+    let s2 = 0;
+    while (sys.gather.active !== null && s2 < cap) { nw.step(1); s2++; }
+    ok(sys.gather.active === null, 'the same Cairn opens again with the wake disabled');
+    ok(woken().length === 0,
+      'CFG.a8.cairnWake=false wakes nothing — the pack came from the flag, not from the night');
+    ok(state.drops.length > 0, '...and it still pays, so the two halves are independent');
+  } finally {
+    CFG.a8.cairnWake = savedWake;
+    state.god = savedGod;
+    // ok() throws, so every restore lives here.
+    for (const f of sys.hordes.foes) nw.ctx.views?.removeFoe?.(f.uid);
+    sys.hordes.foes.length = 0;
+    for (const f of savedFoes) sys.hordes.foes.push(f);
+    state.drops.length = 0;
+    for (const d of savedDrops) state.drops.push(d);
+    snap.restore();
+  }
+}
+
+async function testWardstoneBoons(nw: any) {
+  const { state, sys } = nw;
+  const { BOONS } = await import('../data/boons');
+  const { CFG } = await import('../data/config');
+  const { activeBoons, activeEffects, grantBoon, tickBoons } = await import('./effects');
+  const { addXp } = await import('../rules');
+
+  const snap = snapshotPlayer(nw);
+  const savedBoons = (state.boons ?? []).slice();
+  const savedSockets = state.sockets;
+  const savedDrops = state.drops.slice();
+  try {
+    await wearOnly(nw, []);
+    state.sockets = {};
+    state.boons = [];
+
+    // ---- 1. a real Wardstone in the real world grants a real boon -----------
+    const scan = scanForA8(nw);
+    const spot = scan.wardstones[0];
+    ok(!!spot, `found a Wardstone to touch (${scan.wardstones.length} in the sample)`);
+    if (spot) {
+      const [wtx, wty] = spot;
+      delete state.depleted[`${wtx},${wty}`];
+      state.drops.length = 0;
+      nw.player.teleport((wtx + 0.5) * 32 + 16, (wty + 0.5) * 32);
+      nw.step(2);
+      ok(sys.gather.target?.def?.id === 'wardstone', 'standing at a Wardstone targets it');
+      sys.gather.tryStart();
+      ok(sys.gather.active !== null, 'a Wardstone is touched through the gather interaction');
+      let stepped = 0;
+      const cap = Math.ceil((sys.gather.active?.need ?? 3) * 45) + 120;
+      while (sys.gather.active !== null && stepped < cap) { nw.step(1); stepped++; }
+      ok(sys.gather.active === null, `the Wardstone answers (${stepped} steps)`);
+
+      const live = activeBoons(state);
+      ok(live.length === 1, `touching it granted exactly one boon: ${live.map((b) => b.name).join(', ')}`);
+      ok(state.drops.length === 0, 'and dropped nothing — a Wardstone pays in a blessing, not in loot');
+      // The seam that matters: the boon has to be readable at the site every
+      // affix, relic and weave is read at. If it were not, the chip would say
+      // Ember Ward and nothing in the world would be on fire.
+      const fx = activeEffects(state);
+      for (const e of live[0].effects) {
+        ok(fx.has(e), `${live[0].name} reaches activeEffects() as '${e}'`);
+      }
+    }
+
+    // ---- 2. the boon actually moves a number the game reads -----------------
+    //
+    // Granting directly here, because the roll is weighted and waiting for
+    // Clear Sight to come up is a lottery, not a test. What is being proved is
+    // NOT that xp_boost works — testDormantEffectsNowLive owns that — but that
+    // a BOON feeds the same consumption site an item does. Matched pair through
+    // the live addXp() path, and the RATIO is used rather than the absolute so
+    // whatever the wire is doing to xpRate cancels out of both halves.
+    state.boons = [];
+    const before = state.player.xp.combat ?? 0;
+    addXp(state, 'combat', 1000);
+    const plain = (state.player.xp.combat ?? 0) - before;
+    ok(plain > 0, `a plain 1000 xp award lands as ${plain}`);
+
+    const sage = BOONS.find((b) => b.effects.includes('xp_boost'))!;
+    ok(!!sage, 'a boon in the table carries xp_boost');
+    const g = grantBoon(state, sage);
+    ok(g.how === 'new', 'granting it onto an empty slate is a new boon, not a refresh');
+    const mid = state.player.xp.combat ?? 0;
+    addXp(state, 'combat', 1000);
+    const boosted = (state.player.xp.combat ?? 0) - mid;
+    const ratio = boosted / plain;
+    ok(ratio > 1.15 && ratio < 1.25,
+      `${sage.name} makes the same award land richer: ${plain} → ${boosted} (×${ratio.toFixed(3)})`);
+
+    // ---- 3. it ends ---------------------------------------------------------
+    g.boon.until = state.clock - 1;
+    ok(!activeEffects(state).has('xp_boost'),
+      'an expired boon is gone from activeEffects() before anything sweeps it');
+    const after = state.player.xp.combat ?? 0;
+    addXp(state, 'combat', 1000);
+    const expired = (state.player.xp.combat ?? 0) - after;
+    ok(expired === plain, `and the award is back to ${plain} (got ${expired}) — the bonus really lifted`);
+    const gone = tickBoons(state);
+    ok(gone.length === 1 && gone[0].id === sage.id, 'tickBoons() reports what lifted, so the Feed can say so');
+    ok(activeBoons(state).length === 0, '...and sweeps it out of the list');
+
+    // ---- 4. refresh, not stack ---------------------------------------------
+    state.boons = [];
+    const first = grantBoon(state, sage);
+    const t1 = first.boon.until;
+    state.clock += 5;
+    const second = grantBoon(state, sage);
+    state.clock -= 5;
+    ok(second.how === 'refreshed', 'granting a live boon again refreshes it');
+    ok(activeBoons(state).length === 1, '...to ONE boon, not two — two Ember Wards is not a hotter fire');
+    ok(second.boon.until > t1, `...and extends it (${t1.toFixed(1)} → ${second.boon.until.toFixed(1)})`);
+
+    // ---- 5. the cap displaces the oldest, out loud -------------------------
+    state.boons = [];
+    const distinct = BOONS.slice(0, CFG.a8.maxBoons + 1);
+    ok(distinct.length === CFG.a8.maxBoons + 1, `the table has more rows than the cap (${CFG.a8.maxBoons})`);
+    const grants = distinct.map((d) => grantBoon(state, d));
+    ok(activeBoons(state).length === CFG.a8.maxBoons,
+      `the cap holds at ${CFG.a8.maxBoons} live boons`);
+    const last = grants[grants.length - 1];
+    ok(last.how === 'displaced', 'the one over the cap displaces rather than silently failing');
+    ok(last.displaced?.id === distinct[0].id,
+      `...and it is the OLDEST that gives way (${last.displaced?.name})`);
+    const stillLive = new Set(activeBoons(state).map((b) => b.id));
+    ok(!stillLive.has(distinct[0].id), 'the displaced boon is no longer acting on the game');
+  } finally {
+    state.sockets = savedSockets;
+    state.boons = savedBoons;
+    state.drops.length = 0;
+    for (const d of savedDrops) state.drops.push(d);
+    snap.restore();
+  }
+}
+
+async function testHoarderChase(nw: any) {
+  const { state, sys } = nw;
+  const { ENEMIES } = await import('../data/enemies');
+  const { CFG } = await import('../data/config');
+  const { rolledOf } = await import('../data/items');
+  const { rarityIndex } = await import('../data/rarity');
+
+  const hoarderDef: any = ENEMIES.find((e) => e.id === 'hoarder')!;
+  const chargerDef: any = ENEMIES.find((e) => e.id === 'gnawer')!;
+
+  const snap = snapshotPlayer(nw);
+  const savedFoes = sys.hordes.foes.slice();
+  const savedDrops = state.drops.slice();
+  const savedGod = state.god;
+  const savedHoarderWeight = hoarderDef.weight;
+  const savedFlag = CFG.a8.enabled;
+  // Not covered by snapshotPlayer, and all three would leak: 40 Hoarder kills
+  // pay ~2,600 gold, which is four times CFG.horde.bossAtGold — every night
+  // wave AFTER this test would start rolling domain lords into the horde. The
+  // vitals are saved because part 2 measures "the player took no damage", and
+  // an earlier test leaving vigor at zero would starve them mid-assertion.
+  const savedGold = state.player.gold;
+  const savedVigor = state.player.vigor;
+  const savedResolve = state.player.resolve;
+  try {
+    await wearOnly(nw, []);
+    state.player.vigor = CFG.vitals.vigorMax;
+    state.player.resolve = CFG.vitals.resolveMax;
+    // Uniform ground, so "it moved away" is about the AI and not about the
+    // Hoarder happening to run downhill. Same reasoning as findUniformCorridor.
+    const lane = findUniformCorridor(nw, 8);
+    ok(!!lane, 'found uniform ground to measure a chase on');
+    if (!lane) return;
+    nw.player.teleport(lane.x, lane.y);
+    nw.step(1);
+    state.god = true;
+
+    const place = (def: any) => {
+      const f: any = makeDummyFoe(nw, def, lane.dx * 96 + lane.dy * 8, lane.dy * 96 + lane.dx * 8, 200);
+      f.dmg = def.dmg; f.baseDmg = def.dmg; f.atkT = 0; f.telegraphT = 0;
+      f.dayMob = true; f.homeX = f.x; f.homeY = f.y;
+      sys.hordes.foes.push(f);
+      return f;
+    };
+    const dist = (f: any) => Math.hypot(f.x - state.player.x, f.y - (state.player.y - 10));
+
+    // ---- 1. it runs away, and a charger does not ---------------------------
+    sys.hordes.foes.length = 0;
+    const hoarder = place(hoarderDef);
+    const d0 = dist(hoarder);
+    nw.step(30);
+    const d1 = dist(hoarder);
+    ok(d1 > d0 + 8, `a spooked Hoarder runs: ${d0.toFixed(0)} → ${d1.toFixed(0)} px away`);
+
+    sys.hordes.foes.length = 0;
+    const gnawer = place(chargerDef);
+    const g0 = dist(gnawer);
+    nw.step(30);
+    const g1 = dist(gnawer);
+    ok(g1 < g0 - 8, `...and the positive control closes: ${g0.toFixed(0)} → ${g1.toFixed(0)} px`);
+
+    // ---- 2. it never bites -------------------------------------------------
+    sys.hordes.foes.length = 0;
+    state.god = false;
+    state.player.hp = 100;
+    const close: any = place(hoarderDef);
+    close.x = state.player.x + 6; close.y = state.player.y - 10;
+    nw.step(60);
+    ok(state.player.hp === 100,
+      `a Hoarder standing on top of you never attacks (hp ${state.player.hp})`);
+    sys.hordes.foes.length = 0;
+    const biter: any = place(chargerDef);
+    biter.x = state.player.x + 6; biter.y = state.player.y - 10;
+    nw.step(60);
+    ok(state.player.hp < 100, `...and the positive control does (hp ${state.player.hp})`);
+    state.god = true;
+    state.player.hp = 100;
+
+    // ---- 3. it escapes, loudly, and only past escapeTiles -------------------
+    const esc = hoarderDef.behavior.escapeTiles;
+    sys.hordes.foes.length = 0;
+    const near: any = place(hoarderDef);
+    near.x = state.player.x + (esc - 4) * 32; near.y = state.player.y - 10;
+    const nearUid = near.uid;
+    nw.step(2);
+    ok(sys.hordes.foes.some((f: any) => f.uid === nearUid),
+      `inside escape range (${esc - 4}t) it is still there to be chased`);
+
+    sys.hordes.foes.length = 0;
+    const far: any = place(hoarderDef);
+    far.x = state.player.x + (esc + 3) * 32; far.y = state.player.y - 10;
+    const farUid = far.uid;
+    nw.step(2);
+    ok(!sys.hordes.foes.some((f: any) => f.uid === farUid),
+      `past escape range (${esc + 3}t) it is gone`);
+    // recent() rather than slice(lengthBefore): GameLog is a 2000-entry RING
+    // BUFFER, so once it is full `entries.length` stops growing and slicing from
+    // a remembered length returns nothing. Only two ticks passed, so the line is
+    // certainly inside the last thirty.
+    ok(nw.log.recent(30).some((e: any) => /escaped/i.test(e.msg)),
+      '...and the Chronicle says so — losing a Hoarder is an event, not a silent despawn');
+
+    // ---- 4. the corpse pays on the hoard band ------------------------------
+    let gearSeen = 0, belowFloor = 0;
+    const floor = rarityIndex('woven');
+    for (let i = 0; i < 40; i++) {
+      sys.hordes.foes.length = 0;
+      state.drops.length = 0;
+      const victim: any = place(hoarderDef);
+      victim.x = state.player.x + 40; victim.y = state.player.y;
+      sys.hordes.hurt(victim, 99999);
+      for (const d of state.drops) {
+        const r = rolledOf(d.id);
+        if (!r) continue;
+        gearSeen++;
+        if (rarityIndex(r.rarity) < floor) belowFloor++;
+      }
+    }
+    ok(gearSeen > 0, `40 Hoarder kills produced ${gearSeen} rolled gear pieces`);
+    ok(belowFloor === 0, 'and none of them fell below the hoard band’s Woven floor');
+
+    // ---- 5. day pool yes, night wave never ---------------------------------
+    //
+    // The weight is cranked for the duration so the two halves are decisive
+    // rather than statistical: at a dominating weight, "0 in 40 night spawns"
+    // is a real assertion about the dayOnly filter instead of a coin flip.
+    // Cranking a FIXTURE is not the same as tuning the thing under test.
+    hoarderDef.weight = 5000;
+    const countIn = (fn: string, n: number) => {
+      let hits = 0;
+      for (let i = 0; i < n; i++) {
+        sys.hordes.foes.length = 0;
+        (sys.hordes as any)[fn]();
+        if (sys.hordes.foes.some((f: any) => f.def.id === 'hoarder')) hits++;
+      }
+      sys.hordes.foes.length = 0;
+      return hits;
+    };
+    const dayHits = countIn('spawnDayMob', 40);
+    ok(dayHits > 0, `the Hoarder is in the day pool (${dayHits}/40 day spawns at a dominating weight)`);
+    (sys.hordes as any).toSpawn = 99999;
+    const nightHits = countIn('spawn', 40);
+    ok(nightHits === 0, `and never in a night wave (${nightHits}/40 at the same weight)`);
+
+    // The same flag that removes the Cairn and the Wardstone from worldgen
+    // removes the Hoarder from the day pool.
+    CFG.a8.enabled = false;
+    const offHits = countIn('spawnDayMob', 40);
+    CFG.a8.enabled = savedFlag;
+    ok(offHits === 0, 'CFG.a8.enabled=false takes it back out of the day pool entirely');
+  } finally {
+    CFG.a8.enabled = savedFlag;
+    hoarderDef.weight = savedHoarderWeight;
+    state.player.gold = savedGold;
+    state.player.vigor = savedVigor;
+    state.player.resolve = savedResolve;
+    (sys.hordes as any).toSpawn = 0;
+    state.god = savedGod;
+    for (const f of sys.hordes.foes) nw.ctx.views?.removeFoe?.(f.uid);
+    sys.hordes.foes.length = 0;
+    for (const f of savedFoes) sys.hordes.foes.push(f);
+    state.drops.length = 0;
+    for (const d of savedDrops) state.drops.push(d);
+    snap.restore();
+  }
+}
+
+async function testLootGroups(nw: any) {
+  const { rollLoot } = await import('../rules');
+  const { FEATURES } = await import('../data/features');
+  const { ENEMIES } = await import('../data/enemies');
+  const { isRollable } = await import('./loot');
+
+  const N = 6000;
+
+  // ---- 1. an ungrouped row is untouched ------------------------------------
+  // Every loot table in the game predates groups. If adding them moved an
+  // ordinary row's odds by so much as a percent, A8 would have silently
+  // retuned the drop rate of all 25 enemies and all 15 features.
+  let hits = 0;
+  for (let i = 0; i < N; i++) hits += rollLoot([{ id: 'stone', min: 1, max: 1, chance: 0.4 }]).length;
+  const rate = hits / N;
+  ok(Math.abs(rate - 0.4) < 0.025,
+    `an ungrouped row still rolls its own chance: ${rate.toFixed(3)} against 0.400`);
+
+  // ---- 2. a group yields exactly one, by weight ----------------------------
+  const table = [
+    { id: 'stone', min: 1, max: 1, chance: 30, group: 'g' },
+    { id: 'log', min: 1, max: 1, chance: 10, group: 'g' },
+  ];
+  const sizes = new Set<number>();
+  let stones = 0;
+  for (let i = 0; i < N; i++) {
+    const out = rollLoot(table);
+    sizes.add(out.length);
+    if (out.length && out[0].id === 'stone') stones++;
+  }
+  ok(sizes.size === 1 && sizes.has(1),
+    `a group yields exactly one row on every roll (saw sizes: ${[...sizes].join(',')})`);
+  const share = stones / N;
+  ok(Math.abs(share - 0.75) < 0.025,
+    `...drawn by weight, not uniformly: 30-against-10 came up ${(share * 100).toFixed(1)}% (want 75%)`);
+
+  // ---- 3. the two halves compose ------------------------------------------
+  const mixed = [...table, { id: 'berry', min: 1, max: 1, chance: 1 }];
+  let composed = true;
+  for (let i = 0; i < 400; i++) {
+    const out = rollLoot(mixed);
+    if (out.length !== 2 || !out.some((s: any) => s.id === 'berry')) composed = false;
+  }
+  ok(composed, 'a grouped row and an ungrouped row in one table both fire');
+
+  // ---- 4. the regression this exists for ----------------------------------
+  //
+  // The Cairn's five gear rows at independent chances came out empty 22% of the
+  // time and the whole table empty 3.3% of the time — a design promising
+  // "guaranteed Hallowed+" quietly delivering nothing after a map crossing and
+  // a fight. The Gauntlet caught it as a 1-in-30 flake before a player ever
+  // could. Stated here as the arithmetic, so it cannot come back.
+  for (const [what, loot] of [
+    ['Cairn', (FEATURES.find((f) => f.id === 'cairn') as any).loot],
+    ['Hoarder', (ENEMIES.find((e) => e.id === 'hoarder') as any).loot],
+  ] as [string, any][]) {
+    let empty = 0, noGear = 0;
+    for (let i = 0; i < 3000; i++) {
+      const out = rollLoot(loot);
+      if (!out.length) { empty++; noGear++; continue; }
+      if (!out.some((s: any) => isRollable(s.id))) noGear++;
+    }
+    ok(empty === 0, `3000 ${what} rolls, none of them empty`);
+    ok(noGear === 0, `3000 ${what} rolls, every one held a piece of gear`);
+  }
+
+  void nw;
+}
