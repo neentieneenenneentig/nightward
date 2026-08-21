@@ -1,12 +1,12 @@
 # A — The Arsenal (the Hero Siege yoink)
 
-> **Status:** **A1 + A4 + A3 SHIPPED 2026-08-21** (branch `dev/night-build`, unmerged).
-> A2/A5–A8 planned, not implemented. Written 2026-08-21.
+> **Status:** **A1 + A4 + A3 + A5 SHIPPED 2026-08-21** (branch `dev/night-build`, unmerged).
+> A2/A6–A8 planned, not implemented. Written 2026-08-21.
 > **Supersedes nothing.** Additive to everything shipped through N4.3.
 > **Touches:** `data/items.ts`, `data/enemies.ts`, `data/echoes.ts`, `ui/ui.ts`,
 > `systems/drops.ts`, `systems/combat.ts`, `systems/hordes.ts`, plus new files
 > (`data/affixes.ts`, `data/rarity.ts`, `data/weaves.ts`, `systems/loot.ts`,
-> `systems/abilities.ts`, `ui/tooltip.ts`).
+> `systems/abilities.ts`, `systems/weaves.ts`, `ui/tooltip.ts`).
 > **Does not touch** the N4 file set (`data/network.ts`, `systems/network.ts`,
 > `systems/deepwire.ts`, `ui/lens/*`), so it can run in parallel with N4.4+.
 > **Collides with N4.5 on exactly one thing** — the difficulty selector. See §5.7.
@@ -468,7 +468,7 @@ everything after is depth.
 | **A2 — Elites** | `ENEMY_AFFIXES`, spawn-time roll, nameplates, aura rings, conflict table | Needs A1 to have something to drop. **Gated on the N4.3 balance verdict.** |
 | **A3 — The Bar** ✅ | `systems/abilities.ts`, Echoes promoted to actives, Resolve as the cost, cooldown sweeps | Independent of A1/A2; ran in parallel. **Shipped 2026-08-21.** |
 | **A4 — The Face** ✅ | orbs, comparison tooltips, loot beams, rarity colour everywhere, minimap | Makes A1 visible. **Shipping A1 without A4 ships an invisible feature.** **Shipped 2026-08-21.** |
-| **A5 — Weaves** | sockets, threads, `weaves.ts` | Multiplies A1's space; wants A1 tuned first. |
+| **A5 — Weaves** ✅ | sockets, threads, `weaves.ts` | Multiplies A1's space; wants A1 tuned first. **Shipped 2026-08-21.** |
 | **A6 — The Hub** | Reliquary, Forge-Warden, gold retune | Wants A1's tier weights settled. |
 | **A7 — Covenants** | merge with N4.5's data-budget tier selector | **Blocked on N4.5.** Do not start early. |
 | **A8 — Cairns & the Hoarder** | chests, shrines, loot goblin, `flee` behaviour | Pure flavour. Slot anywhere after A1. |
@@ -478,8 +478,8 @@ coloured beam, walk over, read a tooltip, feel the upgrade. Gauntlet 1744/1744 a
 tests, 20 consecutive green runs, typecheck clean on both configs. See the ROADMAP entry
 for what the build actually found.
 
-**Next in this batch: A5 (Weaves) or A2 (Elites).** A5 wants A1's tier weights settled first;
-A2 remains gated on the N4.3 balance verdict. A3 shipped 2026-08-21 — see the ROADMAP entry.
+**Next in this batch: A2 (Elites).** A2 remains gated on the N4.3 balance verdict. A5 shipped
+2026-08-21 — see the ROADMAP entry.
 
 ---
 
@@ -510,3 +510,10 @@ A2 remains gated on the N4.3 balance verdict. A3 shipped 2026-08-21 — see the 
 8. **New:** a Riftborn weapon measured ×2.23 base damage (9 → 20.08) in the smoke probe.
    It is ~0.35% of rift-band drops, it always carries a curse, and rift-band drops only
    happen for 60 s after a rift — but it is the largest single number A1 can produce.
+9. **New, from the A5 build:** threads drop from domain lords (2 per kill, matching the
+   lord's element), not from elites — A2's elites do not exist yet, so the lord is the
+   interim source and the plan's "threads drop from elites" stays on the A2 ticket.
+   A full clear of five lords is ten threads: enough for Long Night (3) plus Ironwake (2),
+   or Hollow Song (2) plus spares. Worth a look in the playtest, alongside A5's socket
+   economy — a 3-socket vessel only exists on Hallowed-and-up, so The Long Night is gated
+   behind both the threads AND the vessel.

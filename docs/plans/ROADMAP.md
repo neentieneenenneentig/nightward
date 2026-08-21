@@ -159,8 +159,41 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 > Gauntlet 1778/1778 across 109 tests, typecheck clean on both configs. The open question
 > from A-arsenal §9.5 — *is Resolve the right cost?* — is now a playtest verdict, not a blocker.
 >
-> **Next: A5 (Weaves) or A2 (Elites)** — A5 wants A1's tier weights settled first; A2 stays
-> gated on the N4.3 balance verdict.
+> **Next: A2 (Elites)** — still gated on the N4.3 balance verdict.
+
+---
+
+> ## A5 — Sockets & Weaves, 2026-08-21 (branch `dev/night-build`, unmerged)
+>
+> Hero Siege's runewords, Veil-legal. Rolled gear now rolls **0–3 sockets by rarity** — a
+> 3-socket vessel only exists on Hallowed-and-up, so The Long Night is gated behind both its
+> threads *and* a worthy piece to hold them. **Threads** are five authored items (Rime /
+> Ember / Null / Tide / Thorn); they are not gear — no roll, no equip slot — and they socket
+> into rolled gear, in order. Slotting is append-only, which is the whole rule made mechanical:
+> a reorder breaks the weave, exactly like the Loom's no-respec.
+>
+> Three weaves, each with exactly one consumer wired:
+>
+> | Weave | Sequence | Bonus | Consumer |
+> |---|---|---|---|
+> | The Long Night | Rime · Rime · Ember | +25% damage at night | `combat.resolveHit` |
+> | Hollow Song | Null · Tide | kills restore 4 Resolve | the two kill paths |
+> | Ironwake | Thorn · Thorn | reflected melee damage also stuns | `combat.damagePlayer` |
+>
+> Threads drop from **domain lords** (2 per kill, matched to the lord's element) — the plan
+> said "from elites", but A2's elites are gated, so the lord is the interim source and a full
+> clear of five lords is ten threads: enough for Long Night plus Ironwake, or Hollow Song plus
+> spares. `systems/weaves.ts` owns the slotting and the typed bonus getters; `data/weaves.ts`
+> is pure data plus one matcher shared by the system and the tooltip, so the two can never
+> disagree about what is and is not a weave. The tooltip shows the socket row, the slotted
+> threads, and any completed weave.
+>
+> **The build found one dormant hook:** `thorns_reflect` was registered but never applied in
+> production — the Thornwarden relic and the "of the Thorn" suffix were placebo. Ironwake is
+> deliberately self-contained (its own reflect + stun) rather than built on a hook that does
+> not fire; wiring `thorns_reflect` is now a separate, small cleanup.
+>
+> Gauntlet **1859/1859 across 112 tests**, typecheck clean on both configs.
 
 ---
 
