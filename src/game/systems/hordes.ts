@@ -8,7 +8,7 @@ import { CFG } from '../data/config';
 import { ENEMIES, type EnemyDef } from '../data/enemies';
 import { SKILLS } from '../data/skills';
 import { addXp, awardSoulXp, hall, rollLoot, territoryScore } from '../rules';
-import { activeEffects } from './effects';
+import { activeEffects, armMoveBurst } from './effects';
 import type { Building } from '../state';
 import { TILE } from '../world/worldgen';
 import { BUILDINGS } from '../data/buildings';
@@ -49,6 +49,7 @@ export class HordeSystem {
   private projectiles: Projectile[] = [];
   private toSpawn = 0;
   private spawnT = 0;
+  private _chillAura = false;
   private daySpawnT = 0;
 
   constructor(private ctx: any) {}
@@ -103,6 +104,9 @@ export class HordeSystem {
   }
 
   update(dt: number) {
+    // C4: 'chill_aura' is read once per tick, not once per foe — activeEffects()
+    // allocates a Set each call and the march step runs for every foe alive.
+    this._chillAura = activeEffects(this.ctx.state).has('chill_aura');
     if (this.ctx.isNight() && this.toSpawn > 0 && this.foes.length < CFG.horde.maxAlive) {
       this.spawnT -= dt;
       if (this.spawnT <= 0) {
@@ -460,6 +464,14 @@ export class HordeSystem {
     // C1: Rime Nova chill — the echo system stamps chillUntil/chillMult on struck foes
     const ef2 = f as any;
     const chill = ef2.chillUntil > state.clock ? (ef2.chillMult ?? 1) : 1;
+    // C4: 'chill_aura' — the Rimewraith relic and the 'of the Rime' suffix.
+    // Registered in C4, read by nothing until now, despite its own handler
+    // comment claiming this system already checked it. Proximity rather than a
+    // stamp: the cold radiates from YOU, so it lifts the moment a foe backs off,
+    // and it needs no per-foe bookkeeping to expire.
+    const aura = this._chillAura
+      && Math.hypot(f.x - state.player.x, f.y - state.player.y) < CFG.itemEffects.chillAuraTiles * TILE
+      ? CFG.itemEffects.chillAuraMult : 1;
     // C5: tower slow debuff (Frostspire etc.) — 40% speed reduction
     const towerSlow = ef2._slowedUntil > state.clock ? 0.6 : 1;
     // X1: buff aura — allies near a buffer get +speed and +dmg. Restore to
@@ -483,7 +495,7 @@ export class HordeSystem {
     // two are deliberately separate — steady-state hostility and a shock are not
     // the same experience.
     const surge = this.ctx.omens?.mul?.('hordeAggression') ?? 1;
-    let step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain * fear * chill * towerSlow * tarSlow * fray * surge;
+    let step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain * fear * chill * aura * towerSlow * tarSlow * fray * surge;
     step *= buffSpeedMul;
     if (stunned) step = 0;
     let blocked: Building | null = null;
@@ -794,6 +806,14 @@ export class HordeSystem {
       this.ctx.vitals?.onKill?.(!!f.def.boss);
       // A5: Hollow Song stacks on top of the S1 resolve-per-kill
       this.ctx.weaves?.onKill?.();
+    }
+    // C4: 'move_burst_on_kill' — the Tideculler relic and the 'of the Tide'
+    // suffix. Armed on any kill that feeds vitals (so a tower's kill does not
+    // pay it, matching every other on-kill reward), read by main's movement
+    // product through moveBurstMul().
+    if (feedVitals && activeEffects(state).has('move_burst_on_kill')) {
+      armMoveBurst(state);
+      this.ctx.particles?.spawn?.('wisp', state.player.x, state.player.y - 8, 3);
     }
     // W6: track kills for scoreboard
     this.ctx.scoreboard?.onKill?.(!!f.def.boss);

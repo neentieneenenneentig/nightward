@@ -40,7 +40,7 @@ import { ScoreboardSystem } from './game/systems/scoreboard';
 import { SoulFeedSystem } from './game/systems/soulfeed';
 import { MaterialEffectSystem } from './game/systems/materialEffects';
 import { craft } from './game/systems/crafting';
-import { activeEffects } from './game/systems/effects';
+import { activeEffects, moveBurstMul } from './game/systems/effects';
 import { toggleEquip, invAdd, gearMod, playerMaxHp } from './game/rules';
 import { BUILDINGS } from './game/data/buildings';
 import { NET_GAME_MAP, NET_METRICS, BEACON_INSPECT, LENS_SECTION_INSPECT, allBeacons, type NetInspect } from './game/data/network';
@@ -583,8 +583,12 @@ async function boot() {
     const omenSpeedMul = omens.mul('moveSpeed');
     // A1: 'Swift' speeds you up, 'of Weight' (a Riftborn curse) drags.
     const gearSpeedMul = gearMod(state, 'moveSpeed');
+    // C4: 'move_burst_on_kill' — hordes.hurt arms a window on a kill; this is
+    // the half that was missing. 1.0 when the window is shut, so it costs a
+    // multiply and no branch.
+    const burstMul = moveBurstMul(state);
     const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y),
-      feetSpeed * moveSpeedMul * resolveSpeedMul * loomSpeedMul * matSpeedMul * siltMul * omenSpeedMul * gearSpeedMul);
+      feetSpeed * moveSpeedMul * resolveSpeedMul * loomSpeedMul * matSpeedMul * siltMul * omenSpeedMul * gearSpeedMul * burstMul);
     state.player.x = player.x;
     state.player.y = player.y;
 
@@ -652,7 +656,7 @@ async function boot() {
     chunks.tickGlow(performance.now());
     chunks.tickRelief(state.clock);
 
-    views.syncFoes(hordes.foes, alpha);
+    views.syncFoes(hordes.foes, alpha, activeEffects(state).has('see_foe_hp'));
     views.syncBosses(state.worldBosses, alpha);
     views.syncDrops(state.drops, state.clock);   // B5
     for (const b of state.buildings) views.syncBuilding(b);

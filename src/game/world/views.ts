@@ -54,7 +54,7 @@ class FoeView {
     const oy = sz * 0.38 + lightDY * heightClass * 1.5;
     shadow.ellipse(ox, oy, sz * 0.4, sz * 0.16).fill({ color: 0x0a080e, alpha });
   }
-  sync(foe: Foe, alpha: number) {
+  sync(foe: Foe, alpha: number, revealHp = false) {
     const fx = foe.px + (foe.x - foe.px) * alpha;
     const fy = foe.py + (foe.y - foe.py) * alpha;
     this.sprite.texture = this.frames[Math.floor(foe.animT / 0.22) % 2];
@@ -63,7 +63,12 @@ class FoeView {
     this.cont.zIndex = fy;
     const frac = foe.hp / foe.maxHp;
     this.bar.clear();
-    if (frac < 1) {
+    // C4: 'see_foe_hp' — the Nullmaw relic and the 'of the Eye' suffix. The bar
+    // already existed but only appeared once a foe was hurt, which is exactly
+    // when you no longer need it. What the effect buys is APPRAISAL: seeing an
+    // untouched foe's pool before you commit to it. Registered in C4 and read
+    // by nothing until now.
+    if (frac < 1 || revealHp) {
       const bw = this.w;
       this.bar.rect(-bw / 2, -this.w / 2 - 5, bw, 2).fill(0x110a10);
       this.bar.rect(-bw / 2, -this.w / 2 - 5, bw * frac, 2).fill(frac > 0.5 ? 0x8fd05a : frac > 0.25 ? 0xe6c86e : 0xd05a5a);
@@ -388,8 +393,8 @@ export class Views {
     this.foes.get(uid)?.destroy();
     this.foes.delete(uid);
   }
-  syncFoes(foes: Foe[], alpha: number) {
-    for (const f of foes) this.foes.get(f.uid)?.sync(f, alpha);
+  syncFoes(foes: Foe[], alpha: number, revealHp = false) {
+    for (const f of foes) this.foes.get(f.uid)?.sync(f, alpha, revealHp);
   }
 
   // --- world bosses ---

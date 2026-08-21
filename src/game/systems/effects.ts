@@ -27,6 +27,21 @@ export function hasEffect(key: string): boolean {
   return registry.has(key);
 }
 
+/** Dispatch a registered handler.
+ *
+ *  NOTE, because this misled a milestone: the game does not consume effects
+ *  through this function and never has. Every live hook is read as
+ *  `activeEffects(state).has('key')` at the site that cares, with the behaviour
+ *  written inline there, because the behaviours need that site's locals (the
+ *  swing's arc, the foe's march multiplier, the fog's alpha) and an
+ *  EffectContext big enough to carry all of them would be the whole game.
+ *
+ *  The registry is therefore a DECLARATION of the vocabulary, not a dispatch
+ *  table: `hasEffect()` proving a key is spelled correctly is what it is for.
+ *  Seven handlers once carried real logic here and were never called, which is
+ *  precisely how they went unnoticed -- the code existed, so a reader checking
+ *  "is thorns implemented?" found a function and stopped. Handlers are now
+ *  empty flags to a fault, each naming the site that actually implements it. */
 export function applyEffect(key: string, ctx: EffectContext): number | void {
   const fn = registry.get(key);
   return fn ? fn(ctx) : undefined;
@@ -34,49 +49,33 @@ export function applyEffect(key: string, ctx: EffectContext): number | void {
 
 // ---- C4: Built-in effects ------------------------------------------------
 
-/** Thorns reflect: take damage → reflect % back to attacker. */
-registerEffect('thorns_reflect', (ctx) => {
-  if (!ctx.foe || !ctx.damage) return;
-  // Reflect 30% of damage taken back at the attacker
-  const reflect = Math.round(ctx.damage * 0.3);
-  ctx.foe.hp -= reflect;
-  return reflect;
-});
+/** Thorns reflect: a melee attacker takes CFG.itemEffects.thornsPct of its own
+ *  hit back (combat.damagePlayer, beside the A5 Ironwake reflect). */
+registerEffect('thorns_reflect', () => {});
 
-/** Fire aura: every 2s, deal small AoE damage to nearby foes. */
-registerEffect('fire_aura', (ctx) => {
-  // Handled by combat system on kill/tick — this is just a flag
-  return;
-});
+/** Fire aura: every CFG.itemEffects.fireAuraSec, foes within fireAuraTiles take
+ *  fireAuraDmg (combat.updateAuras). */
+registerEffect('fire_aura', () => {});
 
-/** Chill aura: nearby foes move 20% slower. */
-registerEffect('chill_aura', (ctx) => {
-  // Handled by hordes system when checking foe speed
-  return;
-});
+/** Chill aura: foes within CFG.itemEffects.chillAuraTiles of you march at
+ *  chillAuraMult (hordes march step, beside the Rime Nova chill). */
+registerEffect('chill_aura', () => {});
 
-/** Regen boost: +50% HP regen. */
-registerEffect('regen_boost', (ctx) => {
-  return CFG.player.regenPerSec * 0.5; // extra regen
-});
+/** Regen boost: daytime regen scaled by 1 + CFG.itemEffects.regenBoostPct
+ *  (combat.update, in the same product as the Loom's regenPct). */
+registerEffect('regen_boost', () => {});
 
-/** Move burst on kill: killing a foe grants +30% move speed for 3s. */
-registerEffect('move_burst_on_kill', (ctx) => {
-  // Handled by combat system on kill
-  return;
-});
+/** Move burst on kill: a kill opens a CFG.itemEffects.moveBurstSec window at
+ *  moveBurstMul speed (hordes.hurt arms it, main.ts reads moveBurstMul()). */
+registerEffect('move_burst_on_kill', () => {});
 
-/** See foe HP: foes within range show their HP bar. */
-registerEffect('see_foe_hp', (ctx) => {
-  // Handled by views/rendering system
-  return;
-});
+/** See foe HP: every foe shows its bar even at full health, with a numeral
+ *  (views.syncFoes -> FoeView.sync). */
+registerEffect('see_foe_hp', () => {});
 
-/** Resonance boost: resonance crit window is 50% wider. */
-registerEffect('resonance_boost', (ctx) => {
-  // Handled by network system when computing resonance
-  return;
-});
+/** Resonance boost: everything the Echoes of the Slain do hits for
+ *  1 + CFG.itemEffects.resonancePct (echoes.roll, so autofire AND actives). */
+registerEffect('resonance_boost', () => {});
 
 // ---- X1: elemental weapon / trinket effects --------------------------------
 // All flags — consumed at the named wire points.
@@ -97,6 +96,25 @@ registerEffect('gold_find', () => {});
 registerEffect('xp_boost', () => {});
 /** Night vision: the fog presses 35% less (main.ts fog update). */
 registerEffect('night_vision', () => {});
+
+// ---- The move-burst window ------------------------------------------------
+//
+// A timer, not a flag, so it needs somewhere to live. It goes on `state` rather
+// than on a system because the arming site (hordes.hurt) and the reading site
+// (main's movement product) are in different systems that do not otherwise know
+// about each other, and routing it through a third would be more wiring than the
+// feature is worth.
+
+/** Arm the window. Called from the kill path when the player holds the effect. */
+export function armMoveBurst(state: any) {
+  state._moveBurstUntil = (state.clock ?? 0) + CFG.itemEffects.moveBurstSec;
+}
+
+/** The movement multiplier the window is currently worth: 1.0 when closed, so
+ *  this drops into main's product of multipliers without a branch. */
+export function moveBurstMul(state: any): number {
+  return (state.clock ?? 0) < (state._moveBurstUntil ?? 0) ? CFG.itemEffects.moveBurstMul : 1;
+}
 
 // ---- Helpers --------------------------------------------------------------
 

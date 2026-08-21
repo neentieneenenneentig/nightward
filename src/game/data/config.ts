@@ -153,6 +153,36 @@ export const CFG = {
     orbContactImmunitySec: 0.8, // per-foe grace between orb contact hits
   },
 
+  // C4/A1: the seven item-effect hooks that shipped with a registered handler
+  // and NO consumer anywhere in the game.
+  //
+  // `registerEffect()` builds a registry and `applyEffect()` dispatches from it --
+  // but nothing in the game has ever called `applyEffect()`. The eight LIVE hooks
+  // are all consumed a different way: `activeEffects(state).has('key')` at the
+  // site that cares, with the behaviour written inline there. The other seven had
+  // a handler in the registry, a row in the affix table, a plain-language label in
+  // the tooltip, and no path to the screen.
+  //
+  // The bill for that: four of the five domain-lord relics did nothing at all, and
+  // 350 of the 750 suffix weight in A1's affix table -- very nearly half of every
+  // rolled suffix -- was placebo. It also quietly falsified A1's own premise, that
+  // "the fifteen effect hooks already work, so the suffix half is a data table".
+  //
+  // These are the numbers for the seven consumers that now exist. Tunable live
+  // through NW.CFG like every other block here.
+  itemEffects: {
+    thornsPct: 0.30,        // share of a melee hit sent back to the attacker
+    fireAuraSec: 2.0,       // seconds between aura ticks
+    fireAuraDmg: 4,         // damage per tick, before the D5 roll
+    fireAuraTiles: 2.2,
+    chillAuraTiles: 3.0,    // foes this close to you move at chillAuraMult
+    chillAuraMult: 0.80,
+    regenBoostPct: 0.50,    // +50% daytime regen (the handler's own old comment)
+    moveBurstSec: 2.0,      // how long a kill's burst of speed lasts
+    moveBurstMul: 1.25,
+    resonancePct: 0.25,     // +25% damage on everything the Echoes do
+  },
+
   // A3: The ability bar. Every echo you hold keeps auto-firing exactly as it did
   // in C1 — this adds a SECOND, empowered form you press for, paid in Resolve.
   //

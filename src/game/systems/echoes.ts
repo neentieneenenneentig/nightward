@@ -5,6 +5,7 @@
 // roll here can never overwrite a swing's pending multiplier mid-windup.
 import { Graphics } from 'pixi.js';
 import { CFG } from '../data/config';
+import { activeEffects } from './effects';
 import { echoForBoss, echoById, statsFor, activeStatsFor, type EchoDef, type EchoStats } from '../data/echoes';
 import { ENEMIES } from '../data/enemies';
 import { TILE } from '../world/worldgen';
@@ -457,6 +458,17 @@ export class EchoSystem {
   /** One damage law: the same seeded-rng D5 roll swings use, per fire.
    * `stash: false` — never overwrite a pending swing's stashed multiplier. */
   private roll(label: string, quiet = false): number {
+    // C4: 'resonance_boost' — the Nullmaw relic and the 'of Resonance' suffix.
+    // Applied HERE, in the one place both halves of an echo derive their damage,
+    // so it lifts the autofire and A3's actives together and cannot drift apart
+    // from either. Registered in C4; its handler's comment claimed the network
+    // system consumed it, and the network system had never heard of it.
+    const res = activeEffects(this.ctx.state).has('resonance_boost')
+      ? 1 + CFG.itemEffects.resonancePct : 1;
+    return res * this.rollBase(label, quiet);
+  }
+
+  private rollBase(label: string, quiet = false): number {
     this.fireCount++;
     const swingSeed = (this.ctx.state.seed ?? 1234) ^ (this.fireCount * 0x9e3779b9);
     let s = swingSeed >>> 0;

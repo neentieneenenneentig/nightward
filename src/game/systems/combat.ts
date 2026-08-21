@@ -40,10 +40,50 @@ export class CombatSystem {
       // B3.a: the Loom's regenPct ranks had no consumer — every 'Hearty' rank a
       // player bought did nothing at all.
       const loomRegenMul = this.ctx.loom?.getRegenMul?.() ?? 1;
-      state.player.hp = Math.min(maxHp, state.player.hp + (CFG.player.regenPerSec + charmRegen(state)) * regenMul * loomRegenMul * dt);
+      // C4: 'regen_boost' — the Tideculler relic and the 'of Mending' suffix.
+      // Registered since C4, consumed by nothing until now: its handler returned
+      // a number and no caller existed to add it to anything.
+      const fxRegenMul = activeEffects(state).has('regen_boost')
+        ? 1 + CFG.itemEffects.regenBoostPct : 1;
+      state.player.hp = Math.min(maxHp, state.player.hp + (CFG.player.regenPerSec + charmRegen(state)) * regenMul * loomRegenMul * fxRegenMul * dt);
     }
+    this.updateAuras(dt);
     this.updateTowers(dt);
     this.updatePhase(dt);
+  }
+
+  /** C4: 'fire_aura' — the Cindermaw relic and the 'of the Ember' suffix.
+   *
+   *  Deliberately a standing tick rather than something bolted to the swing: an
+   *  aura you have to attack to benefit from is not an aura, and the fiction
+   *  ("the ground near you smoulders") is about presence. Damage is rolled once
+   *  per tick, not per foe, so a tick against six foes is one roll and one
+   *  number — the same rule the Echo patches follow. */
+  private auraT = 0;
+  private updateAuras(dt: number) {
+    const { state } = this.ctx;
+    if (state.gameOver) return;
+    if (!activeEffects(state).has('fire_aura')) { this.auraT = 0; return; }
+    this.auraT += dt;
+    if (this.auraT < CFG.itemEffects.fireAuraSec) return;
+    this.auraT = 0;
+    const px = state.player.x, py = state.player.y;
+    const r = CFG.itemEffects.fireAuraTiles * TILE;
+    const dmg = Math.max(1, Math.round(CFG.itemEffects.fireAuraDmg));
+    let struck = 0;
+    for (const f of [...(this.ctx.hordes?.foes ?? [])] as Foe[]) {
+      if (f.hp <= 0) continue;
+      if (Math.hypot(f.x - px, f.y - py) > r + f.def.art.size / 2) continue;
+      // tower rule: no combat xp (you did not swing), but it feeds vitals —
+      // the same terms the Echoes fire on
+      this.ctx.hordes.hurt(f, dmg, false, true);
+      this.ctx.views?.addHitFlash?.(f.x, f.y);
+      struck++;
+    }
+    if (struck) {
+      this.ctx.views?.addPulseRing?.(px, py, r, 0xc85a2e);
+      this.ctx.particles?.spawn?.('ember', px, py - 6, 3);
+    }
   }
 
   /** Windup/active/recovery durations, sped up by the weapon's soul level (floored)
@@ -497,6 +537,18 @@ export class CombatSystem {
     if (state.player.equip?.amulet) {
       const lvl = awardSoulXp(state, 'amulet', CFG.soulgear.amuletXpPerHit);
       if (lvl) { toast(`Your amulet hums — soul level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Amulet reached soul level ${lvl}`, state.clock); }
+    }
+    // C4: 'thorns_reflect' — the Thornwarden relic and the 'of the Thorn' suffix.
+    // The ONLY implementation of thorns lived inside the registered handler, and
+    // nothing ever dispatched it, so both were placebo from C4 until now. A5's
+    // Ironwake was written self-contained rather than on top of it; the two now
+    // stack deliberately, and each is announced separately in the log so a
+    // playtest can tell which one is doing the work.
+    if (sourceFoe && taken > 0 && activeEffects(state).has('thorns_reflect')) {
+      const back = Math.max(1, Math.round(taken * CFG.itemEffects.thornsPct));
+      this.ctx.hordes?.hurt?.(sourceFoe, back, false, true);
+      this.ctx.views?.addHitFlash?.(sourceFoe.x, sourceFoe.y);
+      this.ctx.log?.push('combat', `Thorns bite back for ${back}`, state.clock);
     }
     // A5: Ironwake — melee attackers take a share of their own hit back, and the
     // reflected damage stuns them. Applied before the death check so a lethal hit
