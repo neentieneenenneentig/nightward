@@ -351,6 +351,8 @@ export const CFG = {
     /** Seconds after a rift during which ordinary drops roll the `rift` band —
      *  the only route to a Riftborn item. A rift should be worth chasing. */
     riftWindowSec: 60,
+    /** A4: the corner radar. Hidden on narrow screens regardless (see styles). */
+    minimap: true,
     /** Tooltip delta colouring thresholds — a change smaller than this reads as
      *  noise and is drawn neutral rather than green. */
     deltaEpsilon: 0.05,

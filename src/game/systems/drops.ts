@@ -16,6 +16,7 @@ import { CFG } from '../data/config';
 import { ITEMS, itemDef } from '../data/items';
 import { acquireGear, invAdd } from '../rules';
 import { fortuneFrom, rollStacks } from './loot';
+import { rarityColor, rarityIndex, rarityOf } from '../ui/rarity';
 import type { RollOpts } from './loot';
 import type { GameState, GroundDrop } from '../state';
 import type { Stack } from '../types';
@@ -35,7 +36,7 @@ interface DropCtx {
   state: GameState;
   world: { canStand(px: number, py: number, halfW?: number): boolean };
   player: { x: number; y: number };
-  toast?: (m: string, k?: string) => void;
+  toast?: (m: string, k?: string, color?: string) => void;
   particles?: { spawn(kind: string, x: number, y: number, n: number, dir?: number): void };
   /** A1: the Fortune mapping. Assigned onto the shared ctx after this system is
    *  constructed, which is fine — spawn() reads it at call time, not at
@@ -233,10 +234,18 @@ export class DropSystem {
     if (this.pendingT < 0) return;
     if (this.ctx.state.clock - this.pendingT < CFG.drops.toastWindowSec) return;
     const parts: string[] = [];
-    for (const [id, n] of this.pending) parts.push(`+${n} ${itemDef(id)?.name ?? id}`);
+    // A4: the collapsed line takes the colour of the BEST thing in it. A window
+    // that collapsed a Hallowed blade in with four stacks of timber and printed
+    // the whole line in bone would bury the one event worth noticing.
+    let best = 'plain', color: string | undefined;
+    for (const [id, n] of this.pending) {
+      parts.push(`+${n} ${itemDef(id)?.name ?? id}`);
+      const r = rarityOf(id);
+      if (rarityIndex(r) > rarityIndex(best as any)) { best = r; color = rarityColor(id); }
+    }
     this.pending.clear();
     this.pendingT = -1;
-    if (parts.length) this.ctx.toast?.(parts.join('  '));
+    if (parts.length) this.ctx.toast?.(parts.join('  '), undefined, color);
   }
 
   /** Over the cap, evict oldest non-gear first. Gear is never evicted — losing a

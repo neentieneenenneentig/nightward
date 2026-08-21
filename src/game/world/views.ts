@@ -3,6 +3,8 @@
 // transient combat effects. Systems call these methods; nothing here decides
 // game logic.
 import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
+import { itemName } from '../data/items';
+import { isBeamworthy, rarityTint } from '../ui/rarity';
 import { TILE } from './worldgen';
 import type { WorldArt } from './art';
 import type { World } from './world';
@@ -87,10 +89,68 @@ class DropView {
   private shadow = new Graphics();
   private count: Text | null = null;
   private lastN = -1;
+  /** A4: the rarity light shaft and the floating name, on Woven and above. */
+  private beam: Graphics | null = null;
+  private label: Text | null = null;
+  private beamTint = 0;
   constructor(d: GroundDrop, art: WorldArt) {
     this.sprite = new Sprite(tex(art.itemIcon(d.id)));
     this.sprite.anchor.set(0.5, 0.5);
     this.cont.addChild(this.shadow, this.sprite);
+
+    // A4 — the loot beam.
+    //
+    // B5 already put the item on the floor and made you walk to it. A beam is
+    // what makes you WANT to: it is visible across the screen, it reads as
+    // "that one is different" before you are close enough to see the icon, and
+    // it is how every ARPG since Diablo II has solved the same problem.
+    //
+    // Gated at CFG.loot.beamFrom because a beam on every drop is not a signal,
+    // it is a disco — a night wave drops dozens of stacks and if all of them
+    // glow, none of them do.
+    if (isBeamworthy(d.id, CFG.loot.beamFrom)) {
+      this.beamTint = rarityTint(d.id);
+      const g = new Graphics();
+      // Drawn as a stack of quads narrowing and fading upward rather than one
+      // gradient: Pixi v8 Graphics has no vertical gradient fill, and a texture
+      // for this would be an asset (pillar 1).
+      const H = 40, STEPS = 8;
+      for (let i = 0; i < STEPS; i++) {
+        const t = i / STEPS;
+        const w = 10 * (1 - t * 0.5);
+        g.rect(-w / 2, -H * (t + 1 / STEPS), w, H / STEPS)
+          .fill({ color: this.beamTint, alpha: 0.5 * (1 - t) });
+      }
+      // A brighter, narrower core inside the shaft. One flat column of colour
+      // reads as a painted rectangle; a core with a falloff around it reads as
+      // light, which is the entire job of this shape.
+      for (let i = 0; i < STEPS; i++) {
+        const t = i / STEPS;
+        g.rect(-1.5, -H * (t + 1 / STEPS), 3, H / STEPS)
+          .fill({ color: 0xffffff, alpha: 0.30 * (1 - t) });
+      }
+      g.ellipse(0, 0, 9, 3.5).fill({ color: this.beamTint, alpha: 0.45 });
+      // Additive, because a shaft of light ADDS to what is behind it. At normal
+      // blending the same geometry reads as a translucent painted rectangle and
+      // simply disappears over bright terrain — which is exactly what the first
+      // capture showed over daytime grass.
+      g.blendMode = 'add';
+      this.beam = g;
+      // Behind the sprite so the item reads on top of its own light.
+      this.cont.addChildAt(g, 1);
+
+      this.label = new Text({
+        text: itemName(d.id),
+        style: {
+          fontFamily: 'monospace', fontSize: 8, fontWeight: 'bold',
+          fill: this.beamTint, stroke: { color: 0x140f18, width: 1 },
+        },
+      });
+      this.label.resolution = WORLD_TEXT_RES;
+      this.label.anchor.set(0.5, 1);
+      this.label.position.set(0, -19);
+      this.cont.addChild(this.label);
+    }
   }
   updateShadow(lightDX: number, lightDY: number, alpha: number) {
     this.shadow.clear();
@@ -114,6 +174,14 @@ class DropView {
     this.sprite.alpha = (!d.gear || !D.gearNeverDespawns) && left < D.blinkLastSec && left > 0
       ? 0.35 + 0.65 * (Math.sin(clock * 9) * 0.5 + 0.5)
       : 1;
+
+    // The beam breathes so it reads as light rather than as a painted shape,
+    // and it is the only part of the drop that does NOT bob — a shaft anchored
+    // to the ground with a bobbing item inside it is the whole illusion.
+    if (this.beam) {
+      this.beam.position.y = d.hopH + bob;
+      this.beam.alpha = 0.72 + 0.28 * Math.sin(clock * 2.2 + d.uid);
+    }
 
     if (d.n !== this.lastN) {
       this.lastN = d.n;

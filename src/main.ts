@@ -42,6 +42,15 @@ import { activeEffects } from './game/systems/effects';
 import { toggleEquip, invAdd, gearMod, playerMaxHp } from './game/rules';
 import { BUILDINGS } from './game/data/buildings';
 import { NET_GAME_MAP, NET_METRICS, BEACON_INSPECT, LENS_SECTION_INSPECT, allBeacons, type NetInspect } from './game/data/network';
+import { Minimap } from './game/ui/minimap';
+// A1/A4 test seam. The Gauntlet can only observe the roll through the same
+// pure functions the game calls — asserting that rollItem() returned an object
+// would pass with the whole merge deleted. Namespace imports so a new export is
+// automatically reachable from a test without another edit here.
+import * as rulesMod from './game/rules';
+import * as lootMod from './game/systems/loot';
+import * as itemsMod from './game/data/items';
+import * as effectsMod from './game/systems/effects';
 import { phase, tintAt, startClock } from './game/systems/daynight';
 import { Fog } from './game/world/fog';
 import { domainAt, regionOf, regionKey } from './game/world/domains';
@@ -170,6 +179,10 @@ async function boot() {
   // anything is gathered or killed.
   const drops = new DropSystem(ctx);
   ctx.drops = drops;
+
+  // A4: the corner radar. Entity-only, 10 Hz, no terrain sampling — see the
+  // header of ui/minimap.ts for why it is a local radar and not a world map.
+  const minimap = new Minimap(document.getElementById('hud')!);
 
   const gather = new GatherSystem(ctx);
   const economy = new EconomySystem(ctx);
@@ -455,6 +468,8 @@ async function boot() {
     input,
     sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals, lifespan, loom, scoreboard, net, drops }, world, player, gen, chunks,
     lens, chronicle, omens,   // N4.2/N4.3 test seam: drawer, series store, omens
+    minimap,                  // A4 test seam
+    mods: { rules: rulesMod, loot: lootMod, items: itemsMod, effects: effectsMod },  // A1 test seam
     get log() { return log; },  // expose full GameLog (entries + export + download)
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
@@ -642,6 +657,11 @@ async function boot() {
     // X1: Nightseer Charm — the fog presses less
     if (activeEffects(state).has('night_vision')) fogI *= 0.65;
     fog.update(fogI);
+
+    // A4: drawn after the fog so the radar is never dimmed by it — the point of
+    // a radar is that it works when sight does not.
+    minimap.setVisible(CFG.loot.minimap !== false && !ui.isOpen());
+    if (CFG.loot.minimap !== false) minimap.draw(state, performance.now(), hordes.foes);
 
     Sound.setMood(state.gameOver ? 'dead' : bossNear ? 'boss' : ph.isNight ? 'night' : 'day');
     ui.refresh();

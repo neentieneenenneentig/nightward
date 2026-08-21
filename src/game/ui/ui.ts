@@ -3,6 +3,8 @@
 // All gameplay actions are delegated back to the game via `hooks`.
 import { CFG } from '../data/config';
 import { itemDef, itemName } from '../data/items';
+import { escapeHtml, rarityColor, rarityDef, rarityOf } from './rarity';
+import { bindItemTooltip, hideItemTooltip } from './tooltip';
 import { SKILLS } from '../data/skills';
 import { RECIPES } from '../data/recipes';
 import { BUILDINGS } from '../data/buildings';
@@ -116,6 +118,14 @@ export class UI {
   private interactBtn!: HTMLElement;
   private panelHost!: HTMLElement;
   private buildBar!: HTMLElement;
+  // A4: the orbs
+  private hpOrb!: HTMLElement;
+  private hpLiq!: HTMLElement;
+  private hpNum!: HTMLElement;
+  private vigRing!: HTMLElement;
+  private resOrb!: HTMLElement;
+  private resLiq!: HTMLElement;
+  private resNum!: HTMLElement;
 
   constructor(private state: GameState, private hooks: UIHooks) {
     injectStyles();
@@ -126,12 +136,13 @@ export class UI {
     this.buildGather();
     this.buildBuildBar();
     this.buildActions();
+    this.buildOrbs();
     this.panelHost = document.createElement('div');
     this.root.appendChild(this.panelHost);
     window.addEventListener('keydown', (e) => this.onKey(e));
   }
 
-  toast(msg: string, kind: 'info' | 'good' | 'bad' = 'info') { this.toasts.push(msg, kind); }
+  toast(msg: string, kind: 'info' | 'good' | 'bad' = 'info', color?: string) { this.toasts.push(msg, kind, color); }
 
   /** Schedule a panel body rebuild on the next refresh(). Call after state changes
    *  (craft, equip, use, gather) while a panel is open. */
@@ -377,10 +388,11 @@ export class UI {
   /** Just hide the panel — does NOT touch build mode (used when entering placement). */
   private hidePanel() { this.panel = null; this.panelHost.innerHTML = ''; }
   /** Dismiss the panel AND cancel any in-progress build (Esc / ✕ / scrim). */
-  close() { this.hidePanel(); this.hooks.enterBuild(''); }
+  close() { hideItemTooltip(); this.hidePanel(); this.hooks.enterBuild(''); }
   isOpen() { return this.panel !== null; }
 
   private renderPanel() {
+    hideItemTooltip();   // A4: a rebuild orphans the cell the tooltip was anchored to
     this.panelHost.innerHTML = '';
     if (!this.panel) return;
     const scrim = el('div', 'nw-scrim');
@@ -509,24 +521,27 @@ export class UI {
         : slot ? '<span class="tag">equip</span>'
         : usable ? '<span class="tag">use</span>'
         : feedable ? '<span class="tag feed">feed</span>' : '';
-      const cell = el('div', 'nw-cell' + (worn ? ' worn' : ''));
+      // A4: the cell carries its tier as a ring, and the REAL tooltip replaces
+      // `cell.title`. A browser title attribute cannot be coloured, cannot show
+      // a green +3.4 against a red −1.2, and takes a second of stillness to
+      // appear — which made every rolled item effectively invisible.
+      const rar = rarityOf(id);
+      const cell = el('div', 'nw-cell' + (worn ? ' worn' : '') + (rar !== 'plain' ? ' rolled' : ''));
       cell.innerHTML = `<img src="${icon(id)}" alt=""><span class="n">${p.inv[id]}</span>${tag}`;
-      cell.title = def.name
-        + (def.weaponDmg ? ` (+${def.weaponDmg} dmg)` : '')
-        + (def.armor ? ` (+${def.armor} armor)` : '')
-        + (def.heal ? ` (heals ${def.heal})` : '')
-        + (feedable ? ` (soul xp: ${totalSoulXp(id)} each)` : '');
+      if (rar !== 'plain') cell.style.setProperty('--rar', rarityColor(id));
+      bindItemTooltip(cell, this.state, id);
+      if (feedable) cell.title = `soul xp: ${totalSoulXp(id)} each`;
       cell.tabIndex = 0; cell.setAttribute('role', 'button');
       if (slot) {
-        cell.setAttribute('aria-label', `${worn ? 'Unequip' : 'Equip'} ${def.name}`);
+        cell.setAttribute('aria-label', `${worn ? 'Unequip' : 'Equip'} ${itemName(id)}`);
         cell.addEventListener('click', () => this.hooks.equip(id));
         cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.hooks.equip(id); } });
       } else if (usable) {
-        cell.setAttribute('aria-label', `Use ${def.name}`);
+        cell.setAttribute('aria-label', `Use ${itemName(id)}`);
         cell.addEventListener('click', () => this.hooks.useItem(id));
         cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.hooks.useItem(id); } });
       } else if (feedable) {
-        cell.setAttribute('aria-label', `Feed ${def.name} to soul gear`);
+        cell.setAttribute('aria-label', `Feed ${itemName(id)} to soul gear`);
         cell.addEventListener('click', () => this.showFeedPicker(id, p.inv[id]));
         cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.showFeedPicker(id, p.inv[id]); } });
       }
@@ -772,6 +787,56 @@ export class UI {
     body.appendChild(cols);
   }
 
+  /** A4 — the orbs.
+   *
+   *  The top bar already shows HP, Vigor and Resolve as numbers, and those stay:
+   *  a number answers "how much", which is what you want when you are reading
+   *  the bar. An orb answers "how bad is this" without moving your eye off the
+   *  middle of the screen, which is where a night fight actually happens. The
+   *  two are complementary, so this adds rather than replaces.
+   *
+   *  Vigor is a RING around the HP orb rather than a third globe. It is a rate,
+   *  not a pool — giving it equal visual weight to the two things that can end
+   *  or cripple a run would say something false about it. */
+  private buildOrbs() {
+    const mk = (cls: string, extra = '') => {
+      const o = el('div', 'nw-orb ' + cls);
+      // The liquid is clipped by an inner `.bowl` rather than by the orb
+      // itself: the Vigor ring sits OUTSIDE the orb's circle, and an
+      // `overflow: hidden` on the orb deleted it entirely. Caught in the first
+      // live capture — the orbs looked right and the ring simply was not there.
+      o.innerHTML = extra + '<div class="bowl"><div class="liq"></div></div>'
+        + '<div class="gloss"></div><div class="num"></div>';
+      this.root.appendChild(o);
+      return o;
+    };
+    this.hpOrb = mk('hp', '<div class="vig"></div>');
+    this.hpLiq = this.hpOrb.querySelector('.liq')!;
+    this.hpNum = this.hpOrb.querySelector('.num')!;
+    this.vigRing = this.hpOrb.querySelector('.vig')!;
+    this.resOrb = mk('res');
+    this.resLiq = this.resOrb.querySelector('.liq')!;
+    this.resNum = this.resOrb.querySelector('.num')!;
+  }
+
+  /** scaleY on a bottom-anchored fill, not a height change: a transform is
+   *  composited and a height is a layout, and this runs every frame. */
+  private syncOrbs() {
+    const p = this.state.player;
+    const hpFrac = Math.max(0, Math.min(1, p.hp / playerMaxHp(this.state)));
+    this.hpLiq.style.transform = `scaleY(${hpFrac.toFixed(3)})`;
+    this.hpNum.textContent = String(Math.ceil(Math.max(0, p.hp)));
+    this.hpOrb.classList.toggle('low', hpFrac > 0 && hpFrac < 0.25);
+
+    const vig = Math.max(0, Math.min(100, p.vigor ?? 100));
+    this.vigRing.style.setProperty('--vig', vig.toFixed(0) + '%');
+
+    const res = Math.max(0, Math.min(100, p.resolve ?? 100));
+    this.resLiq.style.transform = `scaleY(${(res / 100).toFixed(3)})`;
+    this.resNum.textContent = String(Math.round(res));
+    this.resOrb.classList.toggle('low', res > 0 && res < 25);
+  }
+
   // --------------------------------------------------------------- refresh ----
 
   /** Called every frame. Cheap top-bar text updates + gather progress.
@@ -781,6 +846,7 @@ export class UI {
     this.hpFill.style.width = (100 * Math.max(0, p.hp) / playerMaxHp(this.state)).toFixed(1) + '%';
     this.hpText.textContent = Math.ceil(Math.max(0, p.hp)) + '';
     this.goldText.textContent = p.gold + '';
+    this.syncOrbs();
 
     // L1: age/lifespan chip + bar — the hard run-length clock
     const lv = this.hooks.lifespanView();
@@ -908,7 +974,11 @@ export class UI {
           <span class="nw-lb-score">${e.legacyScore}</span>
           <span class="nw-lb-age" title="died of ${e.causeOfDeath === 'old_age' ? 'natural causes' : e.causeOfDeath === 'hall_fallen' ? 'the hall falling' : 'unknown causes'}">${causeIcon} age ${e.age}</span>
           <span class="nw-lb-detail">${e.nightsSurvived}n &middot; ${e.enemiesKilled}k &middot; ${e.bossesSlain}b &middot; ${e.goldHoarded}g</span>
-          <span class="nw-lb-realm">${e.dominantRealm}${e.legit ? '' : ' &middot; <i>god mode</i>'}</span>`;
+          <span class="nw-lb-realm">${e.dominantRealm}${e.legit ? '' : ' &middot; <i>god mode</i>'}</span>`
+          + (e.trophy
+            ? `<span class="nw-lb-trophy" style="color:${rarityDef(e.trophy.rarity as any).color}"
+                 title="best find of that run">&#9670; ${escapeHtml(e.trophy.name)}</span>`
+            : '');
         list.appendChild(row);
       }
       histSec.appendChild(list);

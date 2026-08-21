@@ -398,6 +398,103 @@ html, body, #nw-observatory, .nw-pbody {
   font-size: 12px; color: var(--ink-dim); padding: 4px 2px 12px; }
 .nw-tools .hd { color: var(--ink-dim); letter-spacing: 1px; text-transform: uppercase; font-size: 10px; }
 .nw-cell.worn { box-shadow: inset 0 0 0 2px var(--good); }
+
+/* ---- A4: rarity ---------------------------------------------------------
+   The tier ring is drawn with --rar, set per cell from data/rarity.ts, so
+   there is exactly ONE place in the codebase that decides what Hallowed looks
+   like. A ring rather than a fill: the icon is the item, and a coloured wash
+   over it would fight the procgen palette every icon is already drawn in. */
+.nw-cell.rolled { box-shadow: inset 0 0 0 2px var(--rar), 0 0 10px -2px var(--rar); }
+.nw-cell.rolled.worn { box-shadow: inset 0 0 0 2px var(--good), 0 0 0 2px var(--rar), 0 0 10px -2px var(--rar); }
+.nw-cell.rolled::after {
+  content: ''; position: absolute; inset: auto 2px 2px auto;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--rar);
+  box-shadow: 0 0 6px var(--rar);
+}
+
+/* ---- A4: the item tooltip ----------------------------------------------
+   The thing that makes A1 visible. Positioned by script (clamped to the
+   viewport), never by CSS anchoring — the rightmost bag column would open
+   off-screen, and the bag fills left to right so those are the newest items. */
+#nw-tip {
+  position: fixed; z-index: 60; pointer-events: none;
+  min-width: 168px; max-width: 268px;
+  padding: 8px 10px 9px;
+  background: linear-gradient(180deg, #1b160f 0%, #100c08 100%);
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--metal), 0 6px 18px rgba(0,0,0,.6);
+  font-size: 11px; line-height: 1.45; color: var(--ink);
+}
+.nw-tip-name { font-weight: 700; font-size: 12.5px; letter-spacing: .2px; }
+.nw-tip-sub { color: var(--ink-dim); font-size: 10px; margin-top: 1px; }
+.nw-tip-body { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(147,121,74,.28); }
+.nw-tip-stat { color: var(--ink-bright); font-weight: 600; }
+.nw-tip-affix { margin-top: 2px; }
+.nw-tip-affix.cursed { color: #e0413e; }
+.nw-tip-cmp { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(147,121,74,.28); }
+.nw-tip-vs { color: var(--ink-dim); font-size: 10px; }
+.nw-tip-delta { font-weight: 700; margin-top: 1px; }
+.nw-tip-delta.up { color: #7fd6a0; }
+.nw-tip-delta.down { color: #e07a6e; }
+.nw-tip-delta.same { color: var(--ink-dim); }
+
+/* ---- A4: the orbs -------------------------------------------------------
+   HP bottom-left, Resolve bottom-right, Vigor as a ring around HP. Pure
+   radial gradients and a clip-path fill — no images, pillar 1 intact.
+
+   They sit BESIDE the existing top-bar readouts rather than replacing them:
+   the bar tells you a number, the orb tells you a state at a glance while
+   you are looking at the middle of the screen, which is where a fight is. */
+.nw-orb {
+  position: fixed; bottom: 86px; width: 66px; height: 66px; z-index: 12;
+  pointer-events: none; border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, #2a2118 0%, #14100b 62%, #0a0806 100%);
+  box-shadow: inset 0 0 0 2px var(--metal-lo), inset 0 0 12px rgba(0,0,0,.8),
+              0 0 0 1px rgba(0,0,0,.6), 0 4px 12px rgba(0,0,0,.5);
+}
+.nw-orb .bowl { position: absolute; inset: 0; border-radius: 50%; overflow: hidden; }
+.nw-orb.hp { left: 14px; }
+.nw-orb.res { right: 14px; }
+.nw-orb .liq {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 100%;
+  transform-origin: 50% 100%;
+  transition: transform .22s ease-out;
+}
+.nw-orb.hp .liq { background: linear-gradient(180deg, #d8524a 0%, #8e2b28 60%, #5a1a18 100%); }
+.nw-orb.res .liq { background: linear-gradient(180deg, #7ea8e0 0%, #3f5f9a 60%, #26385e 100%); }
+.nw-orb .gloss {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle at 34% 26%, rgba(255,255,255,.22) 0%, rgba(255,255,255,0) 46%);
+}
+.nw-orb .num {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 15px; font-weight: 700; color: var(--ink-bright);
+  text-shadow: 0 1px 0 #000, 0 0 6px rgba(0,0,0,.9);
+}
+/* Vigor is a ring around the HP orb rather than a third globe: it is a rate,
+   not a pool, and giving it equal visual weight to HP would say otherwise. */
+.nw-orb .vig {
+  position: absolute; inset: -6px; border-radius: 50%;
+  /* starts at 12 o'clock and runs clockwise, so a draining ring reads the same
+     way a clock does rather than starting from the 3 o'clock default */
+  background: conic-gradient(from -90deg, #e2b155 var(--vig, 100%), rgba(20,16,11,.75) 0);
+  -webkit-mask: radial-gradient(circle at 50% 50%, transparent 0 33px, #000 34px);
+  mask: radial-gradient(circle at 50% 50%, transparent 0 33px, #000 34px);
+  filter: drop-shadow(0 0 3px rgba(226,177,85,.35));
+}
+.nw-orb.low .liq { animation: nw-orb-pulse .9s ease-in-out infinite; }
+@keyframes nw-orb-pulse { 0%,100% { filter: brightness(1); } 50% { filter: brightness(1.5); } }
+
+/* the run's best find, carried on its leaderboard row */
+.nw-lb-trophy { grid-column: 1 / -1; font-size: 10px; opacity: .95; }
+
+/* ---- A4: the minimap ---------------------------------------------------- */
+#nw-map {
+  position: fixed; right: 12px; top: 96px; z-index: 12; pointer-events: none;
+  border-radius: 3px; background: rgba(10,8,6,.72);
+  box-shadow: inset 0 0 0 1px var(--metal-lo), 0 3px 10px rgba(0,0,0,.5);
+  image-rendering: pixelated;
+}
 .nw-cell .tag.on { color: #05060a; background: var(--good); padding: 0 3px; left: 2px; top: 2px; border-radius: 2px; }
 
 /* ---- skills ---- */
@@ -632,6 +729,11 @@ html, body, #nw-observatory, .nw-pbody {
     grid-template-columns: 1fr;
   }
   /* item grid: fewer columns, bigger tap targets */
+  .nw-orb { width: 52px; height: 52px; bottom: 74px; }
+  .nw-orb .vig { -webkit-mask: radial-gradient(circle at 50% 50%, transparent 0 26px, #000 27px);
+                 mask: radial-gradient(circle at 50% 50%, transparent 0 26px, #000 27px); }
+  .nw-orb .num { font-size: 12px; }
+  #nw-map { display: none; }
   .nw-grid {
     grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
     gap: 6px;
