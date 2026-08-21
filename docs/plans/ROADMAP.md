@@ -142,8 +142,25 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 > with it off, `rollItem()` returns the id it was handed and the game is byte-for-byte its
 > pre-A1 self.
 >
-> **Next: A3 (the ability bar)** — independent of A1/A2, ready to start, blocked only on
-> whether Resolve is the right cost (A-arsenal §9.5). A2 stays gated on the N4.3 verdict.
+> ## A3 — The ability bar, 2026-08-21 (branch `dev/night-build`, unmerged)
+>
+> The five Echoes keep their C1 autofire and gain an empowered active on keys 1–4, paid
+> for in Resolve. No mana bar was invented — Resolve is already a morale meter that decays
+> at night, near a lord, and while idle, and it already punishes at zero; spending it on
+> heroics is what it is *for*. Costs (14–22) sit against +12/kill and +30/dawn, so a night
+> fight pays for its own casts and a quiet run cannot afford them.
+>
+> The bar auto-slots in canonical order and the fifth lord is held but unbound — a choice at
+> the run's peak rather than an automatic upgrade. Casts refuse for free and say why (empty /
+> resolve / cooldown / the 0.25 s key-repeat lock); casting yourself to exactly zero Resolve
+> is allowed on purpose. `systems/abilities.ts` owns the bar and the refusals, `systems/echoes.ts`
+> owns what a cast does, and both share the one D5 damage law.
+>
+> Gauntlet 1778/1778 across 109 tests, typecheck clean on both configs. The open question
+> from A-arsenal §9.5 — *is Resolve the right cost?* — is now a playtest verdict, not a blocker.
+>
+> **Next: A5 (Weaves) or A2 (Elites)** — A5 wants A1's tier weights settled first; A2 stays
+> gated on the N4.3 balance verdict.
 
 ---
 

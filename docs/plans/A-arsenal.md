@@ -1,7 +1,7 @@
 # A — The Arsenal (the Hero Siege yoink)
 
-> **Status:** **A1 + A4 SHIPPED 2026-08-21** (branch `dev/night-build`, unmerged).
-> A2/A3/A5–A8 planned, not implemented. Written 2026-08-21.
+> **Status:** **A1 + A4 + A3 SHIPPED 2026-08-21** (branch `dev/night-build`, unmerged).
+> A2/A5–A8 planned, not implemented. Written 2026-08-21.
 > **Supersedes nothing.** Additive to everything shipped through N4.3.
 > **Touches:** `data/items.ts`, `data/enemies.ts`, `data/echoes.ts`, `ui/ui.ts`,
 > `systems/drops.ts`, `systems/combat.ts`, `systems/hordes.ts`, plus new files
@@ -466,7 +466,7 @@ everything after is depth.
 |---|---|---|
 | **A1 — The Roll** ✅ | `rarity.ts`, `affixes.ts`, `systems/loot.ts`, the `fortune` mapping row, drop-histogram tests | Everything else decorates this. Mostly data, because the 15 effect hooks already work. **Shipped 2026-08-21.** |
 | **A2 — Elites** | `ENEMY_AFFIXES`, spawn-time roll, nameplates, aura rings, conflict table | Needs A1 to have something to drop. **Gated on the N4.3 balance verdict.** |
-| **A3 — The Bar** | `abilities.ts`, Echoes promoted to actives, Resolve as the cost, cooldown sweeps | Independent of A1/A2; can run in parallel. |
+| **A3 — The Bar** ✅ | `systems/abilities.ts`, Echoes promoted to actives, Resolve as the cost, cooldown sweeps | Independent of A1/A2; ran in parallel. **Shipped 2026-08-21.** |
 | **A4 — The Face** ✅ | orbs, comparison tooltips, loot beams, rarity colour everywhere, minimap | Makes A1 visible. **Shipping A1 without A4 ships an invisible feature.** **Shipped 2026-08-21.** |
 | **A5 — Weaves** | sockets, threads, `weaves.ts` | Multiplies A1's space; wants A1 tuned first. |
 | **A6 — The Hub** | Reliquary, Forge-Warden, gold retune | Wants A1's tier weights settled. |
@@ -478,8 +478,8 @@ coloured beam, walk over, read a tooltip, feel the upgrade. Gauntlet 1744/1744 a
 tests, 20 consecutive green runs, typecheck clean on both configs. See the ROADMAP entry
 for what the build actually found.
 
-**Next in this batch: A3 (the ability bar)** — it is independent of A1/A2 and can start
-immediately. A2 remains gated on the N4.3 balance verdict.
+**Next in this batch: A5 (Weaves) or A2 (Elites).** A5 wants A1's tier weights settled first;
+A2 remains gated on the N4.3 balance verdict. A3 shipped 2026-08-21 — see the ROADMAP entry.
 
 ---
 
@@ -495,11 +495,11 @@ immediately. A2 remains gated on the N4.3 balance verdict.
 
 **Still open:**
 
-5. **§5.3 — is Resolve the right ability cost?** Blocks A3, which is otherwise ready to
-   start. It makes a currently-passive meter the most active number on screen, but it also
-   means a bad Resolve run has no abilities at all, which may read as a punishment stacked
-   on a punishment. I will build it on Resolve unless told otherwise, since the alternative
-   is inventing a mana bar the game has never had.
+5. **§5.3 — is Resolve the right ability cost?** Built on Resolve 2026-08-21 (A3 shipped).
+   It makes a currently-passive meter the most active number on screen, but it also means a
+   bad Resolve run has no abilities at all, which may read as a punishment stacked on a
+   punishment. This is now a playtest verdict, not a blocker — the alternative would have
+   been inventing a mana bar the game has never had.
 6. Two N4.3 balance items still await a verdict and **A2 is gated on them**:
    `CFG.omens.surgeFxStrength` (0.5 may be too strong) and Fray × Surge compounding to
    ×1.81 horde speed.
