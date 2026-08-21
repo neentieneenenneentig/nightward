@@ -14,12 +14,12 @@ shipped is deleted, not archived — see "Retired plan documents" at the bottom.
 
 ## Where we are — 2026-08-21
 
-**Active branch: `dev/night-build`.** Ten milestones are shipped-and-unmerged on it — B5, B6,
-N4.1, N4.2, N4.3, A1, A4, A3, A5 and the C4 repair. `main` is still at the last tagged release,
-and nothing merges to it without explicit sign-off.
+**Active branch: `dev/night-build`.** Eleven milestones are shipped-and-unmerged on it — B5,
+B6, N4.1, N4.2, N4.3, A1, A4, A3, A5, A8 and the C4 repair. `main` is still at the last tagged
+release, and nothing merges to it without explicit sign-off.
 
-**Gauntlet 1874/1874 across 113 tests**, five consecutive green runs. Typecheck clean on both
-tsconfigs, build green. (Counts drift 1872–1874 from an RNG-dependent assertion loop — the test
+**Gauntlet 2055–2058 across 120 tests**, nine consecutive green runs. Typecheck clean on both
+tsconfigs, build green. (Counts drift by a few from RNG-dependent assertion loops — the test
 *names* are the regression signal, not the total.)
 
 ### Open and owed
@@ -32,8 +32,109 @@ tsconfigs, build green. (Counts drift 1872–1874 from an RNG-dependent assertio
 | **A1 balance** | `heavy` rolls a flat +2–6 and can land at Touched, so a lucky blue copper blade beats a plain iron one. Deliberate Diablo behaviour, but it inverts the copper→iron→silver→star ladder | user |
 | **A1 balance** | a Riftborn weapon measured ×2.23 base damage (9 → 20.08) | user |
 | **B5 Q2** | should gold drop as physical coins? `CFG.drops.goldDrops` is `false`; a boss bursting into coins is the juiciest version of B5 and a one-row follow-up | user |
-| **unstarted, ungated** | A6 (the Hall becomes a hub / the gambler), A8 (cairns, shrines, the Hoarder), N4.4 (Scrying — recon done, no code), N4.5–N4.7 | — |
+| **A8 balance** | is a Cairn's wake the right price? Five foes at the current night's scaling on top of a guaranteed Hallowed — arguably correct (the payout is flat, so the risk should scale), arguably a trap (the best drop becomes unreachable exactly when you need it). `CFG.a8.cairnWake` is its own switch so this can be answered alone | user |
+| **A8 balance** | can the Hoarder actually be caught? Tuned to outrun a bare player by 2 px/s, so it needs a slow, a ranged option or terrain. If the answer is "never", the real question is whether players chase it a second time | user |
+| **A8 balance** | do three concurrent Boons read as anything mid-fight? Twelve boons over fifteen hooks, three live at once, sharing one HUD chip row with the Omens | user |
+| **unstarted, ungated** | A6 (the Hall becomes a hub / the gambler), N4.4 (Scrying — recon done, no code), N4.5–N4.7 | — |
 | **unstarted, gated** | A2 (on the two N4.3 numbers above), A7 (on N4.5) | — |
+
+---
+
+> ## A8 — Cairns, Wardstones and the Hoarder, 2026-08-21 (branch `dev/night-build`, unmerged)
+>
+> The last ungated phase of the Arsenal, and the first content in the game that has a
+> **price**. **Gauntlet 2055–2058 across 120 tests, nine consecutive green runs.**
+>
+> ### What shipped
+>
+> A **Cairn** — pale stacked stones, ~0.7 per run, visible across a field — opens through the
+> ordinary gather interaction and pays a guaranteed **Hallowed-or-better** piece. A
+> **Wardstone** — a violet monolith with a lit mark, ~2.5 per run — grants a timed **Boon**.
+> The **Hoarder** is a rare daytime runner that never attacks, outpaces you by a hair, bursts
+> a Woven-or-better hoard when killed, and is gone for good past 21 tiles.
+>
+> ### Four arguments with the brief, all of which the brief lost
+>
+> **1. "Guaranteed Hallowed+" is the domain-lord band.** Handing it over for a walk and a
+> five-second dig would invert the ladder A1 spent a milestone tuning. So the band stayed and
+> the price arrived: opening a Cairn **wakes what was buried under it** — five foes at the
+> *current night's* stat scaling, spawned as ordinary horde members rather than day prey, so
+> walking away from them means they march on your hall. `cairn` is its own LOOT_BAND row
+> rather than an alias of `lord`, so a future retune can move one without the other.
+>
+> **2. The timed-buff machinery the brief promised did not exist.** The plan said shrines were
+> "a data row plus a toast" because "`effects.ts` already has the timed buff machinery
+> (Nightseer Charm)". The Nightseer Charm is a permanently equipped item. What `effects.ts`
+> actually had was `armMoveBurst()` — one hard-coded window over one hard-coded effect — and
+> that IS the machinery, generalised here into a table. **A Boon is a timed entry into the
+> item-effect vocabulary**: twelve rows naming keys from the same fifteen hooks C4 built,
+> folded into `activeEffects()`, so all ~20 sites that ask
+> `activeEffects(state).has('fire_aura')` light up for a Wardstone without knowing one exists.
+> The constraint that buys that: **a boon may only name an effect that is already consumed**,
+> which `testA8DataRows` asserts against `hasEffect()` with a negative control. Second time
+> this project has found a plan asserting a capability it did not have — A1's premise about
+> the fifteen hooks was the first, and the C4 repair was the bill.
+>
+> **3. "Shrines" became Wardstones,** because `BUILDINGS` already contains a player-built
+> Shrine. Two different things sharing one word in the same HUD is how a Veil stops working.
+>
+> **4. Neither table may roll empty.** The Cairn's five gear rows at independent chances came
+> up with nothing **22%** of the time, and the whole table 3.3% of the time — a design
+> promising "guaranteed" quietly delivering nothing after a map crossing and a fight. Fixed by
+> giving `LootRoll` an optional **`group`**: rows sharing one are a weighted pick-one that
+> always yields exactly one row. Every pre-A8 table leaves it undefined and is untouched,
+> which `testLootGroups` measures at 0.400 against 0.400 before it measures anything else.
+>
+> ### Three latent flakes, found by the Gauntlet before a player could
+>
+> Six runs turned up three failures that had nothing to do with each other and everything to
+> do with A8 shifting the RNG stream — the fifth, sixth and seventh time that mechanism has
+> exposed something latent in this suite.
+>
+> - **`wearOnly()` no longer stripped the player.** `activeEffects()` now folds boons in, so a
+>   Wardstone the 10-minute playthrough test walked over left `resonance_boost` live for the
+>   next two game-minutes — and testEchoBounds' isolation assertion, added during the debloat
+>   pass *precisely* to catch "a future source of resonance we do not clear", caught exactly
+>   that, twice in six runs. That assertion earned its keep in under a day. Fixed in the
+>   helper, not at each call site, because fixing it at each call site is how one gets missed.
+> - **`regen_boost`'s control measured 0.000 hp/s.** Regen is daytime-only and the test ran
+>   wherever the suite's clock had drifted to after two playthrough tests. It now pins the
+>   phase as a precondition; both halves still run through the real `combat.update()`.
+> - **`chill_aura` measured 0.00px in BOTH halves.** It marched a foe from wherever the suite
+>   left the player standing; against water, a cliff or a tree — and A8 added two blocking
+>   feature types to worldgen — `canStand()` refused both axes. Now measured on a
+>   `findUniformCorridor`, which is the second time that has been the fix.
+>
+> ### The density arithmetic was wrong, and measuring is why we know
+>
+> The first pass reasoned "a run covers ~3,500 tiles, so a density sum of 0.0004 gives ~1.4
+> Cairns" and shipped numbers that measured **0.38**. A density is per-tile *of its biome*,
+> and roughly three quarters of a NIGHTWARD map is deep water, mountain and snow — none of
+> which carry features at all. `testA8Density` states the claim in the design's own units
+> ("about one Cairn, a handful of Wardstones, per run") rather than reading the density table
+> back to itself, which is the tautology this suite keeps finding in its own history.
+>
+> ### Mutation-proved
+>
+> Four load-bearing assertions, each broken deliberately and confirmed red, then reverted:
+> boons cut out of `activeEffects()` gives a failed Wardstone seam; the Cairn's band dropped at
+> the drop seam gives "at or above the Hallowed floor" failing on a Touched roll; the `dayOnly`
+> filter disabled gives 40/40 night spawns as Hoarders where 0/40 is correct; the flee vector
+> inverted reports "a spooked Hoarder runs: 96 to 3 px". `grep -c MUTATION` is 0.
+>
+> ### The escape hatch is a revert, not a mute
+>
+> `CFG.a8.enabled = false` drops both features out of worldgen and the Hoarder out of the day
+> pool. Both feature rows are appended **last** in `FEATURES` and the density table is a
+> running cumulative sum, so excluding them restores the pre-A8 world **tile for tile** —
+> which `testA8EscapeHatch` measures across 19,600 tiles rather than assuming.
+>
+> ### Visual gate
+>
+> The first in-world capture showed the Cairn as a dark blob indistinguishable from a bush, at
+> exactly the range the design needs it seen from — it had inherited the rock ramp. Repainted
+> in bleached limestone with a bone capstone and a dark seam between courses, so it reads as
+> *stacked stones* rather than one lumpy boulder. Screenshots in `qa/gate-a8/`.
 
 ---
 

@@ -356,6 +356,16 @@ seconds after a rift** — which is what finally makes a rift something to chase
 tilts the whole ladder through the **Fortune** mapping: a wide, clean path (high cwnd, low
 loss) makes the top rungs reachable, a frayed one drops *more* items of *worse* quality.
 
+**Cairns and the Hoarder (A8).** Two sources sit above the ordinary band, and both cost
+something other than time. A **Cairn** is a stack of pale stones you meet roughly once a
+run: opening one is a five-second dig that yields a guaranteed **Hallowed-or-better** piece
+— and *wakes what was buried under it*, a pack scaled to the current night, which will march
+on your hall if you walk away from it. The **Hoarder** is the other: a rare daytime runner
+that flees on sight, outpaces you by a hair, and is gone for good past twenty-one tiles. Kill
+it and it bursts a **Woven-or-better** hoard; lose it and you watch your Sovereign leave.
+Neither can drop nothing — both tables use a pick-one group, because a guarantee that fires
+four times in five is not a guarantee.
+
 **Soul-feeding**: any feedable material (raw resources, not finished gear) can be consumed
 directly into a soul-gear slot's xp instead of used for crafting. Each material can carry a
 `soulAffinity` toward one specific slot — feeding it there is a 1.5× xp bonus, feeding an
@@ -480,6 +490,24 @@ Survivors flee at dawn.
 ### 10.2 Day prey
 A sparser, roaming population of daytime enemies (never targeting the hall) that exist to
 give you something to hunt for loot between nights, rather than idling until dusk.
+
+**The Hoarder (A8)** is the exception among them, and the only enemy in the bestiary you can
+lose to without taking a point of damage. It never attacks; it runs. At 108 × 1.5 = 162 px/s
+against your 160 it pulls away by about half a tile every eight seconds, so a straight sprint
+loses — narrowly. The counterplay is everything that is not running faster: a chill or a
+tower slow drops it under you, an echo or a bow reaches it without closing, and it has no
+pathfinding, so trees, water and cliffs corner it. Past 21 tiles it is gone, and the Chronicle
+says so.
+
+### 10.2b Wardstones — the world's other verb
+Standing violet monoliths, a handful per run, marked with something still lit. Touching one
+grants a **Boon**: a named, timed blessing drawn by weight from a table of twelve. What makes
+this cheap rather than a whole new system is that a boon is *a timed entry into the item-effect
+vocabulary* — the same fifteen hooks §9.4 lists. An Ember Ward is `fire_aura` for 75 seconds,
+read at the same site the Cindermaw relic is read at, so nothing downstream knows or needs to
+know where the fire came from. Three can be live at once; touching a fourth displaces the
+oldest and names it. A Wardstone drops no loot, because a blessing that also pays in silver
+reads as a node with a bonus rather than as a blessing.
 
 ### 10.3 World bosses (domain lords)
 Each of the 5 lords roams its home domain and only turns hostile toward *you* once

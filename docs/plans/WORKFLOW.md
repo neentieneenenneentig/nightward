@@ -121,6 +121,24 @@ three identical runs it survived 1, 4 and 6 nights. Any fixed lower bound there 
 sin is a row or config knob that nothing reads. See the C4 entry in the ROADMAP for what
 fifteen registered effect hooks with seven consumers actually cost.
 
+**10. State the claim in the design's units, not the implementation's.** A8's Cairn density
+test could have asserted "the per-tile density is 0.00058", which is the data table read back
+to itself and passes no matter how wrong the table is. It asserts "a run meets about one
+Cairn" instead — and immediately caught that the shipped densities produced 0.38, because a
+density is per-tile *of its biome* and three quarters of the map carries no features at all.
+The assertion that can tell you the design is wrong is worth more than the one that can only
+tell you the code changed.
+
+**11. Pin a precondition, measure the thing.** `regen_boost`'s control measured 0.000 hp/s
+because regen is daytime-only and the suite's clock had drifted into a night. Stubbing
+`ctx.isNight` to fix that is not cheating — the claim is about the relic, and the phase is a
+precondition to being able to see it. Cheating would be stubbing the regen.
+
+**12. When you add a new source of an effect, the suite's strip-to-nothing helper is where the
+fix belongs.** A8's boons made `wearOnly()` a lie: it cleared gear, sockets and the relic but
+not the new thing that also feeds `activeEffects()`. Every test that isolates already calls
+that helper; patching the two call sites that went red is how the third one gets missed.
+
 ### The shared-world hazards
 
 `regression.ts` tests all run against **one live world**, in order, and `ok()` **throws**.
@@ -133,15 +151,26 @@ Both facts have bitten:
   `damagePlayer` early-returns under god mode, so the later tests do not fail — they stop
   measuring.
 - **Any new test that consumes `Math.random()` shifts the global stream for every test
-  downstream**, shaking latent flakes loose. Seen three times (vigor-starve, the Ironwake
-  dodge, the uniform-corridor Loom flake). A red test in a file you did not touch is usually
-  this, not a regression.
+  downstream**, shaking latent flakes loose. Seen seven times now (vigor-starve, the Ironwake
+  dodge, the uniform-corridor Loom flake, the D5 resonance band, and A8's three: the boon leak
+  through `wearOnly`, the night-phase regen control, and the chill march on blocked ground). A
+  red test in a file you did not touch is usually this, not a regression. **A milestone that
+  changes worldgen shifts more than the stream** — A8 added two blocking feature types, so
+  `canStand()` answers differently around wherever a test left the player.
+- **Never measure movement on ground you did not choose.** `findUniformCorridor()` exists for
+  this. Two separate tests have now measured 0.00px in both halves of a matched pair because
+  the foe or the player was against water, a cliff or a tree, and reported it as a failure of
+  the multiplier under test.
 - **Isolate what you are measuring from everything else that produces the same number.**
   `combat.update()` also ticks the towers, so a "nothing burns" control measured 52 damage
   from a tower built forty tests earlier. Ironwake's control cleared the sockets but not the
   gear, so it measured two independent reflect sources and called it one.
-- **Assertion counts drift 1872–1874 run to run** from an RNG-dependent assertion loop. An
-  exact count is a weak regression signal; the test *names* are the strong one.
+- **Assertion counts drift a few either way run to run** (1872–1874 before A8, 2055–2058
+  after) from RNG-dependent assertion loops. An exact count is a weak regression signal; the
+  test *names* are the strong one.
+- **`GameLog` is a 2000-entry ring buffer.** `entries.slice(rememberedLength)` returns nothing
+  once it is full, so a test asserting "the Chronicle said so" silently stops looking. Use
+  `log.recent(n)`.
 
 ## Debugging & troubleshooting
 

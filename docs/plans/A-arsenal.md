@@ -1,7 +1,7 @@
 # A — The Arsenal (the Hero Siege yoink)
 
-> **Status:** **A1 + A4 + A3 + A5 SHIPPED 2026-08-21** (branch `dev/night-build`, unmerged).
-> A2/A6–A8 planned, not implemented. Written 2026-08-21.
+> **Status:** **A1 + A4 + A3 + A5 + A8 SHIPPED 2026-08-21** (branch `dev/night-build`, unmerged).
+> A2/A6/A7 planned, not implemented. Written 2026-08-21.
 > **Supersedes nothing.** Additive to everything shipped through N4.3.
 > **Touches:** `data/items.ts`, `data/enemies.ts`, `data/echoes.ts`, `ui/ui.ts`,
 > `systems/drops.ts`, `systems/combat.ts`, `systems/hordes.ts`, plus new files
@@ -409,17 +409,58 @@ data budget.
 
 ---
 
-### 5.8 A8 — Chests, shrines, and the Hoarder
+### 5.8 A8 — Cairns, Wardstones, and the Hoarder ✅ **SHIPPED 2026-08-21**
 
-Cheap, high-flavour, all reusing shipped systems:
+The brief, as written:
 
-- **Cairns** *(chests)* — a `features.ts` row, opened with the existing gather interaction,
-  guaranteed **Hallowed+**. Rare, visible from range, worth crossing the map for.
-- **Shrines** — a world feature granting a timed buff. `effects.ts` already has the timed
-  buff machinery (Nightseer Charm). A shrine is a data row plus a toast.
-- **The Hoarder** *(the loot goblin)* — a rare `daytime` enemy that flees on sight and
-  bursts loot on death, despawning if it escapes. Needs one new `EnemyBehavior.kind: 'flee'`
-  — the only genuinely new engine code in A8, and it is small.
+> Cheap, high-flavour, all reusing shipped systems:
+>
+> - **Cairns** *(chests)* — a `features.ts` row, opened with the existing gather interaction,
+>   guaranteed **Hallowed+**. Rare, visible from range, worth crossing the map for.
+> - **Shrines** — a world feature granting a timed buff. `effects.ts` already has the timed
+>   buff machinery (Nightseer Charm). A shrine is a data row plus a toast.
+> - **The Hoarder** *(the loot goblin)* — a rare `daytime` enemy that flees on sight and
+>   bursts loot on death, despawning if it escapes. Needs one new `EnemyBehavior.kind: 'flee'`
+>   — the only genuinely new engine code in A8, and it is small.
+
+**Four deviations, all deliberate.** Recorded here rather than silently absorbed, because
+each was an argument with the brief and the next reader deserves the argument:
+
+1. **A Cairn is not free.** "Guaranteed Hallowed+" is numerically the `lord` band — the
+   payout for the five hardest fights in the game — handed over for a walk and a
+   five-second dig. So opening one **wakes what was buried under it**: `CFG.a8.cairn` /
+   `features.ts wake`, five foes at the *current night's* stat scaling, spawned as ordinary
+   horde members rather than day prey, so running away means they march on your hall. The
+   band stayed at Hallowed; the price arrived instead. `cairn` is its own LOOT_BAND row
+   rather than an alias of `lord`, so the two can be retuned apart.
+
+2. **"Shrines" became Wardstones.** `BUILDINGS` already contains a player-built **Shrine**
+   (the tower-aura structure, buildings.ts:247). Two different things sharing one word in
+   the same HUD is how a Veil stops working.
+
+3. **The timed-buff machinery the brief promised did not exist.** The Nightseer Charm is a
+   permanently equipped item, not a timed anything. What `effects.ts` *did* have was
+   `armMoveBurst()` — one hard-coded window over one hard-coded effect — and A8 generalised
+   exactly that into a table. A **Boon** is therefore *a timed entry into the effect
+   vocabulary*: twelve rows in `data/boons.ts`, each naming keys from the same fifteen hooks
+   C4 built, folded into `activeEffects()` so every consumer already works. The constraint
+   that buys it: **a boon may only name an effect that is already consumed**, asserted in
+   `testA8DataRows`.
+
+4. **Neither table may roll empty.** The Cairn's five gear rows at independent chances came
+   up with nothing 22% of the time, and the whole table 3.3% of the time — a design
+   promising "guaranteed" quietly delivering nothing after a map crossing and a fight. Fixed
+   by giving `LootRoll` an optional **`group`**: rows sharing one are a weighted pick-one
+   that always yields exactly one row. Every pre-A8 table leaves it undefined and is
+   untouched. The Hoarder got the same treatment for the same reason.
+
+**Numbers as shipped.** Cairn ~0.7 per run, Wardstone ~2.5 per run, both measured against
+the live generator rather than derived from the density table — the first pass reasoned
+"3,500 tiles × 0.0004" and shipped values that measured 0.38, because a density is per-tile
+*of its biome* and most of a NIGHTWARD map is water, mountain and snow. Hoarder: ~1% of day
+spawns, 108 × 1.5 = 162 px/s against the player's 160, spooks at 11 tiles, gone at 21.
+`CFG.a8.enabled = false` removes all three and restores the pre-A8 world **tile for tile**,
+which `testA8EscapeHatch` measures rather than assumes.
 
 ---
 
@@ -471,15 +512,16 @@ everything after is depth.
 | **A5 — Weaves** ✅ | sockets, threads, `weaves.ts` | Multiplies A1's space; wants A1 tuned first. **Shipped 2026-08-21.** |
 | **A6 — The Hub** | Reliquary, Forge-Warden, gold retune | Wants A1's tier weights settled. |
 | **A7 — Covenants** | merge with N4.5's data-budget tier selector | **Blocked on N4.5.** Do not start early. |
-| **A8 — Cairns & the Hoarder** | chests, shrines, loot goblin, `flee` behaviour | Pure flavour. Slot anywhere after A1. |
+| **A8 — Cairns & the Hoarder** ✅ | Cairns, Wardstones, the Hoarder, `flee` behaviour, pick-one loot groups | Not "pure flavour" in the end — it is the first content in the game with a *price*. **Shipped 2026-08-21.** |
 
 **First cut A1 + A4 — shipped 2026-08-21.** That is the Hero Siege loop: kill, see a
 coloured beam, walk over, read a tooltip, feel the upgrade. Gauntlet 1744/1744 across 107
 tests, 20 consecutive green runs, typecheck clean on both configs. See the ROADMAP entry
 for what the build actually found.
 
-**Next in this batch: A2 (Elites).** A2 remains gated on the N4.3 balance verdict. A5 shipped
-2026-08-21 — see the ROADMAP entry.
+**Next in this batch: A2 (Elites)**, still gated on the N4.3 balance verdict, or **A6 (The
+Hub)**, which is ungated but wants A1's tier weights settled by a playtest. A5 and A8 both
+shipped 2026-08-21 — see the ROADMAP entries.
 
 ---
 
@@ -502,6 +544,22 @@ for what the build actually found.
    test. See the ROADMAP entry for the full audit.
 
 **Still open:**
+
+10. **New, from the A8 build — is a Cairn's wake the right price?** Five foes at the current
+    night's scaling, on top of a Hallowed-or-better guarantee. On night 1 that is a fight;
+    on night 6 it may be a death sentence, which is arguably correct (the payout does not
+    scale, so the risk should) and arguably a trap (the run's best drop becomes unreachable
+    exactly when you most need it). `CFG.a8.cairnWake` is a separate switch from
+    `CFG.a8.enabled` precisely so this can be answered on its own.
+11. **New, from the A8 build — can the Hoarder actually be caught?** It is tuned to outrun
+    a bare player by 2 px/s, so catching one is supposed to require a slow, a ranged option,
+    or terrain. If the honest answer after a playtest is "you never catch it", the
+    interesting failure is not the speed but the *absence of a reason to try* — check
+    whether players even chase it a second time.
+12. **New, from the A8 build — do three concurrent Boons read as anything?** Twelve boons
+    over fifteen effect hooks, three live at once, each a chip on one HUD row shared with
+    the Omens. The mechanism is right; whether the player can tell an Ember Ward from a
+    Bramblehide at a glance mid-fight is a feel question.
 
 5. **§5.3 — is Resolve the right ability cost?** Built on Resolve 2026-08-21 (A3 shipped).
    It makes a currently-passive meter the most active number on screen, but it also means a
