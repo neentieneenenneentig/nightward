@@ -2,7 +2,7 @@
 // every frame with a cheap read of game state; panels rebuild only while open.
 // All gameplay actions are delegated back to the game via `hooks`.
 import { CFG } from '../data/config';
-import { ITEMS } from '../data/items';
+import { itemDef, itemName } from '../data/items';
 import { SKILLS } from '../data/skills';
 import { RECIPES } from '../data/recipes';
 import { BUILDINGS } from '../data/buildings';
@@ -61,7 +61,7 @@ export interface UIHooks {
 
 type Panel = 'bag' | 'craft' | 'skills' | 'loom' | 'log' | 'leaderboard' | null;
 
-const icon = (id: string) => iconUrl(id, ITEMS[id].icon as any);
+const icon = (id: string) => iconUrl(id, itemDef(id).icon as any);
 
 /** B3.b: a Loom node's per-rank effects, in words. The node rows carry raw keys
  *  (`meleeDmgPct: 4`); this is the only place they are turned into something a
@@ -234,7 +234,7 @@ export class UI {
       d.name + (d.unique ? '' : ` — ${sel.afford} affordable`);
     const cost = d.cost.map((s: any) => {
       const ok = invCount(this.state, s.id) >= s.n;
-      return `<span class="${ok ? 'have' : 'lack'}">${s.n} ${ITEMS[s.id].name}</span>`;
+      return `<span class="${ok ? 'have' : 'lack'}">${s.n} ${itemName(s.id)}</span>`;
     }).join(' &middot; ');
     const tower = d.tower ? ` &middot; ${d.tower.dmg} dmg / ${d.tower.rangeTiles}t` : '';
     this.buildBar.querySelector('.cost')!.innerHTML = cost + tower;
@@ -487,8 +487,8 @@ export class UI {
     const tools = el('div', 'nw-tools');
     tools.innerHTML =
       `<span class="hd">Tools (auto)</span>` +
-      `<span>&#129683; ${axe ? ITEMS[axe.id].name + toolLv('tool_axe') : '—'}</span>` +
-      `<span>&#9935; ${pick ? ITEMS[pick.id].name + toolLv('tool_pick') : '—'}</span>`;
+      `<span>&#129683; ${axe ? itemName(axe.id) + toolLv('tool_axe') : '—'}</span>` +
+      `<span>&#9935; ${pick ? itemName(pick.id) + toolLv('tool_pick') : '—'}</span>`;
     body.appendChild(tools);
 
     // --- the bag itself ---
@@ -500,7 +500,7 @@ export class UI {
     const grid = el('div', 'nw-grid');
     const feedSys = new SoulFeedSystem();
     for (const id of ids) {
-      const def = ITEMS[id];
+      const def = itemDef(id);
       const slot = slotOf(id);
       const worn = !!slot && p.equip?.[slot] === id;
       const usable = !!def.heal;
@@ -537,7 +537,7 @@ export class UI {
 
   /** W7: show a slot picker popup for soul-feeding an item. */
   private showFeedPicker(itemId: string, available: number) {
-    const def = ITEMS[itemId];
+    const def = itemDef(itemId);
     const feedSys = new SoulFeedSystem();
     const xpEach = totalSoulXp(itemId);
     const affinity = itemSoulAffinity(itemId);
@@ -606,7 +606,7 @@ export class UI {
     const id = slot === 'relic' ? this.state.player.relic : this.state.player.equip?.[slot];
     const cell = el('div', 'nw-slot' + (id ? ' filled' : ''));
     if (id) {
-      const def = ITEMS[id];
+      const def = itemDef(id);
       const isRelic = slot === 'relic';
       const unit = slot === 'weapon' || slot === 'ring' ? 'dmg'
         : slot === 'charm' ? 'hp/s (day)' : 'armor';
@@ -639,14 +639,14 @@ export class UI {
   private fillCraft(body: HTMLElement) {
     const recipes = RECIPES.filter((r) => r.skill === this.craftTab);
     for (const r of recipes) {
-      const outDef = ITEMS[r.out.id];
+      const outDef = itemDef(r.out.id);
       const lvl = skillLevel(this.state, r.skill);
       const locked = lvl < r.levelReq;
       const has = invHasAll(this.state, r.in);
       const row = el('div', 'nw-row' + (locked ? ' nw-locked' : ''));
       const costs = r.in.map((s) => {
         const have = invCount(this.state, s.id) >= s.n;
-        return `<span class="${have ? 'have' : 'lack'}">${invCount(this.state, s.id)}/${s.n} ${ITEMS[s.id].name}</span>`;
+        return `<span class="${have ? 'have' : 'lack'}">${invCount(this.state, s.id)}/${s.n} ${itemName(s.id)}</span>`;
       }).join(' &middot; ');
       row.innerHTML = `
         <img src="${icon(r.out.id)}" alt="">

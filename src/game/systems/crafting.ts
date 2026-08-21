@@ -1,10 +1,12 @@
 // Crafting: consume inputs, produce output, grant xp. Pure over state + a
 // toast callback. Station gating (needs a furnace, etc.) hooks in later.
 import { RECIPES } from '../data/recipes';
-import { ITEMS } from '../data/items';
+import { CFG } from '../data/config';
+import { itemName } from '../data/items';
 import { BUILDINGS } from '../data/buildings';
 import { TILE } from '../world/worldgen';
 import { acquireGear, addXp, invAdd, invHasAll, invTakeAll, skillLevel } from '../rules';
+import { fortuneFrom, isRollable, rollItem } from './loot';
 import type { GameState } from '../state';
 import { Sound } from '../../engine/audio';
 import { levelUpFlourish } from './flourish';
@@ -27,8 +29,24 @@ export function craft(state: GameState, recipeId: string, toast: (m: string, k?:
   const cost = scaleCost(r.in, loom?.getCraftCostMul?.() ?? 1);
   if (!invHasAll(state, cost)) { toast('Missing materials', 'bad'); return false; }
   invTakeAll(state, cost);
-  invAdd(state, r.out.id, r.out.n);
-  acquireGear(state, r.out.id); // wear a freshly-forged weapon/armor if the slot is free; keep soul items bound
+  // A1: a forge produces sound work, not miracles — the `forge` band tops out
+  // at Touched. Crafting has to stay worth doing once loot exists, and a smith
+  // who can never produce anything interesting is a smith the player abandons
+  // the moment the first blue drops.
+  //
+  // Each unit rolls SEPARATELY: a recipe that outputs two blades outputs two
+  // different blades, which is the same rule the ground drops follow.
+  const rollOut = CFG.loot.craftRolls && isRollable(r.out.id);
+  const madeIds: string[] = [];
+  for (let i = 0; i < (rollOut ? r.out.n : 1); i++) {
+    const id = rollOut
+      ? rollItem(r.out.id, { band: 'forge', fortune: fortuneFrom(net), clock: state.clock })
+      : r.out.id;
+    madeIds.push(id);
+    invAdd(state, id, rollOut ? 1 : r.out.n);
+    acquireGear(state, id); // wear a freshly-forged weapon/armor if the slot is free; keep soul items bound
+  }
+  const outId = madeIds[0];
   // X1: Workshop — crafting done within its radius grants bonus xp
   let xpAmt = r.xp;
   const wsDef = BUILDINGS.find((d) => d.id === 'workshop');
@@ -40,8 +58,8 @@ export function craft(state: GameState, recipeId: string, toast: (m: string, k?:
   }
   const lvl = addXp(state, r.skill, xpAmt);
   Sound.play('craft');
-  toast(`Crafted ${ITEMS[r.out.id].name}${r.out.n > 1 ? ' ×' + r.out.n : ''} (+${r.xp}xp)`, 'good');
-  log?.push('craft', `Crafted ${ITEMS[r.out.id].name}${r.out.n > 1 ? ' ×' + r.out.n : ''}`, state.clock);
+  toast(`Crafted ${itemName(outId)}${r.out.n > 1 ? ' ×' + r.out.n : ''} (+${r.xp}xp)`, 'good');
+  log?.push('craft', `Crafted ${itemName(outId)}${r.out.n > 1 ? ' ×' + r.out.n : ''}`, state.clock);
   // M3.5: Action-gated beacon echo — crafting pings artisan beacons
   net?.probeAction?.('craft');
   // M3.6: Passive flux snapshot — connection stability at craft time, zero HTTP

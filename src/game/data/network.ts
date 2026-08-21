@@ -684,6 +684,33 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     max: 1.0,
   },
   {
+    // ---- A1: the wire decides what the world is willing to give up ----
+    //
+    // Two measured kernel readings, pulling in opposite directions. A WIDE
+    // path (high cwnd — the network will accept a lot in flight) tilts the
+    // rarity ladder upward; a FRAYED one (real packet loss) tilts it down.
+    //
+    // The compensating half lives in loot.ts as lootQuantityMul(): a frayed
+    // wire buries you in junk instead of handing you nothing, so a bad
+    // connection is a different kind of run rather than a strictly worse one.
+    // That distinction is the difference between a mapping and a punishment,
+    // and it is the same lesson the Omens learned in N4.3.
+    //
+    // Neutral 1.0 whenever the deep wire is silent (pillar 5) — a filtered
+    // network plays a balanced game, never an accidentally poor one.
+    label: 'Fortune (Aperture · Fray)',
+    netKey: 'aperture',
+    transform: (cwnd: number, ctx?: NetMappingContext) => {
+      const s = ctx?.snap;
+      if (!s?.deepLive) return 1.0;
+      const wide = Math.max(0, Math.min(1, (cwnd - 10) / 50));
+      return Math.max(0.75, Math.min(1.35, 1.0 + wide * 0.35 - (s.fray ?? 0) * 3.5));
+    },
+    target: 'fortune',
+    min: 0.75,
+    max: 1.35,
+  },
+  {
     label: 'Carry (Aperture)',
     netKey: 'aperture',
     transform: (c: number) => Math.max(0.85, Math.min(1.25, 0.85 + Math.min(c, 60) / 100)),

@@ -4,7 +4,7 @@
 import { CFG } from '../data/config';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
-import { armorDef, awardSoulXp, charmRegen, equippedWeaponDmg, hall, playerMaxHp, skillLevel } from '../rules';
+import { armorDef, awardSoulXp, charmRegen, equippedWeaponDmg, gearMod, hall, playerMaxHp, skillLevel } from '../rules';
 import { activeEffects } from './effects';
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
@@ -53,7 +53,12 @@ export class CombatSystem {
     const { attackSpeedPerSoulLevel: k, attackSpeedFloor: floor } = CFG.combat;
     const loomMods = this.ctx.loom?.ensureMods?.();
     const loomMul = loomMods ? (1 + (loomMods.swingSpeedPct ?? 0) / 100) : 1;
-    const mult = Math.max(floor, 1 / ((1 + lvl * k) * loomMul));
+    // A1: 'Heavy' trades swing speed for flat damage; 'of Frailty' is a curse.
+    // Multiplies INTO the same denominator as the soul level and the Loom, so
+    // the attackSpeedFloor still caps the whole stack — an affix cannot open a
+    // hole in a clamp that three other systems respect.
+    const gearMul = gearMod(this.ctx.state, 'swingSpeed');
+    const mult = Math.max(floor, 1 / ((1 + lvl * k) * loomMul * gearMul));
     return {
       windup: CFG.combat.windupSec * mult,
       active: CFG.combat.activeSec * mult,

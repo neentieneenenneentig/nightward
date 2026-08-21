@@ -232,7 +232,9 @@ export class WorldBossSystem {
     state.player.gold += gmin + Math.floor(Math.random() * (gmax - gmin + 1)) + b.level * 20;
     // B5: a lord's hoard bursts outward rather than teleporting into the bag.
     // Relics are gear, so they never despawn — nothing rare is ever lost to a timer.
-    this.ctx.drops.spawn(rollLoot(def.loot), b.x, b.y, { spread: 1.8 });
+    // A1: a domain lord is the only ordinary route to a Sovereign — floor
+    // Hallowed, ceiling Sovereign. See LOOT_BANDS in data/rarity.ts.
+    this.ctx.drops.spawn(rollLoot(def.loot), b.x, b.y, { spread: 1.8, band: 'lord' });
     if (fromPlayer) {
       const lvl = addXp(state, 'combat', def.xp);
       if (lvl) { levelUpFlourish(this.ctx); this.ctx.toast(`Combat reached level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Combat reached level ${lvl}`, state.clock); }

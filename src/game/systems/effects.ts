@@ -100,26 +100,41 @@ registerEffect('night_vision', () => {});
 
 // ---- Helpers --------------------------------------------------------------
 
-import { ITEMS } from '../data/items';
+import { itemDef } from '../data/items';
 
-/** Get all active effects from the player's equipped items. */
+/** Get all active effects from the player's equipped items.
+ *
+ *  A1: `itemDef()` returns a ROLLED item's def with its affixes already merged
+ *  in, so an "of the Ember" suffix arrives here as an ordinary `fire_aura`
+ *  entry in `def.effects` and every downstream consumer of that hook works
+ *  with no knowledge that rarity exists.
+ *
+ *  Tools are included for the reason given on carriedGearIds() in rules.ts:
+ *  they are carried rather than worn, and an affix nothing reads is a dead
+ *  affix. Imported lazily to keep this module's existing import shape — it is
+ *  imported by rules.ts itself. */
 export function activeEffects(state: any): Set<string> {
   const effects = new Set<string>();
+  const ids: string[] = [];
   for (const slot of ['weapon', 'armor', 'ring', 'amulet', 'charm'] as const) {
     const itemId = state.player.equip?.[slot];
-    if (!itemId) continue;
-    const def = ITEMS[itemId];
-    if (def?.effects) {
-      for (const e of def.effects) effects.add(e);
-    }
+    if (itemId) ids.push(itemId);
   }
   // C4: relic slot
-  const relicId = state.player.relic;
-  if (relicId) {
-    const def = ITEMS[relicId];
-    if (def?.effects) {
-      for (const e of def.effects) effects.add(e);
+  if (state.player.relic) ids.push(state.player.relic);
+  // A1: the axe and pick actually in hand
+  const inv = state.player.inv ?? {};
+  for (const cls of ['axe', 'pick'] as const) {
+    let best: string | null = null, power = -1;
+    for (const id of Object.keys(inv)) {
+      const d = itemDef(id);
+      if (d?.toolClass === cls && (d.toolPower ?? 0) > power) { best = id; power = d.toolPower ?? 0; }
     }
+    if (best) ids.push(best);
+  }
+  for (const id of ids) {
+    const def = itemDef(id);
+    if (def?.effects) for (const e of def.effects) effects.add(e);
   }
   return effects;
 }

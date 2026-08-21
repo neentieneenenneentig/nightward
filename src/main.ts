@@ -39,7 +39,7 @@ import { SoulFeedSystem } from './game/systems/soulfeed';
 import { MaterialEffectSystem } from './game/systems/materialEffects';
 import { craft } from './game/systems/crafting';
 import { activeEffects } from './game/systems/effects';
-import { toggleEquip, invAdd, playerMaxHp } from './game/rules';
+import { toggleEquip, invAdd, gearMod, playerMaxHp } from './game/rules';
 import { BUILDINGS } from './game/data/buildings';
 import { NET_GAME_MAP, NET_METRICS, BEACON_INSPECT, LENS_SECTION_INSPECT, allBeacons, type NetInspect } from './game/data/network';
 import { phase, tintAt, startClock } from './game/systems/daynight';
@@ -319,7 +319,7 @@ async function boot() {
       if (result) {
         vitals.markAction();
         log.push('system',
-          `Fed ${count}× ${ITEMS[itemId].name} → ${targetSlot} soul +${result.xp} xp` +
+          `Fed ${count}× ${itemName(itemId)} → ${targetSlot} soul +${result.xp} xp` +
           (result.leveled ? ` (lv ${result.newLevel}!)` : ''),
           state.clock);
       }
@@ -358,19 +358,19 @@ async function boot() {
     const slot = toggleEquip(state, id);
     if (!slot) return;
     const nowWorn = state.player.equip[slot] === id;
-    ui.toast(`${nowWorn ? 'Equipped' : 'Unequipped'} ${ITEMS[id].name}`, nowWorn ? 'good' : 'info');
-    log.push('system', `${nowWorn ? 'Equipped' : 'Unequipped'} ${ITEMS[id].name}`, state.clock);
+    ui.toast(`${nowWorn ? 'Equipped' : 'Unequipped'} ${itemName(id)}`, nowWorn ? 'good' : 'info');
+    log.push('system', `${nowWorn ? 'Equipped' : 'Unequipped'} ${itemName(id)}`, state.clock);
   }
 
   function useItem(id: string) {
-    const heal = ITEMS[id]?.heal;
+    const heal = itemDef(id)?.heal;
     if (!heal || (state.player.inv[id] ?? 0) <= 0) return;
     if (state.player.hp >= playerMaxHp(state)) { ui.toast('Already at full health'); return; }
     state.player.inv[id]--;
     if (state.player.inv[id] <= 0) delete state.player.inv[id];
     state.player.hp = Math.min(playerMaxHp(state), state.player.hp + heal);
-    ui.toast(`Used ${ITEMS[id].name} (+${heal} hp)`, 'good');
-    log.push('system', `Used ${ITEMS[id].name} (+${heal} hp)`, state.clock);
+    ui.toast(`Used ${itemName(id)} (+${heal} hp)`, 'good');
+    log.push('system', `Used ${itemName(id)} (+${heal} hp)`, state.clock);
   }
 
   function triggerGameOver(cause: 'hall_fallen' | 'old_age') {
@@ -545,8 +545,10 @@ async function boot() {
     // N4.3: Quickening speeds the world up, Miring thickens it. They share this
     // target deliberately, so a link that is both fast and bloated cancels out.
     const omenSpeedMul = omens.mul('moveSpeed');
+    // A1: 'Swift' speeds you up, 'of Weight' (a Riftborn curse) drags.
+    const gearSpeedMul = gearMod(state, 'moveSpeed');
     const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y),
-      feetSpeed * moveSpeedMul * resolveSpeedMul * loomSpeedMul * matSpeedMul * siltMul * omenSpeedMul);
+      feetSpeed * moveSpeedMul * resolveSpeedMul * loomSpeedMul * matSpeedMul * siltMul * omenSpeedMul * gearSpeedMul);
     state.player.x = player.x;
     state.player.y = player.y;
 
@@ -928,7 +930,7 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
   (window as any).NW = { ...((window as any).NW ?? {}), CFG, state, MATS: MATERIALS, ENEMIES, NET: ctx.net };
 }
 
-import { ITEMS } from './game/data/items';
+import { ITEMS, itemDef, itemName } from './game/data/items';
 import { SKILLS } from './game/data/skills';
 import { ENEMIES } from './game/data/enemies';
 boot();

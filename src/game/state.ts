@@ -1,7 +1,8 @@
 // The single source of truth. Everything that must survive a reload lives in
 // this plain-JSON-able object; systems are functions that mutate it.
 import { CFG } from './data/config';
-import { ITEMS } from './data/items';
+import { ITEMS, itemDef, resetRolled } from './data/items';
+import { resetLootSeq } from './systems/loot';
 import type { SoulSlot } from './data/soulgear';
 import { mulberry32 } from '../engine/rng';
 
@@ -128,12 +129,17 @@ export interface SoulItem {
 export const tileKey = (tx: number, ty: number) => tx + ',' + ty;
 
 export function newState(seed: number, spawn: { x: number; y: number }): GameState {
+  // A1: a run is the lifetime of the rolled-item registry. Without this a long
+  // session accumulates every item every previous run ever dropped — a leak
+  // that would never surface in a test and would grow all day in a real tab.
+  resetRolled();
+  resetLootSeq();
   const inv: Record<string, number> = {};
   const soulItems: Partial<Record<SoulSlot, SoulItem>> = {};
   for (const s of CFG.player.startingItems) {
     inv[s.id] = (inv[s.id] ?? 0) + s.n;
     // starting tools are soul-bound from the first swing too, at level 1
-    const cls = ITEMS[s.id]?.toolClass;
+    const cls = itemDef(s.id)?.toolClass;
     if (cls) {
       const slot: SoulSlot = cls === 'axe' ? 'tool_axe' : 'tool_pick';
       soulItems[slot] = { slot, templateId: s.id, level: 1, xp: 0 };

@@ -4,7 +4,7 @@
 // use, on an RS-scale grind — persists across every upgrade. One growth curve
 // per slot; the item that fills the slot only changes the *base* the curve
 // grows from.
-import { ITEMS } from './items';
+import { itemDef } from './items';
 
 export type SoulSlot =
   | 'weapon' | 'armor' | 'tool_axe' | 'tool_pick'
@@ -22,7 +22,7 @@ export const SOULGEAR: Record<SoulSlot, { growthPerLevel: number }> = {
 
 /** The physical item's raw stat for this slot (level-1 baseline). */
 export function baseStatFor(slot: SoulSlot, itemId: string): number {
-  const d = ITEMS[itemId];
+  const d = itemDef(itemId);
   if (!d) return 0;
   if (slot === 'weapon' || slot === 'ring') return d.weaponDmg ?? 0;
   if (slot === 'armor' || slot === 'amulet') return d.armor ?? 0;

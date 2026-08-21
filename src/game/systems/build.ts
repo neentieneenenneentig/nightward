@@ -3,7 +3,7 @@
 import { CFG } from '../data/config';
 import { BUILDINGS, type BuildingDef } from '../data/buildings';
 import { MATERIALS } from '../data/materials';
-import { invCount, invHasAll, invTakeAll } from '../rules';
+import { gearMod, invCount, invHasAll, invTakeAll } from '../rules';
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
 
@@ -172,7 +172,10 @@ export class BuildSystem {
     // keystone itself were all placebo. Scaled once, at placement — a building
     // keeps the ceiling it was raised with even if the weave changes later.
     const hpMul = this.ctx.loom?.getBuildingHpMul?.() ?? 1;
-    const bHp = Math.round(m.def.hp * hpMul);
+    // A1: 'Rooted'. Scaled once at placement, exactly like the Loom multiplier
+    // above it — a building keeps the ceiling it was raised with, so swapping
+    // gear later cannot retroactively weaken a wall you already paid for.
+    const bHp = Math.round(m.def.hp * hpMul * gearMod(state, 'buildHp'));
     const b = { uid: state.nextUid++, type: m.def.id, tx: m.tx, ty: m.ty, hp: bHp, maxHp: bHp };
     state.buildings.push(b);
     world.reindexBuildings();

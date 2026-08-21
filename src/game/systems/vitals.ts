@@ -4,7 +4,7 @@
 // NET_GAME_MAP rows — two players on the same seed with different connections
 // feel different survival pressure.
 import { CFG } from '../data/config';
-import { hall } from '../rules';
+import { gearMod, hall } from '../rules';
 
 export class VitalsSystem {
   private zeroVignetteT = 0;
@@ -21,7 +21,8 @@ export class VitalsSystem {
     // ---- vigor decay ----
     const vigorDecayBase = CFG.vitals.vigorDecayPerSec;
     const vigorDecayNetMul = this.ctx.net?.getGameValue?.('vigorDecay') ?? 1.0;
-    const vigorDecayRate = vigorDecayBase * vigorDecayNetMul;
+    // A1: 'Tireless' slows it, 'of Hunger' (a Riftborn curse) speeds it up.
+    const vigorDecayRate = vigorDecayBase * vigorDecayNetMul * gearMod(this.ctx.state, 'vigorDecay');
     p.vigor = Math.max(0, p.vigor - vigorDecayRate * dt);
 
     // ---- resolve decay (multiplicative stacking) ----
@@ -53,6 +54,7 @@ export class VitalsSystem {
 
     const resolveDecayRate = resolveDecayBase
       * resolveDecayNetMul
+      * gearMod(this.ctx.state, 'resolveDecay')   // A1: 'Steady' / 'of Dread'
       * nightMult
       * netNightMult
       * bossNearMult

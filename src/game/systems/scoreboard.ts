@@ -12,6 +12,8 @@
 // every run to roughly the same window regardless, so what's left to
 // optimize is what you accomplish inside it — which is the point.
 import { CFG } from '../data/config';
+import { allRolled } from '../data/items';
+import { bestRoll } from './loot';
 
 export interface RunScorecard {
   v: 2;
@@ -32,6 +34,19 @@ export interface RunScorecard {
   causeOfDeath: 'old_age' | 'hall_fallen' | 'unknown'; // L1
   legit: boolean;                                      // L1: false if god mode was ever used this run
   legacyScore: number;                                 // L1: the ranking number — see computeLegacyScore
+  /** A1 §4.2(b): the best thing this run found.
+   *
+   *  Pillar 3 forbids persistence except a finished run's scorecard, and this
+   *  is exactly that carve-out: a name and a tier, never live state, nothing
+   *  carrying into the next run. It exists because a rarity ladder compressed
+   *  into fifteen minutes needs somewhere for the memory to land — the Sovereign
+   *  you found on night four should still be a thing that happened after the
+   *  run that found it is over.
+   *
+   *  Read from the roll REGISTRY rather than the bag: an item you found, wore,
+   *  and lost to a death scatter still happened to you. Optional, so v2 records
+   *  written before A1 stay valid and need no migration. */
+  trophy?: { name: string; rarity: string; affixes: number } | null;
 }
 
 /** Bag of stats computeLegacyScore needs — shared by snapshot(), getLiveStats(), and v1 migration. */
@@ -160,6 +175,10 @@ export class ScoreboardSystem {
       causeOfDeath,
       legit,
       legacyScore,
+      trophy: (() => {
+        const best = bestRoll(allRolled());
+        return best ? { name: best.name, rarity: best.rarity, affixes: best.affixes.length } : null;
+      })(),
     };
   }
 

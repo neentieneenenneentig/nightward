@@ -1,6 +1,8 @@
 // Item database. `icon` is a procgen recipe (shape kind + colors) — icons are
 // drawn at runtime like everything else. Add a row = new item exists.
 import { type RGB, hex } from '../../engine/procgen/palette';
+import type { RarityId } from './rarity';
+import type { GearMod } from './affixes';
 
 export type IconKind =
   | 'log' | 'plank' | 'stone' | 'ore' | 'bar'
@@ -139,3 +141,108 @@ export const ITEMS: Record<string, ItemDef> = Object.fromEntries([
   I('ancient_oak', 'Ancient Oak', 'log', '#3a2a10', '#88aa44'),
   I('echo_dust', 'Echo Dust', 'ore', '#aaaacc', '#ffffff'),
 ].map((d) => [d.id, d]));
+
+// ---------------------------------------------------------------------------
+// A1 — rolled items.
+//
+// The whole game is id-keyed: `inv` is Record<itemId, count>, `equip` is
+// Record<slot, itemId>, soul items bind by id, `bestTool` scans inventory keys.
+// A rolled item is UNIQUE, and forcing uniqueness into that shape by hand would
+// have meant touching every one of those structures.
+//
+// So a rolled item gets a SYNTHETIC ID — `iron_blade#7f3a` — and the inventory,
+// the equip map, the soul bindings, the ground drops and the merge logic all
+// keep working completely untouched. Exactly one thing breaks: `ITEMS[id]`
+// returns undefined for a synthetic id. That is what `itemDef()` below is for,
+// and it is the ONLY change the other 33 lookup sites needed.
+//
+// `itemDef()` returns the base def with the affixes ALREADY MERGED into the
+// stat columns, which is the load-bearing decision in this file: it means
+// `bestWeaponDmg`, `baseStatFor`, `wornStat`, `armorDef`, `charmRegen`,
+// `activeEffects` and every other existing stat reader picks up affixes for
+// free, with no knowledge that rarity exists. Affixes are invisible everywhere
+// except where we deliberately want to show them.
+
+/** One affix as it actually landed on one item. The RANGES live in
+ *  data/affixes.ts; the resolved ROLL lives here, which is what makes two Keen
+ *  blades genuinely different blades rather than two copies of one blade. */
+export interface RolledAffix {
+  id: string;
+  name: string;
+  kind: 'prefix' | 'suffix';
+  /** Which stat column it wrote to, and what it contributed. */
+  stat?: 'weaponDmg' | 'armor' | 'regen' | 'toolPower';
+  add?: number;
+  mul?: number;
+  /** A named multiplier read through gearMod(). */
+  mod?: GearMod;
+  modVal?: number;
+  /** One of the fifteen registered effect hooks. */
+  effect?: string;
+  cursed?: boolean;
+}
+
+export interface RolledItem {
+  /** The synthetic inventory id: `${base}#${n}`. */
+  uid: string;
+  /** The authored row this was rolled from. */
+  base: string;
+  rarity: RarityId;
+  /** "Keen Iron Blade of the Ember" — prefix + base name + suffix. */
+  name: string;
+  affixes: RolledAffix[];
+  /** state.clock at the moment it was rolled, for the run trophy. */
+  bornT: number;
+}
+
+/** uid → the merged def handed to every existing consumer. */
+const ROLLED_DEFS = new Map<string, ItemDef>();
+/** uid → the roll itself, for the tooltip, the Bag and the scorecard trophy. */
+const ROLLED = new Map<string, RolledItem>();
+
+/** Strip the roll suffix. A base id passes through unchanged, so this is safe
+ *  to call on anything. */
+export function baseIdOf(id: string): string {
+  const i = id.indexOf('#');
+  return i < 0 ? id : id.slice(0, i);
+}
+
+export function isRolledId(id: string): boolean {
+  return id.indexOf('#') >= 0;
+}
+
+/** THE resolver. Use this instead of `ITEMS[id]` everywhere — it is correct for
+ *  base ids and rolled ids alike. */
+export function itemDef(id: string): ItemDef | undefined {
+  const d = ITEMS[id];
+  if (d) return d;
+  return ROLLED_DEFS.get(id) ?? ITEMS[baseIdOf(id)];
+}
+
+/** Display name, never undefined. Several call sites used to do
+ *  `ITEMS[id].name` unguarded and would throw on an unknown id; this is a
+ *  straight upgrade over that as well as being rarity-aware. */
+export function itemName(id: string): string {
+  return ROLLED.get(id)?.name ?? ITEMS[id]?.name ?? ITEMS[baseIdOf(id)]?.name ?? id;
+}
+
+/** The roll behind a uid, or undefined for an ordinary authored item. */
+export function rolledOf(id: string): RolledItem | undefined {
+  return ROLLED.get(id);
+}
+
+export function registerRolled(r: RolledItem, merged: ItemDef) {
+  ROLLED.set(r.uid, r);
+  ROLLED_DEFS.set(r.uid, merged);
+}
+
+export function allRolled(): RolledItem[] {
+  return [...ROLLED.values()];
+}
+
+/** A run is the lifetime of the registry. Called from newWorld() — without it
+ *  a long session leaks every item every previous run ever dropped. */
+export function resetRolled() {
+  ROLLED.clear();
+  ROLLED_DEFS.clear();
+}

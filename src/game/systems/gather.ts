@@ -1,7 +1,7 @@
 // RS-style gathering: stand near a node, interact, wait out the (tool-scaled)
 // timer, collect loot + xp. Moving cancels. Depleted nodes respawn on a clock.
 import { CFG } from '../data/config';
-import { ITEMS } from '../data/items';
+import { itemName } from '../data/items';
 import { SKILLS } from '../data/skills';
 import type { FeatureDef } from '../data/features';
 import { addXp, awardSoulXp, bestTool, rollLoot, skillLevel, soulStat } from '../rules';
@@ -216,7 +216,7 @@ export class GatherSystem {
     this.ctx.particles?.spawn?.('poof', px, py, a.megaScale > 1 ? 20 : 8);
 
     Sound.play(pickSfx(GATHER_SFX[a.def.skill] ?? ['forage']));
-    const got = drops.map((d) => `+${d.n} ${ITEMS[d.id].name}`).join('  ');
+    const got = drops.map((d) => `+${d.n} ${itemName(d.id)}`).join('  ');
     // B5: the yield line moved to the pickup (drops.ts aggregates it); only the
     // xp stays here, because xp really is earned at the swing. The log entry below
     // keeps `got` — the event log records what the WORLD produced, which is still

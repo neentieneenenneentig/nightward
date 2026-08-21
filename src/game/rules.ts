@@ -1,7 +1,8 @@
 // Pure game rules: inventory math, the xp curve, loot rolls, tool/weapon
 // lookups. No rendering, no DOM — everything here is unit-testable.
 import { CFG } from './data/config';
-import { ITEMS } from './data/items';
+import { itemDef, rolledOf } from './data/items';
+import type { GearMod } from './data/affixes';
 import { activeEffects } from './systems/effects';
 import { computeModifiers } from './data/loom';
 import { SOULGEAR, baseStatFor, type SoulSlot } from './data/soulgear';
@@ -92,7 +93,7 @@ export function rollLoot(table: LootTable): Stack[] {
 export function bestTool(state: GameState, cls: 'axe' | 'pick') {
   let best = null as null | { id: string; power: number };
   for (const id of Object.keys(state.player.inv)) {
-    const def = ITEMS[id];
+    const def = itemDef(id);
     if (def?.toolClass === cls && (!best || (def.toolPower ?? 0) > best.power)) {
       best = { id, power: def.toolPower ?? 0 };
     }
@@ -104,7 +105,7 @@ export function bestTool(state: GameState, cls: 'axe' | 'pick') {
 export function bestWeaponDmg(state: GameState): number {
   let best = 0;
   for (const id of Object.keys(state.player.inv)) {
-    const def = ITEMS[id];
+    const def = itemDef(id);
     if (def?.trinket) continue; // rings carry weaponDmg but aren't weapons
     const d = def?.weaponDmg ?? 0;
     if (d > best) best = d;
@@ -120,7 +121,7 @@ export type EquipSlot = 'weapon' | 'armor' | 'ring' | 'amulet' | 'charm' | 'reli
 /** Which equip slot an item belongs to, or null if it isn't gear. Trinkets
  * declare theirs explicitly (their stat fields overlap weapons/armor). */
 export function slotOf(id: string): EquipSlot | null {
-  const d = ITEMS[id];
+  const d = itemDef(id);
   if (!d) return null;
   if (d.trinket) return d.trinket;
   if (d.relic) return 'relic' as EquipSlot;
@@ -134,7 +135,7 @@ function wornStat(state: GameState, slot: EquipSlot): number {
   // C4: relics are flat stats (no soul-leveling for relics)
   if (slot === 'relic') {
     const id = state.player.relic;
-    return id && invCount(state, id) > 0 ? (ITEMS[id]?.weaponDmg ?? ITEMS[id]?.armor ?? ITEMS[id]?.regen ?? 0) : 0;
+    return id && invCount(state, id) > 0 ? (itemDef(id)?.weaponDmg ?? itemDef(id)?.armor ?? itemDef(id)?.regen ?? 0) : 0;
   }
   const id = state.player.equip?.[slot];
   return id && invCount(state, id) > 0 ? soulStat(state, slot as SoulSlot) : 0;
@@ -153,6 +154,47 @@ export function armorDef(state: GameState): number {
 /** Bonus hp/s the worn charm adds to daytime regen — soul-leveled. */
 export function charmRegen(state: GameState): number {
   return wornStat(state, 'charm');
+}
+
+// --------------------------------------------------------- A1: gear mods ----
+
+/** Everything whose affixes count right now: the five worn slots, the relic,
+ *  and the best axe and pick.
+ *
+ *  Tools are the non-obvious inclusion. They are *carried*, never worn — they
+ *  live in the bag and `bestTool()` decides which one is in your hands. But an
+ *  affix that rolls onto a tool and is then never read is a dormant affix, and
+ *  the whole point of deriving the affix pool from the item's own columns was
+ *  that nothing rolls which nothing consumes. So the axe and pick you actually
+ *  use count as carried gear, here and in activeEffects(). */
+export function carriedGearIds(state: GameState): string[] {
+  const out: string[] = [];
+  for (const slot of ['weapon', 'armor', 'ring', 'amulet', 'charm'] as const) {
+    const id = state.player.equip?.[slot];
+    if (id && invCount(state, id) > 0) out.push(id);
+  }
+  const relic = state.player.relic;
+  if (relic && invCount(state, relic) > 0) out.push(relic);
+  for (const cls of ['axe', 'pick'] as const) {
+    const best = bestTool(state, cls);
+    if (best) out.push(best.id);
+  }
+  return out;
+}
+
+/** The product of one named affix modifier across everything carried.
+ *
+ *  Always a multiplier, always composing by multiplication, always 1.0 when
+ *  nothing rolled it — so an ordinary run is bit-identical to the pre-A1 game
+ *  and a consumer can call this unconditionally without a branch. */
+export function gearMod(state: GameState, key: GearMod): number {
+  let m = 1;
+  for (const id of carriedGearIds(state)) {
+    const r = rolledOf(id);
+    if (!r) continue;
+    for (const a of r.affixes) if (a.mod === key && a.modVal != null) m *= a.modVal;
+  }
+  return m;
 }
 
 /** B3.a — the player's max HP, which is no longer a constant.
@@ -213,7 +255,7 @@ export function acquireGear(state: GameState, id: string) {
   const slot = slotOf(id);
   // C4: relics don't use soul binding
   if (slot && slot !== 'relic' && state.player.equip?.[slot] === id) bindSoulItem(state, slot, id);
-  const cls = ITEMS[id]?.toolClass;
+  const cls = itemDef(id)?.toolClass;
   if (cls) {
     const toolSlot: SoulSlot = cls === 'axe' ? 'tool_axe' : 'tool_pick';
     const best = bestTool(state, cls);
@@ -270,7 +312,8 @@ export function awardSoulXp(state: GameState, slot: SoulSlot, amount: number): n
   const s = state.player.soulItems?.[slot];
   if (!s) return 0;
   const before = s.level;
-  s.xp += amount;
+  // A1: 'Hungering' — the slot feeds faster on what it earns.
+  s.xp += amount * gearMod(state, 'soulXp');
   s.level = soulLevelFromXp(s.xp);
   return s.level > before ? s.level : 0;
 }

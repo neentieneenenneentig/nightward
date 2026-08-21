@@ -10,7 +10,7 @@ import { M, MATERIALS } from '../data/materials';
 import { FEATURES } from '../data/features';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
-import { ITEMS } from '../data/items';
+import { itemDef } from '../data/items';
 import { makeIcon } from '../../engine/procgen/icons';
 import { TILE } from './worldgen';
 
@@ -102,7 +102,7 @@ export class WorldArt {
   itemIcon(id: string): HTMLCanvasElement {
     let c = this.itemIcons.get(id);
     if (!c) {
-      const spec = ITEMS[id]?.icon;
+      const spec = itemDef(id)?.icon;
       c = makeIcon(spec ?? { kind: 'stone', color: [140, 140, 150] });
       this.itemIcons.set(id, c);
     }

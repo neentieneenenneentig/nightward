@@ -13,8 +13,10 @@
 //   2. the rest  — it sits with a contact shadow, bobbing so the eye finds it
 //   3. the collect — walk near, it snaps to you, it lands in the bag
 import { CFG } from '../data/config';
-import { ITEMS } from '../data/items';
+import { ITEMS, itemDef } from '../data/items';
 import { acquireGear, invAdd } from '../rules';
+import { fortuneFrom, rollStacks } from './loot';
+import type { RollOpts } from './loot';
 import type { GameState, GroundDrop } from '../state';
 import type { Stack } from '../types';
 import { TILE } from '../world/worldgen';
@@ -24,7 +26,7 @@ import { Sound } from '../../engine/audio';
  *  the existing ITEMS columns rather than a new data field, so there are no rows
  *  to maintain and a new weapon is automatically exempt. */
 export function isGear(id: string): boolean {
-  const it = ITEMS[id];
+  const it = itemDef(id);
   if (!it) return false;
   return !!(it.weaponDmg || it.armor || it.trinket || it.relic || it.toolClass);
 }
@@ -35,6 +37,10 @@ interface DropCtx {
   player: { x: number; y: number };
   toast?: (m: string, k?: string) => void;
   particles?: { spawn(kind: string, x: number, y: number, n: number, dir?: number): void };
+  /** A1: the Fortune mapping. Assigned onto the shared ctx after this system is
+   *  constructed, which is fine — spawn() reads it at call time, not at
+   *  construction. Optional because the Gauntlet builds drop systems headless. */
+  net?: { getGameValue?(target: string): number; lastRiftTime?: number };
 }
 
 export class DropSystem {
@@ -50,9 +56,36 @@ export class DropSystem {
 
   /** The one call site that replaces invAdd/acquireGear at all three loot sources.
    *  (x, y) is the world-pixel origin of the toss — the node, or the corpse. */
-  spawn(stacks: Stack[], x: number, y: number, opts: { spread?: number } = {}) {
+  spawn(stacks: Stack[], x: number, y: number, opts: { spread?: number; band?: RollOpts['band'] } = {}) {
     const { state } = this.ctx;
     const D = CFG.drops;
+
+    // A1 — the roll happens HERE, at the one seam B5 already funnelled all
+    // three loot sources through (gathering, horde kills, world-boss kills).
+    // Doing it at the three call sites instead would have been three chances
+    // to forget one, and the one you forget is invisible: a source that never
+    // rolls just quietly drops Plain forever.
+    //
+    // Materials pass through untouched and keep stacking. Gear becomes one
+    // unique id per unit, which is also why findMergeTarget() below stops
+    // merging gear for free — two rolled swords have different ids, so the
+    // id-equality check that merges timber can never merge them.
+    // The torn realm gives up things it should not. For CFG.loot.riftWindowSec
+    // after a rift, ordinary drops roll on the `rift` band — the only route to
+    // a Riftborn item in the game.
+    //
+    // This is what makes a rift an EVENT rather than a colour change. N4.3 gave
+    // the rift its first working trigger on desktop (a hard latency step); this
+    // gives it its first reason to want one. An explicit band from the caller
+    // always wins, so a lord killed during a rift still rolls the lord band.
+    const rift = this.ctx.net?.lastRiftTime ?? 0;
+    const inRift = rift > 0 && (performance.now() - rift) < CFG.loot.riftWindowSec * 1000;
+
+    stacks = rollStacks(stacks, {
+      band: opts.band ?? (inRift ? 'rift' : 'common'),
+      fortune: fortuneFrom(this.ctx.net),
+      clock: state.clock,
+    });
 
     // The escape hatch. With drops disabled this is byte-for-byte the pre-B5
     // behaviour, which is what makes a negative playtest verdict a config edit
@@ -200,7 +233,7 @@ export class DropSystem {
     if (this.pendingT < 0) return;
     if (this.ctx.state.clock - this.pendingT < CFG.drops.toastWindowSec) return;
     const parts: string[] = [];
-    for (const [id, n] of this.pending) parts.push(`+${n} ${ITEMS[id]?.name ?? id}`);
+    for (const [id, n] of this.pending) parts.push(`+${n} ${itemDef(id)?.name ?? id}`);
     this.pending.clear();
     this.pendingT = -1;
     if (parts.length) this.ctx.toast?.(parts.join('  '));

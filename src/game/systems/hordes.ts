@@ -804,7 +804,7 @@ export class HordeSystem {
     // B5: the corpse drops its loot on the floor. The toast moved with it — a
     // 43-foe night wave firing one toast per stack at roll time is a wall of
     // text; drops.ts aggregates the pickups into one line per 0.4 s instead.
-    this.ctx.drops.spawn(rollLoot(f.def.loot), f.x, f.y);
+    this.ctx.drops.spawn(rollLoot(f.def.loot), f.x, f.y, { band: 'common' });
     if (awardXp) {
       const lvl = addXp(state, 'combat', f.def.xp);
       toast(`+${f.def.xp} ${SKILL_NAME['combat']} xp`);

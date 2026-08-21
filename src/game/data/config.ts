@@ -334,6 +334,28 @@ export const CFG = {
     goldDrops: false,        // B5 Q2 — gold stays a direct credit until decided
   },
 
+  // A1 — the rarity roll. `enabled: false` is a real escape hatch, not a
+  // decoration: with it off, rollItem() returns the id it was handed, so the
+  // game is byte-for-byte its pre-A1 self and a negative playtest verdict is a
+  // config edit rather than a revert. Same discipline as CFG.drops.enabled.
+  loot: {
+    enabled: true,
+    /** Crafted gear rolls too, in the narrow `forge` band — mostly Plain, and
+     *  occasionally Touched. Crafting must stay worth doing once loot exists,
+     *  and a forge that can never produce anything interesting is a forge the
+     *  player abandons the moment the first blue drops. */
+    craftRolls: true,
+    /** Ground drops at or above this tier get a light shaft and a floating
+     *  name (A4). Below it the world would be a disco. */
+    beamFrom: 'woven',
+    /** Seconds after a rift during which ordinary drops roll the `rift` band —
+     *  the only route to a Riftborn item. A rift should be worth chasing. */
+    riftWindowSec: 60,
+    /** Tooltip delta colouring thresholds — a change smaller than this reads as
+     *  noise and is drawn neutral rather than green. */
+    deltaEpsilon: 0.05,
+  },
+
   // N4.3: Omens — a detected step change on the wire becomes a temporary world
   // state. See systems/omens.ts; the per-kind numbers live in OMEN_DEFS, which
   // is a table, so balance is a row edit rather than a code change.
