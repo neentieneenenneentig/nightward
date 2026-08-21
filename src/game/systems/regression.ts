@@ -3781,19 +3781,53 @@ async function testVigorStarve(nw: any) {
   net.snap.downlink = 0.3; // <0.5 → vigorDecay ×3.0
   net.snap.rtt = 15;       // <20ms → simSpeed ×1.15
   net.snap.effectiveType = '4g'; // neutral resolve decay
+
+  // ...and pin the WORLD, exactly as testVitalsDecay above already does. This
+  // test had the identical hazard and no guard: it steps 5 seconds with night
+  // hordes live, and a foe that kills the player triggers VitalsSystem.onRespawn,
+  // which sets vigor to a flat 50 — so the assertion reports "vigor 49.88"
+  // against an expected 0 and reads like a decay bug.
+  //
+  // It went red 2 runs in 8 after A1 landed. A1 did not cause it: rolling loot
+  // consumes Math.random() on every gear drop, which shifts the global RNG
+  // stream for every horde spawn and damage roll downstream, and that was
+  // enough to move a LATENT flake into view. The diagnostic that identified it
+  // is retained below — `moved 3846px` at exactly 50 vigor is a death scatter,
+  // and an assertion printing only the number could never have said so.
+  //
+  // God mode blocks combat death without touching the decay path under test,
+  // but it also blocks STARVATION damage — so it is lifted for the second
+  // phase, which is the one that needs the player to be hurtable.
+  const savedGod = state.god;
+  const savedFoes = nw.sys.hordes.foes.slice();
+  state.god = true;
+  nw.sys.hordes.foes.length = 0;
+
   // Max decay rate = (1/15) × 3.0 × 1.15 ≈ 0.23/s. Start at 0.5, step 5s → drain ~1.15.
   p.vigor = 0.5;
   p.hp = 100;
+  const startX = p.x, startY = p.y;
   nw.step(5 * 30); // 5s at 30Hz
-  ok(p.vigor <= 0, `vigor reached 0 (got ${p.vigor.toFixed(2)} after 5s with worst-case net)`);
-  // HP should be draining — set high HP, step briefly, verify decrease
+  const moved = Math.hypot(p.x - startX, p.y - startY);
+  ok(p.vigor <= 0, `vigor reached 0 (got ${p.vigor.toFixed(2)} after 5s with worst-case net`
+    + `; hp ${p.hp.toFixed(0)}, foes ${nw.sys.hordes.foes.length}, moved ${moved.toFixed(0)}px)`);
+  // The positive guard for the paragraph above: a death scatter teleports 40–110
+  // tiles. If this ever fires, the number above is a respawn and not decay.
+  ok(moved < 200, `...and the player was never scattered mid-measurement (${moved.toFixed(0)}px)`);
+
+  // HP should be draining — set high HP, step briefly, verify decrease.
+  // God mode off: starvation IS damage, and this is the assertion about it.
+  state.god = false;
   p.hp = 100;
   const hpBefore = p.hp;
   nw.step(1 * 30); // 1 second of starvation
   // Net drain = 2/sec starvation - ~1/sec day regen ≈ 1/sec. 1s → ~1 HP lost.
   ok(p.hp < hpBefore, `HP drained after vigor=0: ${hpBefore.toFixed(0)} → ${p.hp.toFixed(0)}`);
-  // Now safe to restore network and reset
+  // Now safe to restore network, the world, and the player
   Object.assign(net.snap, saved);
+  state.god = savedGod;
+  nw.sys.hordes.foes.length = 0;
+  for (const f of savedFoes) nw.sys.hordes.foes.push(f);
   p.vigor = 100;
   p.hp = 100;
 }
@@ -5609,6 +5643,14 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Omens - lift on recovery, expire on the cap, cap how many', fn: testOmensRecoverAndExpire },
   { name: 'Omens - actually change tribute, harvests and movement', fn: testOmensDriveTheGame },
   { name: 'Omens - named in the Lens and on the HUD', fn: testLensShowsOmens },
+  // ---- A1/A4: The Arsenal ----
+  { name: 'Loot - the ladder is climbable in one run, and Fortune tilts it', fn: testLootLadder },
+  { name: 'Loot - a rolled item changes the numbers the game actually reads', fn: testRolledItemChangesStats },
+  { name: 'Loot - affixes reach the effect hooks and move the player', fn: testAffixesDriveTheGame },
+  { name: 'Loot - materials pass through, gear splits, bands hold', fn: testLootDropSeam },
+  { name: 'Loot - no roll can produce NaN, and junk ids degrade quietly', fn: testLootNeverProducesNaN },
+  { name: 'Arsenal - the tooltip compares against what is worn', fn: testTooltipComparesGear },
+  { name: 'Arsenal - the orbs track the vitals and the radar is attached', fn: testOrbsAndMinimap },
 ];
 
 
@@ -6299,4 +6341,516 @@ function showOverlay(report: string, ok: boolean) {
 
   // auto-dismiss after 30s if all passed
   if (ok) setTimeout(() => { if (div.parentNode) div.remove(); }, 30_000);
+}
+
+// ===========================================================================
+// A1 / A4 — The Arsenal: the roll, and the face that makes it visible
+// ===========================================================================
+//
+// The standing rule for this milestone, from A-arsenal §7 risk 4: **assert
+// through to a player stat.** A rarity system stubbed to always-Plain, or with
+// the affix merge deleted entirely, is invisible to every other test in this
+// suite — the same shape as the four tautologies this project has already
+// shipped. So nothing below asserts that `rollItem()` returned an object.
+// Everything reads the number back out of the function the GAME calls:
+// equippedWeaponDmg(), charmRegen(), armorDef(), activeEffects(), gearMod(),
+// or the distance the player actually travels.
+
+/** Save and restore everything a loot test mutates. Several of these tests
+ *  strip the player bare, and leaving them that way would poison whichever
+ *  playthrough test happened to run next — which is exactly how a suite
+ *  develops order-dependent flakes. */
+function snapshotPlayer(nw: any) {
+  const p = nw.state.player;
+  return {
+    inv: { ...p.inv },
+    equip: { ...(p.equip ?? {}) },
+    soulItems: JSON.parse(JSON.stringify(p.soulItems ?? {})),
+    relic: p.relic,
+    x: p.x, y: p.y, hp: p.hp,
+    restore() {
+      p.inv = { ...this.inv };
+      p.equip = { ...this.equip };
+      p.soulItems = JSON.parse(JSON.stringify(this.soulItems));
+      p.relic = this.relic;
+      p.hp = this.hp;
+      nw.player.teleport(this.x, this.y);
+    },
+  };
+}
+
+/** Strip to nothing, then put exactly `ids` in the bag and wear them. */
+async function wearOnly(nw: any, ids: string[]) {
+  const { invAdd, acquireGear } = await import('../rules');
+  const p = nw.state.player;
+  p.inv = {}; p.equip = {}; p.soulItems = {}; p.relic = undefined;
+  for (const id of ids) { invAdd(nw.state, id, 1); acquireGear(nw.state, id); }
+}
+
+/** Roll `base` at `tier` until the roll contains an affix matching `want`, or
+ *  give up. Rolling until is honest: it exercises the real weighted draw rather
+ *  than hand-building a RolledItem the game would never produce. */
+async function rollUntil(base: string, tier: string, want: (a: any) => boolean, tries = 600): Promise<string | null> {
+  const { rollItem } = await import('./loot');
+  const { rolledOf } = await import('../data/items');
+  for (let i = 0; i < tries; i++) {
+    const id = rollItem(base, { forceRarity: tier as any });
+    const r = rolledOf(id);
+    if (r && r.affixes.some(want)) return id;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// A1.1 — the ladder
+// ---------------------------------------------------------------------------
+async function testLootLadder(nw: any) {
+  const { rollRarity, lootQuantityMul } = await import('./loot');
+  const { LOOT_BANDS, LOOT_TUNING } = await import('../data/rarity');
+
+  const N = 4000;
+  const hist = (band: any, f: number): Record<string, number> => {
+    const h: Record<string, number> = {};
+    for (let i = 0; i < N; i++) { const r = rollRarity(band, f); h[r] = (h[r] ?? 0) + 1; }
+    return h;
+  };
+  const pct = (h: Record<string, number>, k: string) => (h[k] ?? 0) / N;
+
+  const common = hist(LOOT_BANDS.common, 1);
+
+  // The shape documented in data/rarity.ts. Wide bands — this is a 4000-draw
+  // sample of a weighted RNG, not an exact computation — but tight enough that
+  // a weight typo of any size moves it out of range.
+  ok(pct(common, 'plain') > 0.46 && pct(common, 'plain') < 0.62,
+    `common band is mostly Plain: ${(pct(common, 'plain') * 100).toFixed(1)}%`);
+  ok(pct(common, 'woven') > 0.10 && pct(common, 'woven') < 0.18,
+    `Woven is uncommon but real: ${(pct(common, 'woven') * 100).toFixed(1)}%`);
+  ok(pct(common, 'hallowed') > 0.03 && pct(common, 'hallowed') < 0.08,
+    `Hallowed is rare: ${(pct(common, 'hallowed') * 100).toFixed(1)}%`);
+
+  // The whole §4.2(a) argument in one assertion: the ladder has to be CLIMBABLE
+  // inside a fifteen-minute run, or the top of it is content no player sees.
+  const wovenPerRun = pct(common, 'woven') * LOOT_TUNING.gearDropsPerRun;
+  const hallowedPerRun = pct(common, 'hallowed') * LOOT_TUNING.gearDropsPerRun;
+  ok(wovenPerRun >= LOOT_TUNING.wovenPerRun[0] && wovenPerRun <= LOOT_TUNING.wovenPerRun[1],
+    `a ${LOOT_TUNING.gearDropsPerRun}-drop run yields ${wovenPerRun.toFixed(1)} Woven `
+    + `(target ${LOOT_TUNING.wovenPerRun[0]}–${LOOT_TUNING.wovenPerRun[1]})`);
+  ok(hallowedPerRun > 0.5 && hallowedPerRun < 2,
+    `...and ${hallowedPerRun.toFixed(2)} Hallowed (target ~${LOOT_TUNING.hallowedPerRun})`);
+
+  // Bands are HARD limits, not preferences. Without this the "lords only" and
+  // "rift only" promises in the GDD are decoration.
+  ok(!common.sovereign && !common.riftborn,
+    'the common band can never reach Sovereign or Riftborn');
+  const lord = hist(LOOT_BANDS.lord, 1);
+  ok(!lord.plain && !lord.touched && !lord.woven, 'a domain lord never drops below Hallowed');
+  ok(pct(lord, 'sovereign') > 0.15 && pct(lord, 'sovereign') < 0.32,
+    `a lord kill is a ~${(pct(lord, 'sovereign') * 100).toFixed(0)}% shot at a Sovereign `
+    + `(target ~${(LOOT_TUNING.sovereignPerLord * 100).toFixed(0)}%)`);
+  const rift = hist(LOOT_BANDS.rift, 1);
+  ok((rift.riftborn ?? 0) > 0, 'a torn realm is the only route to a Riftborn item');
+  ok(!rift.plain && !rift.touched, '...and a torn realm never drops junk');
+  const forge = hist(LOOT_BANDS.forge, 1);
+  ok(!forge.woven && !forge.hallowed && (forge.touched ?? 0) > 0,
+    'a forge tops out at Touched — sound work, not miracles');
+
+  // Fortune tilts the ladder, and the MATCHED CONTROL proves the tilt is
+  // Fortune rather than sampling noise: two draws at the same Fortune must
+  // differ from each other by less than either differs from a tilted draw.
+  const hi = hist(LOOT_BANDS.common, 1.35);
+  const lo = hist(LOOT_BANDS.common, 0.75);
+  const again = hist(LOOT_BANDS.common, 1);
+  ok((hi.hallowed ?? 0) > (common.hallowed ?? 0),
+    `a wide clean wire lifts Hallowed: ${hi.hallowed} vs ${common.hallowed} per ${N}`);
+  ok((lo.hallowed ?? 0) < (common.hallowed ?? 0),
+    `a frayed wire drops it: ${lo.hallowed} vs ${common.hallowed} per ${N}`);
+  ok(Math.abs((again.hallowed ?? 0) - (common.hallowed ?? 0))
+     < Math.abs((hi.hallowed ?? 0) - (common.hallowed ?? 0)),
+    'CONTROL: two draws at the same Fortune agree more closely than a tilted one '
+    + '— the shift above is the mapping, not variance');
+
+  // ...and the compensating half, or a bad connection is a punishment.
+  ok(lootQuantityMul(0.75) > 1, `a frayed wire drops MORE: ×${lootQuantityMul(0.75).toFixed(2)} quantity`);
+  eq(lootQuantityMul(1.35), 1, 'a clean wire drops no extra quantity — it drops better things');
+  eq(lootQuantityMul(1), 1, 'CONTROL: a neutral wire changes neither');
+}
+
+// ---------------------------------------------------------------------------
+// A1.2 — the roll reaches the numbers the game reads
+// ---------------------------------------------------------------------------
+async function testRolledItemChangesStats(nw: any) {
+  const { rollItem } = await import('./loot');
+  const { equippedWeaponDmg, armorDef, charmRegen, bestTool } = await import('../rules');
+  const { itemDef, rolledOf } = await import('../data/items');
+  const snap = snapshotPlayer(nw);
+  try {
+    // ---- weapon: the number combat multiplies by ----
+    await wearOnly(nw, ['sword_iron']);
+    const plainDmg = equippedWeaponDmg(nw.state);
+    ok(plainDmg > 0, `a plain Iron Blade is worth ${plainDmg.toFixed(2)} damage`);
+
+    const hallowed = rollItem('sword_iron', { forceRarity: 'hallowed' });
+    ok(hallowed !== 'sword_iron', 'a Hallowed roll produces a distinct item id');
+    ok(!!rolledOf(hallowed), '...backed by a roll record');
+    await wearOnly(nw, [hallowed]);
+    eq(nw.state.player.equip.weapon, hallowed, 'it equips through the ordinary acquireGear path');
+    const rolledDmg = equippedWeaponDmg(nw.state);
+    ok(rolledDmg > plainDmg,
+      `and equippedWeaponDmg() — the function combat calls — reads it: `
+      + `${rolledDmg.toFixed(2)} vs ${plainDmg.toFixed(2)}`);
+
+    // THE CONTROL. A Plain roll must return the authored id and change nothing
+    // at all. Without this, "rolled items are stronger" would also pass if the
+    // roll simply added a flat bonus to everything it touched.
+    const plainRoll = rollItem('sword_iron', { forceRarity: 'plain' });
+    eq(plainRoll, 'sword_iron', 'CONTROL: a Plain roll returns the authored id unchanged');
+    await wearOnly(nw, [plainRoll]);
+    eq(equippedWeaponDmg(nw.state), plainDmg, 'CONTROL: ...and the numbers are identical');
+
+    // ---- armour: a different stat column, a different reader ----
+    await wearOnly(nw, ['armor_iron']);
+    const plainArmor = armorDef(nw.state);
+    const rolledArmorId = rollItem('armor_iron', { forceRarity: 'sovereign' });
+    await wearOnly(nw, [rolledArmorId]);
+    ok(armorDef(nw.state) > plainArmor,
+      `a Sovereign chestplate reaches armorDef(): ${armorDef(nw.state).toFixed(2)} vs ${plainArmor.toFixed(2)}`);
+
+    // ---- charm: regen, which only the charm slot reads at all ----
+    await wearOnly(nw, ['charm_gold']);
+    const plainRegen = charmRegen(nw.state);
+    const rolledCharm = rollItem('charm_gold', { forceRarity: 'sovereign' });
+    await wearOnly(nw, [rolledCharm]);
+    ok(charmRegen(nw.state) >= plainRegen,
+      `a Sovereign charm reaches charmRegen(): ${charmRegen(nw.state).toFixed(2)} vs ${plainRegen.toFixed(2)}`);
+
+    // ---- tools are CARRIED, not worn: bestTool() has to see the roll ----
+    await wearOnly(nw, ['axe_iron']);
+    const plainAxe = bestTool(nw.state, 'axe');
+    const rolledAxe = await rollUntil('axe_iron', 'hallowed', (a: any) => a.id === 'biting');
+    ok(rolledAxe !== null, 'a Biting axe can be rolled');
+    if (rolledAxe) {
+      await wearOnly(nw, [rolledAxe]);
+      const best = bestTool(nw.state, 'axe');
+      ok(!!best && best.power > (plainAxe?.power ?? 0),
+        `bestTool() picks up the affix: ${best!.power.toFixed(2)} vs ${(plainAxe?.power ?? 0).toFixed(2)} tool power`);
+      ok(itemDef(rolledAxe)!.toolPower === best!.power,
+        'and itemDef() is where it came from — the merge, not a special case in bestTool');
+    }
+  } finally {
+    snap.restore();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A1.3 — affixes reach the hooks and the modifier consumers
+// ---------------------------------------------------------------------------
+async function testAffixesDriveTheGame(nw: any) {
+  const { gearMod } = await import('../rules');
+  const { activeEffects } = await import('./effects');
+  const { rollItem } = await import('./loot');
+  const snap = snapshotPlayer(nw);
+  const state = nw.state;
+
+  try {
+    // ---- an effect suffix must arrive as an ordinary registered hook ----
+    const emberId = await rollUntil('armor_iron', 'hallowed', (a: any) => a.effect === 'fire_aura');
+    ok(emberId !== null, 'an "of the Ember" chestplate can be rolled');
+    if (emberId) {
+      await wearOnly(nw, ['armor_iron']);
+      ok(!activeEffects(state).has('fire_aura'),
+        'CONTROL: a plain chestplate carries no fire aura');
+      await wearOnly(nw, [emberId]);
+      ok(activeEffects(state).has('fire_aura'),
+        'an "of the Ember" roll reaches activeEffects() as fire_aura — the same hook C4 built');
+    }
+
+    // ---- a tool affix must count even though tools are never worn ----
+    const plentyAxe = await rollUntil('axe_iron', 'hallowed', (a: any) => a.effect === 'gold_find');
+    if (plentyAxe) {
+      await wearOnly(nw, [plentyAxe]);
+      ok(activeEffects(state).has('gold_find'),
+        'an affix on the axe in your hands counts — tools are carried gear, not dead weight');
+    }
+
+    // ---- a named modifier must reach gearMod() ----
+    const tireless = await rollUntil('charm_gold', 'hallowed', (a: any) => a.mod === 'vigorDecay' && a.modVal < 1);
+    ok(tireless !== null, 'a Tireless charm can be rolled');
+    if (tireless) {
+      await wearOnly(nw, ['charm_gold']);
+      eq(gearMod(state, 'vigorDecay'), 1, 'CONTROL: an unrolled charm leaves hunger exactly neutral');
+      await wearOnly(nw, [tireless]);
+      ok(gearMod(state, 'vigorDecay') < 1,
+        `Tireless slows hunger: gearMod ×${gearMod(state, 'vigorDecay').toFixed(2)}`);
+    }
+
+    // ---- and the one that has to be MEASURED, not read back ----------------
+    //
+    // Reading gearMod('moveSpeed') back would pass while main.ts computed the
+    // value and discarded it — the bug that shipped in G1 and again in the Loom.
+    // So: drive the input axis down a terrain-uniform corridor and measure the
+    // distance, exactly as the Loom and Omen probes do.
+    const swift = await rollUntil('armor_iron', 'hallowed', (a: any) => a.mod === 'moveSpeed' && a.modVal > 1);
+    ok(swift !== null, 'a Swift chestplate can be rolled');
+    const savedAxis = nw.input?.axis;
+    ok(!!savedAxis, 'the input seam is available to measure real movement');
+    if (swift && savedAxis) {
+      if (nw.ui?.isOpen?.()) nw.ui.close?.();
+      const RUN = 7;
+      const corridor = findUniformCorridor(nw, RUN);
+      ok(corridor !== null, `found ${RUN} tiles of terrain-uniform corridor`);
+      if (corridor) {
+        const c = corridor;
+        const MAXPX = RUN * 32;
+        nw.input.axis = () => ({ x: c.dx, y: c.dy });
+        const { playerMaxHp } = await import('../rules');
+        const travel = () => {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            nw.sys.hordes?.clearField?.();
+            state.player.hp = playerMaxHp(state);
+            nw.player.teleport(c.x, c.y);
+            state.player.x = c.x; state.player.y = c.y;
+            nw.step(18);
+            const d = Math.hypot(state.player.x - c.x, state.player.y - c.y);
+            if (d <= MAXPX) return d;
+          }
+          return -1;
+        };
+        try {
+          await wearOnly(nw, ['armor_iron']);
+          const plain = travel();
+          await wearOnly(nw, [swift]);
+          const fast = travel();
+          ok(plain > 1 && plain <= MAXPX,
+            `the player covers real ground by WALKING: ${plain.toFixed(1)}px / 18 ticks`);
+          if (plain > 1 && plain <= MAXPX) {
+            ok(fast > plain,
+              `a Swift chestplate carries them further (${fast.toFixed(1)} > ${plain.toFixed(1)}px)`);
+            // And by the rolled amount, not merely "more". On uniform ground the
+            // distance is exactly proportional to the multiplier.
+            const { rolledOf } = await import('../data/items');
+            const want = rolledOf(swift)!.affixes.find((a: any) => a.mod === 'moveSpeed')!.modVal!;
+            const got = fast / plain;
+            ok(Math.abs(got - want) < 0.02,
+              `and by the ROLLED amount: measured ×${got.toFixed(3)} against a rolled ×${want.toFixed(2)}`);
+          }
+        } finally {
+          nw.input.axis = savedAxis;
+        }
+      }
+    }
+  } finally {
+    snap.restore();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A1.4 — the drop seam: materials pass through, bands are honoured
+// ---------------------------------------------------------------------------
+async function testLootDropSeam(nw: any) {
+  const { rollStacks, isRollable } = await import('./loot');
+  const { rolledOf, baseIdOf } = await import('../data/items');
+  const { rarityIndex } = await import('../data/rarity');
+  const { CFG } = await import('../data/config');
+
+  // Materials must survive untouched or the bag stops stacking.
+  const mats = rollStacks([{ id: 'log', n: 7 }, { id: 'stone', n: 3 }]);
+  eq(mats.length, 2, 'two material stacks in, two out');
+  eq(mats[0].id, 'log', 'a material keeps its authored id');
+  eq(mats[0].n, 7, '...and its whole stack, so the bag still stacks it');
+  ok(!isRollable('log') && !isRollable('berry'), 'materials are not rollable at all');
+  ok(isRollable('sword_iron') && isRollable('axe_flint') && isRollable('charm_gold'),
+    'weapons, tools and trinkets are');
+
+  // Gear splits into one unique unit per item: two swords off one corpse have
+  // to be two different swords or the entire premise is missing.
+  const gear = rollStacks([{ id: 'sword_iron', n: 3 }], { band: 'lord' });
+  eq(gear.length, 3, 'three blades roll as three separate items');
+  ok(gear.every((g: any) => g.n === 1), '...each a stack of one');
+  ok(new Set(gear.map((g: any) => g.id)).size === 3, '...with three distinct ids');
+  for (const g of gear) {
+    eq(baseIdOf(g.id), 'sword_iron', 'each keeps its authored base');
+    const r = rolledOf(g.id);
+    ok(!!r, 'each carries a roll record');
+    ok(rarityIndex(r!.rarity) >= rarityIndex('hallowed'),
+      `a lord-band blade is at least Hallowed (got ${r!.rarity})`);
+  }
+
+  // And the seam the SIM uses — B5's single funnel for all three loot sources.
+  const state = nw.state;
+  const before = state.drops.length;
+  if (CFG.drops.enabled) {
+    nw.sys.drops.spawn([{ id: 'sword_iron', n: 2 }], nw.player.x + 300, nw.player.y + 300, { band: 'lord' });
+    const added = state.drops.slice(before);
+    eq(added.length, 2, 'DropSystem.spawn rolls each unit into its own ground drop');
+    ok(added.every((d: any) => rolledOf(d.id)),
+      'and what lands on the floor is the ROLLED item, not the authored one');
+    ok(added.every((d: any) => d.gear), '...still flagged as gear, so it never despawns');
+    // clean up so no other test inherits a pile of swords
+    state.drops.length = before;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A1.5 — nothing the roll produces can be NaN, undefined, or negative armour
+// ---------------------------------------------------------------------------
+async function testLootNeverProducesNaN(nw: any) {
+  const { rollItem } = await import('./loot');
+  const { itemDef, itemName, rolledOf, baseIdOf } = await import('../data/items');
+  const { rarityOf } = await import('../ui/rarity');
+
+  // WORKFLOW Pitfall 4: a value that reaches a game system must never be NaN.
+  // The rift band is the worst case — five affixes including a curse that can
+  // drive armour negative.
+  const BASES = ['sword_iron', 'armor_iron', 'ring_fire', 'charm_gold', 'axe_iron', 'amulet_ward'];
+  let bad = 0, negArmor = 0, unnamed = 0;
+  for (let i = 0; i < 900; i++) {
+    const id = rollItem(BASES[i % BASES.length], { band: 'rift', fortune: 1.35 });
+    const d: any = itemDef(id);
+    if (!d) { bad++; continue; }
+    for (const c of ['weaponDmg', 'armor', 'regen', 'toolPower']) {
+      if (d[c] != null && !Number.isFinite(d[c])) bad++;
+    }
+    if (d.armor != null && d.armor < 0) negArmor++;
+    if (!itemName(id) || itemName(id) === id) unnamed++;
+  }
+  eq(bad, 0, '900 rift-band rolls produce no non-finite stat');
+  eq(negArmor, 0, '...and no negative armour, however cursed');
+  eq(unnamed, 0, '...and every one of them has a readable name');
+
+  // Untrusted / nonsense ids must degrade, never throw. `itemDef` is now called
+  // at 33 sites and several of them were previously `ITEMS[x].name` unguarded.
+  ok(itemDef('no_such_item') === undefined, 'an unknown id resolves to undefined, not a throw');
+  eq(itemName('no_such_item'), 'no_such_item', 'an unknown id names itself');
+  eq(baseIdOf('sword_iron#zz'), 'sword_iron', 'a uid resolves back to its base');
+  eq(baseIdOf('sword_iron'), 'sword_iron', 'a base id passes through baseIdOf unchanged');
+  ok(itemDef('sword_iron#does_not_exist') !== undefined,
+    'a uid whose roll was lost still resolves to its BASE def rather than vanishing');
+  eq(rollItem('no_such_item'), 'no_such_item', 'rolling a nonexistent item returns it unchanged');
+  eq(rollItem('log'), 'log', 'rolling a material returns it unchanged');
+  eq(rarityOf('log'), 'plain', 'an unrolled item reads as Plain');
+  ok(!rolledOf('log'), '...and has no roll record');
+}
+
+// ---------------------------------------------------------------------------
+// A4 — the face: the tooltip is the half of A1 the player can see
+// ---------------------------------------------------------------------------
+async function testTooltipComparesGear(nw: any) {
+  const { itemTooltipHtml } = await import('../ui/tooltip');
+  const { rollItem } = await import('./loot');
+  const { rarityColor, affixLines, nameHtml } = await import('../ui/rarity');
+  const { rarityDef } = await import('../data/rarity');
+  const snap = snapshotPlayer(nw);
+  try {
+    const better = rollItem('sword_iron', { forceRarity: 'hallowed' });
+    const { invAdd } = await import('../rules');
+
+    // Worn plain, hovering the rolled one: an UPGRADE.
+    await wearOnly(nw, ['sword_iron']);
+    invAdd(nw.state, better, 1);
+    const up = itemTooltipHtml(nw.state, better);
+    ok(up.includes('nw-tip-cmp'), 'the tooltip renders a comparison block against the worn item');
+    ok(up.includes('vs '), '...naming what it is compared against');
+    ok(up.includes('nw-tip-delta up'), '...and marks a better item as an upgrade');
+    ok(up.includes('+'), '...with a signed delta');
+
+    // Worn rolled, hovering the plain one: a DOWNGRADE. This is the matched
+    // control — without it, a tooltip that hardcoded "up" would pass.
+    await wearOnly(nw, [better]);
+    invAdd(nw.state, 'sword_iron', 1);
+    const down = itemTooltipHtml(nw.state, 'sword_iron');
+    ok(down.includes('nw-tip-delta down'),
+      'CONTROL: the worse item is marked a downgrade, so the sign is computed and not assumed');
+
+    // Nothing worn: no comparison at all rather than a comparison against zero,
+    // which would tell the player every drop is a huge upgrade.
+    const p = nw.state.player;
+    p.equip = {}; p.soulItems = {};
+    const alone = itemTooltipHtml(nw.state, better);
+    ok(!alone.includes('nw-tip-cmp'),
+      'CONTROL: with the slot empty there is no comparison block at all');
+
+    // The rolled affixes have to be READABLE — a tooltip that lists internal
+    // ids teaches nothing.
+    const lines = affixLines(better);
+    ok(lines.length > 0, `a Hallowed blade lists ${lines.length} affix lines`);
+    ok(lines.every((l: any) => l.text.includes(' — ')), 'each line names the affix and what it does');
+    ok(!lines.some((l: any) => /_/.test(l.text)), '...in words, not in snake_case identifiers');
+
+    // One colour source, used everywhere.
+    eq(rarityColor(better), rarityDef('hallowed').color,
+      'the tier colour comes from data/rarity.ts and nowhere else');
+    ok(nameHtml(better).includes(rarityDef('hallowed').color), 'the coloured name uses it');
+    ok(!nameHtml('sword_iron').includes('<span'),
+      'CONTROL: a plain item is not coloured at all — the ladder stays invisible until something rolls');
+  } finally {
+    snap.restore();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A4 — the orbs and the radar exist and track the player
+// ---------------------------------------------------------------------------
+async function testOrbsAndMinimap(nw: any) {
+  const state = nw.state;
+  const orb = document.querySelector('.nw-orb.hp') as HTMLElement | null;
+  const res = document.querySelector('.nw-orb.res') as HTMLElement | null;
+  ok(!!orb && !!res, 'both orbs are in the DOM');
+  if (!orb || !res) return;
+
+  const liq = orb.querySelector('.liq') as HTMLElement;
+  const vig = orb.querySelector('.vig') as HTMLElement;
+  const num = orb.querySelector('.num') as HTMLElement;
+  ok(!!liq && !!vig && !!num, 'the HP orb has a fill, a Vigor ring and a readout');
+
+  // The Vigor ring lives OUTSIDE the orb's circle, and the first live capture
+  // showed it missing entirely because the orb clipped it. The bowl is what
+  // fixed it, so its presence is worth pinning.
+  ok(!!orb.querySelector('.bowl'),
+    'the fill is clipped by an inner bowl, not by the orb (the ring sits outside it)');
+
+  const { playerMaxHp } = await import('../rules');
+  const savedHp = state.player.hp, savedVig = state.player.vigor, savedRes = state.player.resolve;
+  try {
+    state.player.hp = playerMaxHp(state);
+    state.player.vigor = 100; state.player.resolve = 100;
+    nw.ui.refresh();
+    const fullT = liq.style.transform;
+    eq(num.textContent, String(Math.ceil(playerMaxHp(state))), 'the orb reads full HP');
+
+    // 0.15, not 0.25: the warning threshold is `< 0.25` and setting HP to
+    // exactly a quarter probes the boundary rather than the behaviour. It went
+    // red on the first run for that reason and nothing was wrong with the orb.
+    state.player.hp = playerMaxHp(state) * 0.15;
+    state.player.vigor = 40; state.player.resolve = 30;
+    nw.ui.refresh();
+    ok(liq.style.transform !== fullT, 'the fill tracks HP downward');
+    ok(orb.classList.contains('low'), 'and warns below a quarter');
+    state.player.hp = playerMaxHp(state) * 0.40;
+    nw.ui.refresh();
+    ok(!orb.classList.contains('low'),
+      'CONTROL: no warning at 40% — the threshold is a threshold, not always-on');
+    state.player.hp = playerMaxHp(state) * 0.15;
+    nw.ui.refresh();
+    eq(vig.style.getPropertyValue('--vig'), '40%', 'the Vigor ring tracks Vigor');
+    eq((res.querySelector('.num') as HTMLElement).textContent, '30', 'the Resolve orb tracks Resolve');
+
+    state.player.hp = playerMaxHp(state);
+    nw.ui.refresh();
+    ok(!orb.classList.contains('low'), 'CONTROL: the warning clears when healed');
+  } finally {
+    state.player.hp = savedHp; state.player.vigor = savedVig; state.player.resolve = savedRes;
+    nw.ui.refresh();
+  }
+
+  // The radar. It was silently deleted by the UI's innerHTML wipe in the first
+  // live capture, so "it is in the document" is a real assertion here.
+  const map = document.getElementById('nw-map') as HTMLCanvasElement | null;
+  ok(!!map, 'the minimap canvas is attached to the HUD');
+  if (map && nw.minimap) {
+    ok(map.width > 0 && map.height > 0, `it has a backing store (${map.width}×${map.height})`);
+    // Drawing must not throw with an empty world, a full one, or no foes.
+    nw.minimap.draw(state, performance.now() + 1e6, []);
+    nw.minimap.draw(state, performance.now() + 2e6, [{ x: state.player.x + 40, y: state.player.y }]);
+    ok(true, 'it draws without throwing, with and without foes');
+  }
 }
