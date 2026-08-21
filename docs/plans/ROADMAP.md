@@ -37,6 +37,45 @@ tsconfigs, build green. (Counts drift 1872–1874 from an RNG-dependent assertio
 
 ---
 
+> ## Debloat pass — 2026-08-21 (branch `dev/night-build`, unmerged)
+>
+> 3,087 lines out of `docs/` and two dead functions out of `network.ts`. What it cost is
+> recorded in "Retired plan documents" at the bottom of this file; what it *found* belongs
+> here, because it was not a documentation problem.
+>
+> **A live defect, found by the pass that was not looking for one.** The gauntlet went red on
+> `echo roll 9 within D5 band: 12 ∈ [1, 10]` immediately after a docs-only commit. The C4
+> repair had made `echoes.roll()` apply `resonance_boost` (×1.25), and `testEchoBounds`
+> derives its band from `base × [dmgRow.min, dmgRow.max]` while inheriting whatever the
+> previous test left the player wearing. With the Nullmaw relic still on, 9.6 × 1.25 rounds
+> to 12. It needs resonance live **and** a top-of-band roll at the same moment, so it hid
+> behind five consecutive green runs and only surfaced when an unrelated change shifted the
+> RNG stream — the fourth time that mechanism has exposed something. Fixed by clearing gear,
+> relic and sockets for the measurement and then *asserting* the isolation, so a future
+> resonance source is a red test rather than a wider band. Mutation-proved (forcing
+> `relic_null` turns the new assertion red), then green 4×: **1873–1875 across 113 tests.**
+>
+> **Two ROADMAP entries had recorded a correction nobody applied.** Both the N4.1 entry and
+> the Deep Wire direction update state that "What we CANNOT get from a browser" is wrong
+> about packet loss; N4's plan §10 carried a third copy as a to-do. The wrong list outlived
+> all three. That is the dormant-row doctrine in prose: a correction with no consumer is not
+> a correction. Applied at the source, along with six new API-matrix rows and the finding
+> that inverts the matrix's old reading — the best signals N4.1 added are **universal**, so a
+> Firefox player now gets kernel `min_rtt` and real packet loss and loses only the coarse
+> `navigator.connection` family.
+>
+> **A dormant-row sweep of all 199 CFG leaf keys and all 15 effect ids** found the two dead
+> `network.ts` functions, confirmed every effect id now has a consumer outside `effects.ts`
+> (the C4 repair holding up under a check written independently of it), and left exactly one
+> genuinely unread key: `CFG.drops.goldDrops`, which stays because deleting it would delete
+> the question. Five CA keys were false positives — they cross into Rust as a positional
+> `[f32; 6]`, so no consumer ever names them. **The sweep is deliberately not in
+> `package.json`:** it would have reported zero on C4, whose seven hooks *were* referenced by
+> the affix table and never by any behaviour. A tool that is clean on the bug you just spent
+> a milestone fixing is worse than no tool.
+
+---
+
 > ## C4 repair — seven dead effect hooks, 2026-08-21 (branch `dev/night-build`, unmerged)
 >
 > Found while auditing what A1 had actually been built on. **Gauntlet 1874/1874 across 113
