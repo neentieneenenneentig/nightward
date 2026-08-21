@@ -5654,6 +5654,10 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   // ---- A3: The Bar ----
   { name: 'Abilities - the bar slots itself, costs Resolve, refuses for free', fn: testAbilityBar },
   { name: 'Abilities - all five empowered forms reach the world', fn: testAbilityActives },
+  // ---- A5: Sockets & Weaves ----
+  { name: 'Weaves - threads, sequences, and order is load-bearing', fn: testWeaveData },
+  { name: 'Weaves - slotting consumes and returns, reorder breaks the weave', fn: testWeaveSocketing },
+  { name: 'Weaves - all three bonuses reach the live game', fn: testWeaveBonuses },
 ];
 
 
@@ -7069,3 +7073,268 @@ async function testAbilityActives(nw: any) {
     ES.orbEmpowerUntil = 0;
   }
 }
+
+// ---------------------------------------------------------------------------
+// A5.1 — threads, sequences, and the order rule
+// ---------------------------------------------------------------------------
+async function testWeaveData(nw: any) {
+  const { THREADS, WEAVES, matchWeaves, SOCKET_RANGE, rollSocketCount } = await import('../data/weaves');
+  const { itemDef, threadOf } = await import('../data/items');
+  const { isRollable } = await import('./loot');
+  const { slotOf } = await import('../rules');
+
+  eq(THREADS.length, 5, 'five threads — one per echo');
+  eq(WEAVES.length, 3, 'three weaves ship');
+  for (const w of WEAVES) {
+    ok(w.sequence.length >= 2, `${w.name} is a sequence, not a single thread`);
+    for (const t of w.sequence) ok(THREADS.some((x) => x.id === t), `${w.name} uses only real threads (${t})`);
+  }
+
+  // The order rule is the whole feature.
+  eq(matchWeaves(['null', 'tide']).map((w) => w.id).join(','), 'hollow_song',
+    'Null·Tide is Hollow Song');
+  eq(matchWeaves(['tide', 'null']).length, 0,
+    'Tide·Null is two loose threads — reordering breaks the weave');
+  eq(matchWeaves(['rime', 'rime', 'ember']).map((w) => w.id).join(','), 'long_night',
+    'Rime·Rime·Ember is The Long Night');
+  eq(matchWeaves(['ember', 'rime', 'rime']).length, 0,
+    '...and only in that order');
+  eq(matchWeaves(['thorn', 'thorn']).map((w) => w.id).join(','), 'ironwake',
+    'Thorn·Thorn is Ironwake');
+  eq(matchWeaves([]).length, 0, 'an empty row completes nothing');
+  eq(matchWeaves(['null', 'tide', 'thorn']).map((w) => w.id).join(','), 'hollow_song',
+    'a 2-thread weave can sit inside a 3-socket row');
+  eq(matchWeaves(['thorn', 'null', 'tide']).map((w) => w.id).join(','), 'hollow_song',
+    '...starting mid-row too');
+
+  // The socket ladder gates the 3-socket vessel.
+  eq(SOCKET_RANGE.plain[1], 0, 'Plain has no sockets');
+  eq(SOCKET_RANGE.sovereign[1], 3, 'Sovereign tops out at 3');
+  eq(rollSocketCount('plain'), 0, 'rollSocketCount(plain) is deterministically 0');
+  eq(rollSocketCount('sovereign'), 3, 'rollSocketCount(sovereign) is deterministically 3');
+  const woven = rollSocketCount('woven');
+  ok(woven >= 1 && woven <= 2, `Woven rolls 1-2 sockets (got ${woven})`);
+
+  // Threads are items, and they are NOT gear: no roll, no equip slot.
+  eq(threadOf('thread_rime'), 'rime', 'threadOf reads the authored thread');
+  eq(itemDef('thread_null')?.thread, 'null', 'the item carries its thread column');
+  ok(!isRollable('thread_rime'), 'threads never roll — they are not gear');
+  eq(slotOf('thread_tide'), null, 'threads never equip — they socket');
+}
+
+// ---------------------------------------------------------------------------
+// A5.2 — slotting consumes, unsocketing returns, reorder breaks the weave
+// ---------------------------------------------------------------------------
+async function testWeaveSocketing(nw: any) {
+  const { rollItem } = await import('./loot');
+  const { rolledOf } = await import('../data/items');
+  const { invAdd, invCount } = await import('../rules');
+  const W = nw.sys.weaves;
+  const state = nw.state;
+  const savedSockets = state.sockets;
+  const snap = snapshotPlayer(nw);
+
+  try {
+    state.player.inv = {}; state.player.equip = {}; state.player.soulItems = {};
+    state.player.relic = undefined;
+    state.sockets = {};
+
+    // A Sovereign sword: three sockets — the only vessel for Long Night.
+    const uid = rollItem('sword_iron', { forceRarity: 'sovereign' });
+    eq(rolledOf(uid)?.sockets, 3, 'a Sovereign roll carries 3 sockets');
+
+    // Authored gear has no sockets, and a non-thread can't be slotted.
+    eq(W.capacity('sword_iron'), 0, 'authored gear has zero sockets');
+    ok(!W.canSocket('sword_iron'), '...and cannot be socketed');
+    ok(!W.slotThread(uid, 'sword_copper'), 'a non-thread item is refused');
+
+    // Give ourselves threads and socket them in order.
+    invAdd(state, 'thread_rime', 2);
+    invAdd(state, 'thread_ember', 1);
+    invAdd(state, 'thread_null', 1);
+    invAdd(state, 'thread_tide', 1);
+    ok(W.slotThread(uid, 'thread_rime'), 'first Rime slots');
+    eq(invCount(state, 'thread_rime'), 1, '...and one Rime left the bag');
+    ok(W.slotThread(uid, 'thread_rime'), 'second Rime slots');
+    ok(W.slotThread(uid, 'thread_ember'), 'Ember slots');
+    eq(W.slotted(uid).join(','), 'rime,rime,ember', 'the row reads Rime·Rime·Ember');
+    eq(W.weavesOn(uid).map((w) => w.id).join(','), 'long_night',
+      '...which completes The Long Night');
+
+    // Full: no fourth thread fits.
+    ok(!W.canSocket(uid), 'three slots are now full');
+    ok(!W.slotThread(uid, 'thread_null'), 'a fourth thread is refused');
+
+    // Remove the middle thread — the weave BREAKS the moment the order does.
+    ok(W.unsocket(uid, 1), 'the middle thread unsockets');
+    eq(W.slotted(uid).join(','), 'rime,ember', '...leaving Rime·Ember');
+    eq(W.weavesOn(uid).length, 0, '...and the weave breaks');
+    eq(invCount(state, 'thread_rime'), 1, 'the removed thread returned to the bag');
+
+    // Put it back — but slotThread APPENDS, so the thread lands at the END.
+    // The weave does NOT return; that is the rule, demonstrated end to end.
+    ok(W.slotThread(uid, 'thread_rime'), 'the Rime can be slotted again');
+    eq(W.slotted(uid).join(','), 'rime,ember,rime', '...but it appends to the END');
+    eq(W.weavesOn(uid).length, 0, '...so the weave stays broken — order is load-bearing');
+
+    // A Woven item caps at 2 sockets: Hollow Song fits if it rolls two.
+    const wovenUid = rollItem('armor_iron', { forceRarity: 'woven' });
+    const sockets = rolledOf(wovenUid)?.sockets ?? 0;
+    ok(sockets >= 1 && sockets <= 2, `Woven rolls ${sockets} socket(s)`);
+    const items: Record<string, string> = { null: 'thread_null', tide: 'thread_tide' };
+    for (let i = 0; i < sockets; i++) {
+      const tid = i === 0 ? 'null' : 'tide';
+      ok(W.slotThread(wovenUid, items[tid]), `thread ${i + 1} into the Woven piece`);
+    }
+    if (sockets === 2) {
+      eq(W.weavesOn(wovenUid).map((w) => w.id).join(','), 'hollow_song',
+        'a 2-socket Woven piece can hold Hollow Song');
+    }
+  } finally {
+    snap.restore();
+    state.sockets = savedSockets;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A5.3 — all three bonuses reach the live game, not just the data table
+// ---------------------------------------------------------------------------
+async function testWeaveBonuses(nw: any) {
+  const { CFG } = await import('../data/config');
+  const { rollItem } = await import('./loot');
+  const { invAdd } = await import('../rules');
+  const { ENEMIES } = await import('../data/enemies');
+  const W = nw.sys.weaves;
+  const state = nw.state;
+  const p = state.player;
+  const sys = nw.sys;
+  const snap = snapshotPlayer(nw);
+
+  const savedSockets = state.sockets;
+  const savedClock = state.clock;
+  const savedRoll = nw.ctx.net.lastSwingDmgMul;
+  const savedResonance = nw.ctx.net.consumeResonance;
+  const savedFoes = sys.hordes.foes;
+  const savedAim = nw.ctx.player.aimAngle;
+  const savedCombatXp = p.xp.combat;
+  const savedGod = state.god;
+  const savedGameOver = state.gameOver;
+
+  try {
+    p.inv = {}; p.equip = {}; p.soulItems = {}; p.relic = undefined;
+    state.sockets = {};
+    state.god = false; state.gameOver = false; // damagePlayer no-ops under either
+    nw.ctx.net.consumeResonance = () => null;
+    nw.ctx.net.lastSwingDmgMul = 0.30;
+
+    const dummy = ENEMIES.find((e: any) => !e.boss)!;
+    const swingFor = (angleOff = 0) => {
+      const r = 8;
+      const foe = {
+        uid: state.nextUid++, def: dummy,
+        x: p.x + Math.cos(angleOff) * r, y: p.y + Math.sin(angleOff) * r,
+        px: 0, py: 0, hp: 100000, maxHp: 100000,
+        dmg: 0, baseDmg: 0, atkT: 999, telegraphT: 0, animT: 0,
+      };
+      nw.ctx.player.aimAngle = 0;
+      sys.hordes.foes.push(foe);
+      (sys.combat as any).resolveHit();
+      sys.hordes.foes = sys.hordes.foes.filter((f: any) => f.uid !== foe.uid);
+      return foe.maxHp - foe.hp;
+    };
+
+    // ---- The Long Night: +25% damage, night only, on a REAL swing ---------
+    // Drive the damage through the combat skill, which resolveHit() does not
+    // re-level. The soul curve derives a slot's level FROM its xp, so a hand-set
+    // `level: 60, xp: 0` would be re-levelled by the swing's own xp award and
+    // make the control swing disagree with itself. Combat xp has no such hook
+    // here, so a maxed skill gives a stable, rounding-proof base: 4 + 8 = 12.
+    p.xp.combat = 1000000;
+    invAdd(state, 'sword_iron', 1);
+    p.equip.weapon = 'sword_iron';
+
+    state.clock = 120; // day
+    const dayDmg = swingFor();
+    ok(dayDmg > 0, `a daylight swing lands for ${dayDmg}`);
+
+    state.clock = 250; // night
+    const nightNoWeave = swingFor();
+    eq(nightNoWeave, dayDmg, 'night alone changes nothing — it is the weave, not the dark');
+
+    const uid = rollItem('sword_iron', { forceRarity: 'sovereign' });
+    p.inv = {};
+    invAdd(state, uid, 1); p.equip.weapon = uid;
+    const threadItem: Record<string, string> = { rime: 'thread_rime', ember: 'thread_ember' };
+    for (const tid of ['rime', 'rime', 'ember']) {
+      invAdd(state, threadItem[tid], 1);
+      ok(W.slotThread(uid, threadItem[tid]), `${tid} slots into the carried blade`);
+    }
+    ok(W.hasWeave('long_night'), 'Long Night is complete');
+    eq(W.nightDmgMul(), CFG.weaves.longNightDmgMul, 'nightDmgMul() reads 1.25 at night');
+    const nightWeave = swingFor();
+    ok(nightWeave > dayDmg, `Long Night raises a real night swing: ${dayDmg} → ${nightWeave}`);
+
+    state.clock = 120;
+    eq(W.nightDmgMul(), 1, '...and 1 by day — the bonus is night-only');
+
+    // ---- Hollow Song: kills restore resolve ------------------------------
+    p.resolve = 20;
+    W.onKill();
+    eq(p.resolve, 20, 'with no Hollow Song, onKill restores nothing');
+
+    state.sockets = {}; p.inv = {}; p.equip = {};
+    const songUid = rollItem('armor_iron', { forceRarity: 'sovereign' });
+    invAdd(state, songUid, 1); p.equip.armor = songUid;
+    invAdd(state, 'thread_null', 1); invAdd(state, 'thread_tide', 1);
+    W.slotThread(songUid, 'thread_null');
+    W.slotThread(songUid, 'thread_tide');
+    ok(W.hasWeave('hollow_song'), 'Hollow Song is complete');
+    p.resolve = 20;
+    W.onKill();
+    eq(p.resolve, 20 + CFG.weaves.hollowSongResolve,
+      `Hollow Song restores ${CFG.weaves.hollowSongResolve} resolve on a kill`);
+    p.resolve = CFG.vitals.resolveMax - 1;
+    W.onKill();
+    eq(p.resolve, CFG.vitals.resolveMax, '...and never overfills past the cap');
+
+    // ---- Ironwake: reflected damage stuns --------------------------------
+    state.sockets = {}; p.inv = {}; p.equip = {};
+    const wakeUid = rollItem('armor_iron', { forceRarity: 'sovereign' });
+    invAdd(state, wakeUid, 1); p.equip.armor = wakeUid;
+    invAdd(state, 'thread_thorn', 2);
+    W.slotThread(wakeUid, 'thread_thorn');
+    W.slotThread(wakeUid, 'thread_thorn');
+    ok(W.hasWeave('ironwake'), 'Ironwake is complete');
+    ok(!!W.reflect(), 'reflect() reports a live reflect');
+
+    const mkFoe = () => ({
+      uid: state.nextUid++, def: dummy,
+      x: 0, y: 0, px: 0, py: 0, hp: 50, maxHp: 50,
+      dmg: 10, baseDmg: 10, atkT: 0, telegraphT: 0, animT: 0,
+    });
+    const attacker = mkFoe();
+    p.hp = 100;
+    sys.combat.damagePlayer(10, 'test foe', attacker);
+    ok(attacker.hp < 50, `the attacker takes its own hit back: 50 → ${attacker.hp}`);
+    ok((attacker as any)._stunnedUntil > state.clock, '...and is stunned by the reflection');
+
+    state.sockets = {};
+    const attacker2 = mkFoe();
+    p.hp = 100;
+    sys.combat.damagePlayer(10, 'test foe', attacker2);
+    eq(attacker2.hp, 50, 'with no Ironwake, the attacker takes nothing back');
+    eq((attacker2 as any)._stunnedUntil ?? 0, 0, '...and is not stunned');
+  } finally {
+    snap.restore();
+    state.sockets = savedSockets;
+    state.clock = savedClock;
+    nw.ctx.net.lastSwingDmgMul = savedRoll;
+    nw.ctx.net.consumeResonance = savedResonance;
+    sys.hordes.foes = savedFoes;
+    nw.ctx.player.aimAngle = savedAim;
+    p.xp.combat = savedCombatXp;
+    state.god = savedGod;
+    state.gameOver = savedGameOver;
+  }
+}
+
