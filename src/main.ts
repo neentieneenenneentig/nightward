@@ -30,6 +30,7 @@ import { CombatSystem } from './game/systems/combat';
 import { WorldBossSystem } from './game/systems/worldbosses';
 import { FireSystem } from './game/systems/fire';
 import { EchoSystem } from './game/systems/echoes';
+import { AbilitySystem } from './game/systems/abilities';
 import { NetworkSystem } from './game/systems/network';
 import { VitalsSystem } from './game/systems/vitals';
 import { LifespanSystem } from './game/systems/lifespan';
@@ -199,6 +200,12 @@ async function boot() {
   ctx.echoes = echoes;
 
   // S1: Survival Pressure — vigor & resolve decay, restore via action
+  // A3: The Bar - the same echoes, pressed for and paid for in Resolve.
+  // Constructed AFTER EchoSystem because it casts through it; before VitalsSystem
+  // only because that is where it reads best.
+  const abilities = new AbilitySystem(ctx);
+  ctx.abilities = abilities;
+
   const vitals = new VitalsSystem(ctx);
   ctx.vitals = vitals;
 
@@ -338,6 +345,13 @@ async function boot() {
       }
       return result;
     },
+    // A3: the bar. The UI forwards two verbs and reads one view model; every
+    // rule about cost, cooldown and slotting lives in AbilitySystem, so a socket
+    // literally cannot disagree with the system about whether it is ready.
+    abilityView: () => abilities.view(),
+    castAbility: (slot: number) => abilities.cast(slot),
+    swapAbility: (slot: number) => abilities.swap(slot),
+    abilityTip: (slot: number) => abilities.describe(slot),
     toggleMute: () => Sound.toggle(),
     newWorld: () => { location.hash = 's=' + ((Math.random() * 2 ** 31) | 0); location.reload(); },
     isPlacing: () => !!build.mode,
@@ -466,7 +480,7 @@ async function boot() {
     // B3.a test seam: movement is composed inside sim(), so the Gauntlet can only
     // observe it by driving the axis. Exposed for that; nothing in the game reads it.
     input,
-    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals, lifespan, loom, scoreboard, net, drops }, world, player, gen, chunks,
+    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, abilities, vitals, lifespan, loom, scoreboard, net, drops }, world, player, gen, chunks,
     lens, chronicle, omens,   // N4.2/N4.3 test seam: drawer, series store, omens
     minimap,                  // A4 test seam
     mods: { rules: rulesMod, loot: lootMod, items: itemsMod, effects: effectsMod },  // A1 test seam
@@ -581,6 +595,7 @@ async function boot() {
     drops.update(effectiveDt);   // B5: after every loot producer, so a kill's drop integrates the same tick
     fire.update(effectiveDt);
     echoes.update(effectiveDt);
+    abilities.update(effectiveDt);   // A3: reconciles the bar with what is held
     vitals.update(effectiveDt);
     matFx.update(effectiveDt);  // N2b: material tile effects
     build.updateDecay(effectiveDt);  // C2: disconnect decay

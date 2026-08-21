@@ -117,6 +117,18 @@ const SFX: Record<string, SfxStep[]> = {
     { type: 'burst', dur: 0.9, hz: 300, q: 0.6, gain: 0.14, filter: 'lowpass' },
   ],
   dawn: arp(330, [0, 5, 9], 0.12, 0.6, 'triangle', 0.14, 'tone'),
+  // A3: an active goes off. Deliberately a soft swell rather than a hit -- the
+  // damage that follows already has 'hit' cues of its own, and stacking a bang on
+  // a bang is how an ability bar starts sounding like a slot machine.
+  cast: [
+    { type: 'blip', hz: 330, dur: 0.14, wave: 'triangle', gain: 0.2, bend: 1.9 },
+    { type: 'burst', at: 0.02, dur: 0.26, hz: 900, q: 0.7, gain: 0.16, filter: 'bandpass', sweepTo: 2400 },
+  ],
+  // ...and the refusal: dull, low, over quickly. It has to be legible as "no"
+  // without being a punishment you flinch from.
+  castFail: [
+    { type: 'blip', hz: 150, dur: 0.13, wave: 'triangle', gain: 0.16, bend: 0.6 },
+  ],
   bossRoar: [{ type: 'roar' }],
   discover: arp(392, [0, 7, 12], 0.1, 0.3, 'sine', 0.18),
 };

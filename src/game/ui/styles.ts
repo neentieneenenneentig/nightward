@@ -216,6 +216,91 @@ html, body, #nw-observatory, .nw-pbody {
 }
 .nw-actions .nw-btn { position: relative; }
 
+
+/* ---- A3: the ability bar -------------------------------------------------
+   Its own full-width line inside .nw-actions, so it stacks above the verb
+   buttons and inherits their wrap/scale behaviour instead of needing a second
+   set of bottom-offset arithmetic that drifts the first time the row wraps. */
+.nw-abilrow {
+  flex-basis: 100%;
+  display: flex; justify-content: center; gap: calc(6px * var(--scale));
+  margin-bottom: calc(4px * var(--scale));
+}
+.nw-abil {
+  --ab: #6b6357;                 /* the socketed echo's colour, set per frame */
+  --cd: 0;                       /* 0 = ready, 1 = just cast */
+  pointer-events: auto; position: relative;
+  width: max(38px, calc(44px * var(--scale)));
+  height: max(38px, calc(44px * var(--scale)));
+  display: grid; place-items: center;
+  background: radial-gradient(circle at 50% 32%, #1b1510, #0d0a07 78%);
+  border: 1px solid #000; border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--metal-lo), inset 0 2px 6px rgba(0,0,0,.65);
+  user-select: none; overflow: hidden;
+  transition: box-shadow .12s, filter .12s;
+}
+.nw-abil:hover { box-shadow: inset 0 0 0 1px var(--ab), 0 0 8px color-mix(in srgb, var(--ab) 45%, transparent); }
+.nw-abil:active { transform: translateY(1px); }
+.nw-abil:focus-visible { outline: 2px solid var(--metal-hi); outline-offset: 1px; }
+
+/* ready AND affordable: the rim takes the echo's colour and breathes. This is
+   the only "you can press this right now" signal on the bar, so it is the one
+   state allowed to animate. */
+.nw-abil.ready { box-shadow: inset 0 0 0 1px var(--ab), 0 0 10px color-mix(in srgb, var(--ab) 40%, transparent); }
+/* held but unaffordable: the icon greys out and the rim goes to the bad colour.
+   Deliberately NOT hidden -- "I cannot afford this" and "I do not have this"
+   are different facts and the bar has to say which. */
+.nw-abil.poor { box-shadow: inset 0 0 0 1px rgba(200,70,60,.5), inset 0 2px 6px rgba(0,0,0,.65); }
+.nw-abil.poor .ab-icon { filter: grayscale(1) brightness(.55); }
+.nw-abil.poor .ab-cost { color: var(--bad); }
+.nw-abil.empty { opacity: .45; }
+.nw-abil.empty::after {
+  content: ''; position: absolute; width: 40%; height: 40%;
+  border: 1px dashed rgba(147,121,74,.35); border-radius: 2px;
+}
+
+.nw-abil .ab-icon {
+  font-size: max(16px, calc(20px * var(--scale)));
+  font-family: 'Segoe UI Emoji', 'Apple Color Emoji', sans-serif;
+  filter: sepia(.2) saturate(.9);
+  line-height: 1; pointer-events: none;
+}
+/* the cooldown sweep: one conic-gradient driven by --cd. No canvas, no assets,
+   no per-frame layout -- the only thing that changes is a background angle. */
+.nw-abil .ab-sweep {
+  position: absolute; inset: 0; pointer-events: none;
+  background: conic-gradient(from 0deg, rgba(4,3,2,.78) calc(var(--cd) * 360deg), transparent 0);
+}
+.nw-abil .ab-lv {
+  position: absolute; top: 1px; left: 3px;
+  font-family: var(--font-display); font-size: max(7px, calc(8px * var(--scale)));
+  color: var(--ab); text-shadow: 0 1px 2px #000; pointer-events: none;
+}
+.nw-abil .ab-cost {
+  position: absolute; top: 1px; right: 3px;
+  font-family: var(--font-display); font-size: max(7px, calc(8px * var(--scale)));
+  color: #c9a86a; text-shadow: 0 1px 2px #000; pointer-events: none;
+}
+.nw-abil .k {
+  position: absolute; bottom: 1px; right: 2px;
+  font-size: max(7px, calc(8px * var(--scale)));
+  font-family: var(--font-display); color: var(--ink-dim);
+  text-shadow: 0 1px 2px #000; letter-spacing: 1px; pointer-events: none;
+}
+/* the refusal. Short, red, and it moves -- a colour change alone reads as a
+   state the socket was already in rather than an answer to the key you pressed. */
+.nw-abil.deny { animation: nw-deny .3s ease-out; }
+@keyframes nw-deny {
+  0%   { transform: translateX(0);    box-shadow: inset 0 0 0 2px rgba(224,65,62,.9); }
+  25%  { transform: translateX(-3px); }
+  55%  { transform: translateX(3px); }
+  100% { transform: translateX(0);    box-shadow: inset 0 0 0 1px var(--metal-lo), inset 0 2px 6px rgba(0,0,0,.65); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nw-abil { transition: none; }
+  .nw-abil.deny { animation: none; box-shadow: inset 0 0 0 2px rgba(224,65,62,.9); }
+}
+
 /* ---- build placement banner ---- */
 .nw-buildbar {
   position: absolute; left: 50%; bottom: calc(88px * var(--scale)); transform: translateX(-50%);
@@ -431,6 +516,8 @@ html, body, #nw-observatory, .nw-pbody {
 .nw-tip-stat { color: var(--ink-bright); font-weight: 600; }
 .nw-tip-affix { margin-top: 2px; }
 .nw-tip-affix.cursed { color: #e0413e; }
+.nw-tip-line { margin-top: 2px; color: var(--ink); }
+.nw-tip-line:first-child { margin-top: 0; color: var(--ink-dim); }
 .nw-tip-cmp { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(147,121,74,.28); }
 .nw-tip-vs { color: var(--ink-dim); font-size: 10px; }
 .nw-tip-delta { font-weight: 700; margin-top: 1px; }

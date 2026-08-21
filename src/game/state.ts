@@ -60,6 +60,12 @@ export interface GameState {
     relic?: string;                   // C4: boss relic (6th equip slot)
     soulItems: Partial<Record<SoulSlot, SoulItem>>; // per-slot soul-bound leveling
     echoes: Record<string, number>;   // C1: echoId → level (Echoes of the Slain)
+    /** A3: which echoes are socketed on the ability bar, in slot order. Held
+     *  echoes and BOUND echoes are deliberately different lists: you can hold
+     *  five and the bar has four, so the fifth lord you slay is a choice rather
+     *  than an automatic upgrade. An echo off the bar still auto-fires — it
+     *  loses only its pressed form. */
+    abilityBar: string[];
     vigor: number;                    // S1: survival vital (0-100)
     resolve: number;                  // S1: survival vital (0-100)
     lastActionT: number;              // S1: clock time of last non-idle action
@@ -158,7 +164,7 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     clock: 0,
     bootClock: 0,
     nextUid: 1,
-    player: { x: spawn.x, y: spawn.y, hp: CFG.player.maxHp, gold: 0, inv, xp: {}, equip: {}, soulItems, echoes: {}, vigor: CFG.vitals.vigorMax, resolve: CFG.vitals.resolveMax, lastActionT: 0, loomPoints: 0, loomNodes: {}, age: CFG.lifespan.startAge },
+    player: { x: spawn.x, y: spawn.y, hp: CFG.player.maxHp, gold: 0, inv, xp: {}, equip: {}, soulItems, echoes: {}, abilityBar: [], vigor: CFG.vitals.vigorMax, resolve: CFG.vitals.resolveMax, lastActionT: 0, loomPoints: 0, loomNodes: {}, age: CFG.lifespan.startAge },
     depleted: {},
     buildings: [],
     worldBosses: [],

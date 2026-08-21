@@ -4,11 +4,12 @@
 import { CFG } from '../data/config';
 import { itemDef, itemName } from '../data/items';
 import { escapeHtml, rarityColor, rarityDef, rarityOf } from './rarity';
-import { bindItemTooltip, hideItemTooltip } from './tooltip';
+import { bindItemTooltip, bindHtmlTooltip, hideItemTooltip } from './tooltip';
 import { SKILLS } from '../data/skills';
 import { RECIPES } from '../data/recipes';
 import { BUILDINGS } from '../data/buildings';
 import { ECHOES } from '../data/echoes';
+import type { SlotView } from '../systems/abilities';
 import { iconUrl } from '../../engine/procgen/icons';
 import {
   invCount, invHasAll, skillLevel, xpProgress, slotOf,
@@ -37,6 +38,15 @@ export interface UIHooks {
   useItem(id: string): void;
   equip(id: string): void;
   toggleMute(): boolean;
+  // A3: the ability bar. The UI owns none of the rules — it draws a view model
+  // and forwards two verbs, so a socket can never disagree with the system about
+  // whether something is on cooldown.
+  abilityView(): SlotView[];
+  /** Returns whether the cast happened, so a refused press can be SEEN. A button
+   *  that swallows a keystroke silently is one the player stops trusting. */
+  castAbility(slot: number): { ok: boolean };
+  swapAbility(slot: number): void;
+  abilityTip(slot: number): { title: string; lines: string[] } | null;
   newWorld(): void;
   isPlacing(): boolean;
   gatherView(): { label: string; frac: number } | null;
@@ -123,6 +133,8 @@ export class UI {
   private hpLiq!: HTMLElement;
   private hpNum!: HTMLElement;
   private vigRing!: HTMLElement;
+  private abilCells: HTMLElement[] = [];
+  private abilState: string[] = [];   // per-socket cache; the sweep runs every frame
   private resOrb!: HTMLElement;
   private resLiq!: HTMLElement;
   private resNum!: HTMLElement;
@@ -252,8 +264,63 @@ export class UI {
     this.buildBar.classList.add('on');
   }
 
+  /** A3: four sockets for the empowered echoes, keys 1-4.
+   *
+   *  Rendered as the first child of `.nw-actions` with `flex-basis: 100%`, so it
+   *  takes its own line ABOVE the verb buttons and inherits the whole responsive
+   *  wrap/scale story the action bar already solved. An absolutely-positioned
+   *  second bar would have needed its own bottom-offset arithmetic and would have
+   *  drifted the first time the action row wrapped on a narrow window.
+   *
+   *  Sockets are `tabindex=0` because the bar has to be reachable without a mouse
+   *  -- keys 1-4 are the primary path, and the tooltip binds `focus` as well as
+   *  `mouseenter` so the keyboard path can read what it is about to press. */
+  private buildAbilities(bar: HTMLElement) {
+    const row = el('div', 'nw-abilrow');
+    for (let i = 0; i < 4; i++) {
+      const c = el('div', 'nw-abil');
+      c.dataset.slot = String(i);
+      c.tabIndex = 0;
+      c.setAttribute('role', 'button');
+      c.innerHTML = '<span class="ab-icon"></span><span class="ab-sweep"></span>'
+        + '<span class="ab-lv"></span><span class="ab-cost"></span>'
+        + `<span class="k">${i + 1}</span>`;
+      c.addEventListener('click', () => this.pressAbility(i));
+      // right-click rebinds. Suppressing the browser menu on a 44px socket is
+      // safe; suppressing it on the whole HUD would not be.
+      c.addEventListener('contextmenu', (e) => { e.preventDefault(); this.hooks.swapAbility(i); });
+      bindHtmlTooltip(c, () => this.abilityTipHtml(i));
+      row.appendChild(c);
+      this.abilCells.push(c);
+    }
+    bar.appendChild(row);
+  }
+
+  /** Fire a socket and answer for it either way: the cooldown sweep already says
+   *  "not yet", but "not enough resolve" and "nothing bound here" have no standing
+   *  visual, and both are common. */
+  private pressAbility(slot: number) {
+    const c = this.abilCells[slot];
+    const r = this.hooks.castAbility(slot);
+    if (r?.ok || !c) return;
+    c.classList.remove('deny');
+    void c.offsetWidth;          // restart the animation on a rapid second press
+    c.classList.add('deny');
+    setTimeout(() => c.classList.remove('deny'), 320);
+  }
+
+  private abilityTipHtml(slot: number): string {
+    const t = this.hooks.abilityTip(slot);
+    if (!t) return '';
+    const v = this.hooks.abilityView()[slot];
+    const color = v?.id ? v.color : '#8d8577';
+    return `<div class="nw-tip-name" style="color:${color}">${t.title}</div>`
+      + `<div class="nw-tip-body">${t.lines.map((l) => `<div class="nw-tip-line">${l}</div>`).join('')}</div>`;
+  }
+
   private buildActions() {
     const bar = el('div', 'nw-actions');
+    this.buildAbilities(bar);
     const btn = (id: string, icon: string, label: string, key: string, cls = '') => {
       const b = el('div', 'nw-btn ' + cls);
       b.id = id;
@@ -335,6 +402,17 @@ export class UI {
       return;
     }
     if (e.repeat) return;
+    // A3: the bar. Read from e.code, not e.key -- Shift+1 is '!' on a US layout
+    // and something else again on most others, so the shift-to-rebind chord would
+    // have been unreachable for anyone not typing US English.
+    const digit = /^Digit([1-4])$/.exec(e.code ?? '');
+    if (digit) {
+      e.preventDefault();
+      const slot = +digit[1] - 1;
+      if (e.shiftKey) this.hooks.swapAbility(slot);
+      else this.pressAbility(slot);
+      return;
+    }
     const kl = k.toLowerCase();
     if (kl === 'e') this.hooks.interact();
     else if (kl === ' ') this.hooks.attack();
@@ -837,6 +915,40 @@ export class UI {
     this.resOrb.classList.toggle('low', res > 0 && res < 25);
   }
 
+  /** A3: the sockets, every frame.
+   *
+   *  The cooldown sweep is a CSS conic-gradient driven by one custom property, so
+   *  the per-frame write is a single `setProperty` on a compositor-friendly
+   *  background and never touches layout. Everything ELSE about a socket (which
+   *  echo, what level, affordable or not) changes rarely, so it is diffed against
+   *  a cached signature string and only written when it actually differs --
+   *  otherwise four innerHTML writes per frame would sit in the hot path for the
+   *  entire run to redraw text that has not changed since the last lord died. */
+  private syncAbilities() {
+    const view = this.hooks.abilityView();
+    for (let i = 0; i < this.abilCells.length; i++) {
+      const c = this.abilCells[i];
+      const v: SlotView | undefined = view[i];
+      if (!v) { c.style.display = 'none'; continue; }
+      c.style.display = '';
+      // the sweep: 0 when ready, 1 the instant it was cast
+      c.style.setProperty('--cd', v.cooldownFrac.toFixed(3));
+      const sig = `${v.id ?? ''}|${v.level}|${v.cost}|${v.affordable ? 1 : 0}|${v.ready ? 1 : 0}`;
+      if (sig === this.abilState[i]) continue;
+      this.abilState[i] = sig;
+      c.classList.toggle('empty', !v.id);
+      c.classList.toggle('poor', !!v.id && !v.affordable);
+      c.classList.toggle('ready', !!v.id && v.ready && v.affordable);
+      c.style.setProperty('--ab', v.color);
+      (c.querySelector('.ab-icon') as HTMLElement).textContent = v.icon;
+      (c.querySelector('.ab-lv') as HTMLElement).textContent = v.level > 1 ? String(v.level) : '';
+      (c.querySelector('.ab-cost') as HTMLElement).textContent = v.id ? String(v.cost) : '';
+      c.setAttribute('aria-label', v.id
+        ? `${v.name} — the ${v.echoName} echo, ${v.cost} resolve`
+        : `Ability slot ${i + 1}, empty`);
+    }
+  }
+
   // --------------------------------------------------------------- refresh ----
 
   /** Called every frame. Cheap top-bar text updates + gather progress.
@@ -847,6 +959,7 @@ export class UI {
     this.hpText.textContent = Math.ceil(Math.max(0, p.hp)) + '';
     this.goldText.textContent = p.gold + '';
     this.syncOrbs();
+    this.syncAbilities();
 
     // L1: age/lifespan chip + bar — the hard run-length clock
     const lv = this.hooks.lifespanView();

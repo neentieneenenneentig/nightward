@@ -153,6 +153,30 @@ export const CFG = {
     orbContactImmunitySec: 0.8, // per-foe grace between orb contact hits
   },
 
+  // A3: The ability bar. Every echo you hold keeps auto-firing exactly as it did
+  // in C1 — this adds a SECOND, empowered form you press for, paid in Resolve.
+  //
+  // Resolve is the resource because the game has no mana and should not invent
+  // one. Resolve is already a morale meter: it decays at night, near a lord, and
+  // while idle, it is repaid by kills and by surviving to dawn, and it already
+  // punishes you at zero (CFG.vitals.resolveZero*). Spending it on heroics is
+  // what a morale meter is FOR, and it turns the one passive number on the HUD
+  // into the most active one.
+  //
+  // The economy that makes the costs read: +12 resolve per kill, +40 per lord,
+  // +30 at dawn, against costs of 14-22. So an active is roughly "one and a half
+  // kills", and a night fight pays for its own heroics while a quiet run cannot
+  // afford them. That asymmetry is the point.
+  abilities: {
+    enabled: true,           // escape hatch, same terms as CFG.loot.enabled — off = pure C1 autofire
+    slots: 4,                // you can hold 5 echoes; the last lord forces a choice
+    // A cast that would leave you in debt is refused. A cast that leaves you at
+    // ZERO is allowed — walking yourself into the resolve-zero penalty to land
+    // one more nova is a decision, and the game should let you make it.
+    globalLockSec: 0.25,     // stops one keypress-repeat burst emptying the meter
+    fizzleToastCooldownSec: 2.0, // don't spam "not enough resolve" on a held key
+  },
+
   // C3: The Loom — per-run passive tree point income and keystone magnitudes.
   //
   // B3.a: the keystone numbers used to be literals scattered across loom.ts,

@@ -98,8 +98,14 @@ export function itemTooltipHtml(state: any, id: string): string {
 const fmt = (v: number) => (Math.abs(v - Math.round(v)) < 0.005 ? String(Math.round(v)) : v.toFixed(2));
 
 export function showItemTooltip(state: any, id: string, anchor: HTMLElement) {
+  showHtmlTooltip(itemTooltipHtml(state, id), anchor);
+}
+
+/** A3: the same host, the same clamp, arbitrary body. Ability sockets need a
+ *  tooltip that is not about an item, and a second tooltip host would be a
+ *  second set of z-index and viewport-clamp bugs to find later. */
+export function showHtmlTooltip(html: string, anchor: HTMLElement) {
   const el = ensureHost();
-  const html = itemTooltipHtml(state, id);
   if (!html) return hideItemTooltip();
   el.innerHTML = html;
   el.style.display = 'block';
@@ -130,4 +136,16 @@ export function bindItemTooltip(cell: HTMLElement, state: any, id: string) {
   cell.addEventListener('focus', show);
   cell.addEventListener('mouseleave', hideItemTooltip);
   cell.addEventListener('blur', hideItemTooltip);
+}
+
+/** A3: same contract as bindItemTooltip, but the body is produced at SHOW time.
+ *  An ability socket's tooltip prints its live cooldown and its live level-scaled
+ *  damage, so a string captured at bind time would be stale the moment the echo
+ *  levelled. */
+export function bindHtmlTooltip(node: HTMLElement, html: () => string) {
+  const show = () => showHtmlTooltip(html(), node);
+  node.addEventListener('mouseenter', show);
+  node.addEventListener('focus', show);
+  node.addEventListener('mouseleave', hideItemTooltip);
+  node.addEventListener('blur', hideItemTooltip);
 }
