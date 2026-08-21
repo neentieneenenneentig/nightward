@@ -12,6 +12,64 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 
 ---
 
+> ## Direction update (2026-08-21) — the Hero Siege yoink → Batch A "The Arsenal"
+>
+> User direction, verbatim: *"update our plan to yoink all the UI, gameplay, etc from hero
+> siege!"* Briefed as **Batch A — The Arsenal** (`docs/plans/A-arsenal.md`). Systems and
+> interaction patterns only — rarity ladders, rolled affixes, elite packs, an ability bar,
+> orbs, comparison tooltips, sockets, a gambler. No art, names, or copy, which costs nothing
+> here because pillar 1 means there is no asset pipeline to put borrowed art into.
+>
+> **The audit finding: we already have about two thirds of Hero Siege under other names.**
+> The Loom is a talent tree. Night hordes are waves. The five lords are act bosses. The
+> Armory is a relic system. B5 already puts loot on the floor and walks you over it. What is
+> genuinely missing is short and specific:
+>
+> | Gap | Status today |
+> |---|---|
+> | **Rarity tiers + rolled affixes** | none — 67 hand-authored items, a strictly linear copper→iron→silver→star ladder, zero rolls |
+> | **Elite / champion packs** | `EnemyBehavior` is per *type*, never rolled per *spawn* — every skeleton on night 6 is the same skeleton |
+> | **Active ability bar** | Echoes are auto-firing only; the bottom bar holds verbs (Interact/Attack/Ignite/Build), not powers |
+> | **Item tooltips** | **zero tooltips exist anywhere in the codebase** — so a rolled item would be invisible to the player |
+> | **A gold sink** | exactly one in the whole game (`hordes.ts:730`, scatter-cache) |
+>
+> ✅ **Why A1 is cheap:** `grep registerEffect` returns **fifteen live, working, already-
+> consumed effect hooks** (`fire_aura`, `lifesteal`, `chain_on_kill`, `dodge`, `gold_find`,
+> `thorns_reflect`, …). They were built in C4 to serve **five relics**, and fourteen of them
+> are reachable from exactly one item each. The entire *suffix* half of an affix system —
+> "of the Ember", "of the Leech", "of the Wisp" — is a data table over hooks that already
+> work and are already Gauntlet-covered. **A1 is mostly a `data/` edit.**
+>
+> ⚠️ **The collision, and it needs a decision:** Hero Siege is a forever-character game —
+> keep the hero, keep the loot, climb for a hundred hours. Pillar 3 forbids persistence and
+> pillar 8 caps a run at ~15 real minutes. Diablo-style drop rates inside that window would
+> ship six rarity tiers of which no player ever sees the top four — the same dormant-content
+> failure the Lens work spent two milestones stamping out. Three ways out, in A-arsenal §4.2;
+> **recommendation is (a) compress the ladder so it is traversable inside one run + (b) record
+> your best item as a trophy on the finished-run scorecard**, which pillar 3 already permits.
+> Option (c), a persistent stash, is buildable but changes what NIGHTWARD is — a conversation,
+> not a commit.
+>
+> **Classes are the one borrowed system the brief declines.** They are a retention mechanism;
+> the Loom already does build identity better inside our constraints, and picking an identity
+> *before* you know what the wire is doing that run is backwards for this game. Build the Loom
+> out instead — unless overruled.
+>
+> ⚠️ **A7 collides with N4.5 and must not become a second difficulty axis.** N4.5's data-budget
+> opt-in is already user-directed to double as the difficulty selector. A7 gives that one
+> control ARPG-shaped consequences (enemy scaling, a rising rarity floor, Riftborn gated to the
+> top two tiers). One selector, two vocabularies: the Veil calls it a covenant, the Lens calls
+> it a data budget.
+>
+> ⚠️ **A2 is gated on the outstanding N4.3 balance verdict.** Rolled enemy affixes multiply
+> against per-night scaling *and* the Fray mapping *and* a Surge omen, and Fray × Surge already
+> compounds to ×1.81 horde speed with no verdict in yet.
+>
+> **Suggested first cut: A1 + A4** (the roll, plus orbs / comparison tooltips / loot beams /
+> rarity colour / minimap). That is the whole Hero Siege loop — kill, see a coloured beam, walk
+> over, read a tooltip, feel the upgrade — and it touches neither combat balance nor the N4
+> file set, so it can run in parallel with N4.4+. Open questions in A-arsenal §9.
+
 > ## Direction update (2026-08-14) — playtest verdicts + a new milestone
 >
 > **Sound: rolled back, verdict IN.** The user asked to restore the pre-X2 soundtrack. All
