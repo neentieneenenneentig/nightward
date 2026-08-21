@@ -405,7 +405,13 @@ export const CFG = {
     mergeMaxN: 999,          // never merge past this stack size
     sfxMinGapSec: 0.12,      // pickup blip rate limit — the deathWhistle lesson (2026-08-14)
     toastWindowSec: 0.4,     // pickups inside this window collapse into one toast line
-    goldDrops: false,        // B5 Q2 — gold stays a direct credit until decided
+    // B5 Q2, still open — and deliberately the one key in this file that NOTHING
+    // reads. It is a parked decision, not a feature: flipping it changes nothing
+    // until someone builds the coin pseudo-item (gold is not an ITEMS row). Kept
+    // so the question survives, and noted here so the next dormant-row sweep
+    // reads it as a placeholder rather than a placebo. Gold stays a direct
+    // credit to state.player.gold until the playtest verdict lands.
+    goldDrops: false,
   },
 
   // A1 — the rarity roll. `enabled: false` is a real escape hatch, not a

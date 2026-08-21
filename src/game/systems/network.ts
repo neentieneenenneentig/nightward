@@ -1049,12 +1049,6 @@ export class NetworkSystem {
     return { mul: roll, center, half, bestEchoMs };
   }
 
-  /** @deprecated — use rollDamageMul(rng) instead. Kept for compat. */
-  getDamageMul(): number {
-    // Fallback: use Math.random() if no rng provided (non-deterministic, test-only path)
-    return this.rollDamageMul(() => Math.random()).mul;
-  }
-
   /** Get the best (lowest positive) echo RTT from the last 10s of probes. */
   private bestRecentEcho(): number {
     let best = Infinity;
@@ -1077,9 +1071,6 @@ export class NetworkSystem {
     if (r) this.lastResonanceLabel = r.label;
     return r;
   }
-
-  /** @deprecated — use getDamageMul() instead. Kept for compat. */
-  getAttackSpeedMul(): number { return 1.0; }
 
   /**
    * Sample passive browser APIs for a non-attack action. ZERO fetch() calls —
