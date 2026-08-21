@@ -424,6 +424,101 @@ export function makeBushVariants(rampArr: RGB[], accent: RGB | undefined, seed: 
   return out;
 }
 
+/** A8: a Cairn — stacked stones over something buried.
+ *
+ *  Deliberately the tallest, narrowest silhouette in the feature set. The design
+ *  asks the player to cross the map for one, and you cannot cross a map toward
+ *  something you cannot pick out: every other feature here is a squat blob,
+ *  so "narrow, stepped, and half a tile taller than a bush" is the whole
+ *  legibility budget spent in one place. The pale capstone is the second half
+ *  of that — a bright note at the top carries further than a silhouette does. */
+export function makeCairnVariants(rampArr: RGB[], accent: RGB | undefined, seed: number, count = 4): HTMLCanvasElement[] {
+  const out: HTMLCanvasElement[] = [];
+  for (let v = 0; v < count; v++) {
+    const rand = mulberry32(seed ^ (0xca19 + v * 733));
+    const stones = 4 + ((rand() * 2) | 0);          // 4..5 courses
+    const W = 22, H = 5 + stones * 5;
+    const p = new Pix(W, H);
+    let y = H - 1;
+    for (let s = 0; s < stones; s++) {
+      const t = stones > 1 ? s / (stones - 1) : 0;  // 0 at the base, 1 at the cap
+      const half = (8.4 - t * 5.0) * (0.85 + rand() * 0.3);
+      const sh = 4 + ((rand() * 2) | 0);            // this course's height
+      const cx = W / 2 + (rand() - 0.5) * 2.2;      // stones never stack true
+      for (let dy = 0; dy < sh; dy++) {
+        const yy = y - dy;
+        // Tuck the top and bottom rows in by a pixel so a course reads as a
+        // slab with edges rather than as a rectangle.
+        const tuck = (dy === 0 || dy === sh - 1) ? 1.3 : 0;
+        const hw = half - tuck + (hash2(s * 17 + v, yy, seed ^ 0xca1a) - 0.5) * 1.2;
+        const x0 = Math.round(cx - hw), x1 = Math.round(cx + hw);
+        const lit = x0 + Math.max(1, Math.round((x1 - x0) * 0.38));
+        // `y` counts DOWN, so dy === 0 is this course's bottom row: paint it as
+        // a dark seam against the stone below. Without it the shading runs
+        // continuously from base to cap and a cairn reads as one lumpy boulder
+        // — which it did, in the first in-world capture. The base course has
+        // nothing under it, so it gets no seam.
+        const seam = dy === 0 && s > 0;
+        for (let x = x0; x <= x1; x++) {
+          p.set(x, yy, seam ? darken(rampArr[0], 34)
+            : x < lit ? rampArr[2] : x < lit + 2 ? rampArr[1] : rampArr[0]);
+        }
+      }
+      y -= sh;
+    }
+    if (accent) {
+      const top = y + 1;
+      for (let i = 0; i < 5; i++) p.set((W >> 1) - 2 + i, top, i < 3 ? accent : lighten(accent, 20));
+      p.set((W >> 1) - 1, top - 1, lighten(accent, 45));
+      p.set(W >> 1, top - 1, lighten(accent, 45));
+    }
+    p.outline([20, 18, 28]);
+    out.push(p.done());
+  }
+  return out;
+}
+
+/** A8: a Wardstone — a standing stone with something still lit in it.
+ *
+ *  Reads as a rock's opposite: tall and thin where a rock is squat and wide,
+ *  and carrying a mark no piece of terrain would. The mark is the only part
+ *  that matters at distance, so it is drawn in the accent at full brightness
+ *  and never shaded with the body. */
+export function makeWardstoneVariants(rampArr: RGB[], accent: RGB | undefined, seed: number, count = 4): HTMLCanvasElement[] {
+  const out: HTMLCanvasElement[] = [];
+  for (let v = 0; v < count; v++) {
+    const rand = mulberry32(seed ^ (0x3a17 + v * 509));
+    const H = 22 + ((rand() * 7) | 0);    // 22..28 px — pokes a tile's worth up
+    const baseHalf = 3.4 + rand() * 1.7;
+    const lean = (rand() - 0.5) * 0.16;   // none of them stand quite straight
+    const W = 14;
+    const p = new Pix(W, H + 1);
+    for (let y = 0; y < H; y++) {
+      const t = y / (H - 1);              // 0 at the top, 1 at the foot
+      const half = baseHalf * (0.62 + 0.38 * t) + (hash2(v * 23, y, seed ^ 0x3a18) - 0.5) * 0.9;
+      const cx = W / 2 + lean * (H - y);
+      const x0 = Math.round(cx - half), x1 = Math.round(cx + half);
+      const lit = x0 + Math.max(1, Math.round((x1 - x0) * 0.4));
+      for (let x = x0; x <= x1; x++) {
+        p.set(x, y + 1, x < lit ? rampArr[2] : x < lit + 2 ? rampArr[1] : rampArr[0]);
+      }
+    }
+    if (accent) {
+      const gy = Math.max(2, (H * 0.34) | 0);
+      const cx = Math.round(W / 2 + lean * (H - gy));
+      p.set(cx, gy, lighten(accent, 35));
+      p.set(cx, gy + 1, accent);
+      p.set(cx - 1, gy + 2, accent);
+      p.set(cx + 1, gy + 2, accent);
+      p.set(cx, gy + 4, accent);
+      p.set(cx, gy + 5, lighten(accent, 35));
+    }
+    p.outline([20, 18, 28]);
+    out.push(p.done());
+  }
+  return out;
+}
+
 /** What's left after chopping a tree. */
 export function makeStump(trunk: RGB[], seed: number): HTMLCanvasElement {
   const p = new Pix(14, 11);

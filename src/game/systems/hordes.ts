@@ -171,6 +171,7 @@ export class HordeSystem {
     const gold = state.player.gold;
     const pool = ENEMIES.filter((e) => {
       if (e.fromNight > n) return false; // not unlocked yet
+      if (e.dayOnly) return false;       // A8: the Hoarder never joins a siege
       if (e.boss) return gold >= CFG.horde.bossAtGold; // bosses only at high gold
       return true;
     });
@@ -278,10 +279,75 @@ export class HordeSystem {
     }
   }
 
+  /** A8: open a Cairn, wake what it buried. Returns how many actually stood up.
+   *
+   *  Three decisions worth stating, because all three are load-bearing:
+   *
+   *  1. **Current-night stat scaling, not a second table.** A Cairn cracked on
+   *     night 6 is a night-6 fight. The payout band is fixed (`cairn`), so the
+   *     price has to be what moves, and reusing spawn()'s own hp/dmg growth
+   *     means the two can never drift apart the way a parallel table would.
+   *
+   *  2. **Not day mobs.** A woken pack the player runs away from marches on the
+   *     hall like any other foe, which is precisely what makes opening a Cairn
+   *     far from home a decision instead of a formality.
+   *
+   *  3. **No echo/epithet machinery.** What a barrow buried was buried before
+   *     this run's wire existed; naming it after a route's latency would be the
+   *     Veil leaking in the wrong direction.
+   *
+   *  Public because gather.ts calls it, and it is the only route into the horde
+   *  from outside the day/night cycle. */
+  wake(x: number, y: number, count: number, radiusTiles: number): number {
+    const { state, world, views } = this.ctx;
+    const n = Math.max(1, this.ctx.nightIndex?.() ?? 1);
+    // Bosses and the Hoarder are both excluded: a relic-bearing domain lord out
+    // of a roadside cairn would trivialise the five biggest fights in the game,
+    // and a Hoarder buried under stones would immediately run away from them.
+    const pool = ENEMIES.filter((e) => !e.boss && !e.dayOnly && e.fromNight <= n);
+    if (!pool.length) return 0;
+
+    const hpMul = Math.pow(CFG.horde.hpGrowth, n - 1);
+    const dmgMul = Math.pow(CFG.horde.dmgGrowth, n - 1);
+    const netScale = (this.ctx.net?.getGameValue?.('enemyScale') ?? 1.0)
+      * (this.ctx.net?.getGameValue?.('veilPressure') ?? 1.0);
+
+    let woke = 0;
+    for (let i = 0; i < count && this.foes.length < CFG.horde.maxAlive; i++) {
+      const def = pool[(Math.random() * pool.length) | 0];
+      let fx = x, fy = y, placed = false;
+      for (let t = 0; t < 8 && !placed; t++) {
+        const ang = Math.random() * Math.PI * 2;
+        const d = (0.8 + Math.random() * Math.max(0.5, radiusTiles)) * TILE;
+        fx = x + Math.cos(ang) * d; fy = y + Math.sin(ang) * d;
+        placed = world.canStand(fx, fy, 5);
+      }
+      if (!placed) continue; // hostile geography — that one stays buried
+      const dmg = Math.round(def.dmg * dmgMul * netScale);
+      const hp = Math.max(1, Math.round(def.hp * hpMul * netScale));
+      const foe: any = {
+        uid: state.nextUid++, def,
+        x: fx, y: fy, px: fx, py: fy,
+        hp, maxHp: hp, dmg, baseDmg: dmg,
+        atkT: 0, telegraphT: 0, animT: Math.random(),
+        echoSoak: 0, echoMoveMul: 1, specialSkill: null, epithetName: def.name,
+        hitCount: 0, blinked: false,
+      };
+      this.foes.push(foe);
+      views.addFoe(foe);
+      woke++;
+    }
+    return woke;
+  }
+
   /** Day prey: spawns around the PLAYER at base (night-1) stats — loot on legs. */
   private spawnDayMob() {
     const { state, world, views } = this.ctx;
-    const pool = ENEMIES.filter((e) => e.daytime);
+    // A8: with the flag off the Hoarder leaves the day pool entirely, which is
+    // the same revert the Cairn and Wardstone rows get in worldgen. Keyed on
+    // the BEHAVIOUR rather than on the id, because "a thing that runs away"
+    // is what the flag is actually turning off.
+    const pool = ENEMIES.filter((e) => e.daytime && (CFG.a8.enabled || e.behavior?.kind !== 'flee'));
     if (!pool.length) return;
     const totalW = pool.reduce((s, e) => s + e.weight, 0);
     let r = Math.random() * totalW;
@@ -358,10 +424,38 @@ export class HordeSystem {
     const beh = f.def.behavior;
     const h = hall(state);
     const dp = Math.hypot(p.x - f.x, (p.y - 10) - f.y);
+
+    // ---- A8 FLEE: the only behaviour whose win condition is your loss -------
+    //
+    // It never targets anything, so it has to come out of the aggro test rather
+    // than be handled after it — `targetPlayer` staying true would have the
+    // Hoarder turn and bite the moment you got inside 170 px.
+    const isFlee = beh?.kind === 'flee';
+    const spooked = isFlee && dp < (beh!.spookTiles ?? 11) * TILE;
+    if (isFlee && dp > (beh!.escapeTiles ?? 21) * TILE) {
+      // Gone, with the hoard. `escapeTiles` is deliberately shorter than
+      // dayspawn.despawnTiles, so this branch — and its message — always wins
+      // the race against the silent day-mob fade above. Losing a Hoarder has to
+      // be an event; a thing that merely stops existing teaches nothing.
+      this.foes = this.foes.filter((x) => x.uid !== f.uid);
+      this.ctx.views.removeFoe(f.uid);
+      this.ctx.toast(`${f.def.name} slips away with its hoard`, 'bad');
+      this.ctx.log?.push('combat', `${f.def.name} escaped — whatever it carried went with it`, state.clock);
+      return;
+    }
+
     // day mobs are prey, not siege: aggro the player up close, otherwise wander home
-    const targetPlayer = dp < CFG.horde.aggroRangePx || (!h && !f.dayMob);
+    const targetPlayer = !isFlee && (dp < CFG.horde.aggroRangePx || (!h && !f.dayMob));
     let tx: number, ty: number;
     if (targetPlayer) { tx = p.x; ty = p.y - 10; }
+    else if (spooked) {
+      // Straight away from the player, six tiles out. No pathfinding — which is
+      // exactly why trees, water and cliffs are the counterplay: the Hoarder
+      // runs into terrain as blindly as everything else in this file does.
+      const away = Math.atan2(f.y - (p.y - 10), f.x - p.x);
+      tx = f.x + Math.cos(away) * TILE * 6;
+      ty = f.y + Math.sin(away) * TILE * 6;
+    }
     else if (f.dayMob) {
       tx = f.homeX! + Math.cos(f.animT * 0.35 + f.uid) * TILE * 2.5;
       ty = f.homeY! + Math.sin(f.animT * 0.28 + f.uid) * TILE * 2.5;
@@ -495,7 +589,12 @@ export class HordeSystem {
     // two are deliberately separate — steady-state hostility and a shock are not
     // the same experience.
     const surge = this.ctx.omens?.mul?.('hordeAggression') ?? 1;
-    let step = f.def.speed * dt * (f.dayMob && !targetPlayer ? 0.4 : 1) * terrain * fear * chill * aura * towerSlow * tarSlow * fray * surge;
+    // A8: a spooked Hoarder runs at fleeSpeedMul instead of the day-mob amble.
+    // Everything else in this product still applies to it — a chill, a tower
+    // slow or a tar pit lands on the Hoarder exactly as it lands on a Brute,
+    // which is the whole counterplay to a foe that is faster than you.
+    const pace = spooked ? (beh!.fleeSpeedMul ?? 1.5) : (f.dayMob && !targetPlayer ? 0.4 : 1);
+    let step = f.def.speed * dt * pace * terrain * fear * chill * aura * towerSlow * tarSlow * fray * surge;
     step *= buffSpeedMul;
     if (stunned) step = 0;
     let blocked: Building | null = null;
@@ -826,7 +925,12 @@ export class HordeSystem {
     // B5: the corpse drops its loot on the floor. The toast moved with it — a
     // 43-foe night wave firing one toast per stack at roll time is a wall of
     // text; drops.ts aggregates the pickups into one line per 0.4 s instead.
-    this.ctx.drops.spawn(rollLoot(f.def.loot), f.x, f.y, { band: 'common' });
+    // A8: `lootBand` is absent on every foe but the Hoarder, so this reads
+    // 'common' exactly as it always has — and the one corpse in the game worth
+    // a wide spread gets one, because a hoard that lands in a single pile does
+    // not look like a hoard.
+    this.ctx.drops.spawn(rollLoot(f.def.loot), f.x, f.y,
+      { band: f.def.lootBand ?? 'common', spread: f.def.lootBand ? 2.4 : 1 });
     if (awardXp) {
       const lvl = addXp(state, 'combat', f.def.xp);
       toast(`+${f.def.xp} ${SKILL_NAME['combat']} xp`);

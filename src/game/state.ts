@@ -84,6 +84,12 @@ export interface GameState {
    *  is the ORDERED thread kinds that item currently holds. Order is the whole
    *  game — a weave is a sequence, and reordering breaks it (see data/weaves.ts). */
   sockets: Record<string, string[]>;
+  /** A8: Boons currently blessing the player — timed entries into the effect
+   *  vocabulary, granted by Wardstones. A real state field rather than an
+   *  underscore-prefixed stowaway like `_moveBurstUntil`, because newWorld()
+   *  has to clear it: a boon surviving a restart would be the shared-world
+   *  hazard the Gauntlet keeps finding, with a 120-second fuse. */
+  boons: import('./systems/effects').ActiveBoon[];
   region: string;                      // region key the player is currently in
   explored: Record<string, number>;    // region key → 1 (for fog / future minimap)
   nightsSurvived: number;
@@ -174,6 +180,7 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     worldBosses: [],
     drops: [],
     sockets: {},
+    boons: [],
     region: '',
     explored: {},
     nightsSurvived: 0,

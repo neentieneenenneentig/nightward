@@ -84,6 +84,19 @@ export const LOOT_BANDS: Record<string, LootBand> = {
   lord:    { floor: 'hallowed', ceiling: 'sovereign' },
   /** Only inside a rift realm — the sole route to Riftborn. */
   rift:    { floor: 'woven',    ceiling: 'riftborn' },
+  /** A8 — a Cairn. Numerically identical to `lord` today, and deliberately a
+   *  SEPARATE row: a barrow and a domain lord should be retunable apart, and
+   *  aliasing `cairn: LOOT_BANDS.lord` would have made the next balance pass
+   *  move both by accident. The brief asked for "guaranteed Hallowed+", which
+   *  is exactly the lord band — so a Cairn is priced like a lord kill, and A8
+   *  makes it cost like one too: opening a Cairn wakes what was buried under
+   *  it (CFG.a8.cairn.wake). Free Hallowed would have inverted the whole
+   *  ladder that A1 spent a milestone tuning. */
+  cairn:   { floor: 'hallowed', ceiling: 'sovereign' },
+  /** A8 — the Hoarder's burst. Below a Cairn on purpose: the Hoarder is a
+   *  chase you can lose, so its payout has to survive being missed most of the
+   *  time without feeling like the run turned on one lucky sprint. */
+  hoard:   { floor: 'woven',    ceiling: 'sovereign' },
   /** A forge produces sound work, not miracles. Crafted gear can still be
    *  Touched, which is the whole reason to keep crafting once loot exists. */
   forge:   { floor: 'plain',    ceiling: 'touched' },

@@ -5,6 +5,7 @@ import { ramp, scale } from '../../engine/procgen/palette';
 import {
   makeTileVariants, makeTreeVariants, makeRockVariants, makeHerbVariants,
   makeBushVariants, makeStump, makeBuilding, makeBlobFrames, makeWall, makeSpireVariants, Pix,
+  makeCairnVariants, makeWardstoneVariants,
 } from '../../engine/procgen/sprites';
 import { M, MATERIALS } from '../data/materials';
 import { FEATURES } from '../data/features';
@@ -64,6 +65,12 @@ export class WorldArt {
         a.kind === 'tree' ? makeTreeVariants({ canopy: a.ramp, trunk: TRUNK }, seed, 10)
         : a.kind === 'rock' ? makeRockVariants(a.ramp, a.accent, seed ^ hashId(f.id), 8)
         : a.kind === 'herb' ? makeHerbVariants(a.ramp, a.accent, seed ^ hashId(f.id), 6)
+        // A8: fewer variants than a tree gets, on purpose. There is at most one
+        // Cairn in a run and a handful of Wardstones — variety is what stops a
+        // FOREST reading as wallpaper, and a thing you see once does not have
+        // that problem.
+        : a.kind === 'cairn' ? makeCairnVariants(a.ramp, a.accent, seed ^ hashId(f.id), 4)
+        : a.kind === 'wardstone' ? makeWardstoneVariants(a.ramp, a.accent, seed ^ hashId(f.id), 4)
         : makeBushVariants(a.ramp, a.accent, seed ^ hashId(f.id), 6),
       );
     }

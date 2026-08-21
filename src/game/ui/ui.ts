@@ -50,10 +50,20 @@ export interface UIHooks {
   newWorld(): void;
   isPlacing(): boolean;
   gatherView(): { label: string; frac: number } | null;
-  /** N4.3: active Omens, for the HUD chip. An omen changes how the game plays,
-   *  so it has to be visible without opening the Lens — a hidden multiplier is
-   *  indistinguishable from the game being broken. */
-  omenView(): { name: string; good: boolean; secs: number; blurb: string }[];
+  /** N4.3 + A8: every temporary world state currently acting on the player —
+   *  Omens from the wire, Boons from a Wardstone. They share a chip row because
+   *  they share the only property the player needs at a glance: something that
+   *  is not normally true is true right now, and it ends. Both have to be
+   *  visible without opening a panel — a hidden multiplier is indistinguishable
+   *  from the game being broken.
+   *
+   *  `kind` is here rather than a composed title string because the two end
+   *  differently and saying so is the point: an Omen lifts when the reading
+   *  recovers OR on its safety valve, a Boon only ever runs out. */
+  worldStateView(): {
+    name: string; good: boolean; secs: number; blurb: string;
+    kind: 'omen' | 'boon'; color?: string;
+  }[];
   /** L1: current age/lifespan-remaining reading — drives the HUD chip+bar. */
   lifespanView(): { age: number; frac: number; minutesRemaining: number; warning: boolean; critical: boolean };
   logEntries(): LogEntry[];
@@ -118,7 +128,7 @@ export class UI {
   private muteEl!: HTMLElement;
   private echoEl!: HTMLElement;
   private omenEl!: HTMLElement;
-  private omenChipsCache = '';
+  private worldStateCache = '';
   private echoChipsCache = '';
   private vigorText!: HTMLElement;
   private resolveText!: HTMLElement;
@@ -187,7 +197,7 @@ export class UI {
       <div class="nw-badge nw-clock" id="nw-clock"></div>
       <div class="nw-badge" id="nw-nights" title="damage · defense · population · territory"></div>
       <div class="nw-badge" id="nw-echoes" style="display:none" title="echoes of the slain"></div>
-      <div class="nw-badge" id="nw-omens" style="display:none" title="omens — the wire is changing the world"></div>
+      <div class="nw-badge" id="nw-omens" style="display:none" title="what is true right now that is not normally true — omens off the wire, boons off a Wardstone"></div>
       <div class="nw-badge nw-domain" id="nw-domain" title="the realm you stand in"></div>
       <div class="nw-spacer"></div>
       <div class="nw-badge nw-btn" id="nw-mute" style="pointer-events:auto" title="sound on/off">&#128266;</div>
@@ -1003,15 +1013,21 @@ export class UI {
       this.echoEl.innerHTML = chips;
     }
 
-    // N4.3: omen chips. The countdown is the safety-valve expiry, not a promise
-    // — a Famine can lift the moment throughput recovers, which is the point.
-    const omenChips = this.hooks.omenView().map((o) =>
-      `<span title="${o.blurb} — lifts when the reading recovers, or in ${o.secs}s"`
-      + ` style="color:${o.good ? '#8fd98f' : '#f08a6a'};">${o.name} ${o.secs}s</span>`).join(' &middot; ');
-    if (omenChips !== this.omenChipsCache) {
-      this.omenChipsCache = omenChips;
-      this.omenEl.style.display = omenChips ? '' : 'none';
-      this.omenEl.innerHTML = omenChips;
+    // N4.3 + A8: omen and boon chips. For an omen the countdown is the
+    // safety-valve expiry and not a promise — a Famine can lift the moment
+    // throughput recovers, which is the point. For a boon it is the whole
+    // truth. Saying the wrong one of those would make the HUD lie about the
+    // only number on it the player is actually watching.
+    const stateChips = this.hooks.worldStateView().map((o) =>
+      `<span title="${o.blurb} — ${o.kind === 'omen'
+        ? `lifts when the reading recovers, or in ${o.secs}s`
+        : `fades in ${o.secs}s`}"`
+      + ` style="color:${o.color ?? (o.good ? '#8fd98f' : '#f08a6a')};">${o.name} ${o.secs}s</span>`)
+      .join(' &middot; ');
+    if (stateChips !== this.worldStateCache) {
+      this.worldStateCache = stateChips;
+      this.omenEl.style.display = stateChips ? '' : 'none';
+      this.omenEl.innerHTML = stateChips;
     }
 
     // gather progress ring

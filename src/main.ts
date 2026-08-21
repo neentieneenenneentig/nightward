@@ -22,7 +22,7 @@ import { Lens } from './game/ui/lens';
 import { ChronicleStore, CHRONICLE_SERIES, exportChronicle, sampleChronicle } from './game/systems/chronicle';
 import { OmenSystem } from './game/systems/omens';
 import { DropSystem } from './game/systems/drops';
-import { GatherSystem, VERB } from './game/systems/gather';
+import { GatherSystem, verbFor } from './game/systems/gather';
 import { EconomySystem } from './game/systems/economy';
 import { BuildSystem } from './game/systems/build';
 import { HordeSystem } from './game/systems/hordes';
@@ -40,7 +40,7 @@ import { ScoreboardSystem } from './game/systems/scoreboard';
 import { SoulFeedSystem } from './game/systems/soulfeed';
 import { MaterialEffectSystem } from './game/systems/materialEffects';
 import { craft } from './game/systems/crafting';
-import { activeEffects, moveBurstMul } from './game/systems/effects';
+import { activeBoons, activeEffects, moveBurstMul, tickBoons } from './game/systems/effects';
 import { toggleEquip, invAdd, gearMod, playerMaxHp } from './game/rules';
 import { BUILDINGS } from './game/data/buildings';
 import { NET_GAME_MAP, NET_METRICS, BEACON_INSPECT, LENS_SECTION_INSPECT, allBeacons, type NetInspect } from './game/data/network';
@@ -375,18 +375,31 @@ async function boot() {
       if (gather.target) return { label: labelFor(gather.target.def) + ' (E)', frac: 0 };
       return null;
     },
-    omenView: () => omens.active.map((o) => ({
-      name: o.def.name,
-      good: o.def.good,
-      secs: Math.max(0, Math.ceil(o.until - state.clock)),
-      blurb: o.def.blurb,
-    })),
+    // N4.3 + A8: one chip row for everything temporarily true about the world.
+    // Omens first because they are the ones the player did not choose.
+    worldStateView: () => [
+      ...omens.active.map((o) => ({
+        name: o.def.name,
+        good: o.def.good,
+        secs: Math.max(0, Math.ceil(o.until - state.clock)),
+        blurb: o.def.blurb,
+        kind: 'omen' as const,
+      })),
+      ...activeBoons(state).map((b) => ({
+        name: b.name,
+        good: true,
+        secs: Math.max(0, Math.ceil(b.until - state.clock)),
+        blurb: b.blurb,
+        kind: 'boon' as const,
+        color: b.color,
+      })),
+    ],
   });
 
   // hand the build system a way to drive the placement carousel banner
   ctx.setBuildBanner = (sel: { def: any; afford: number } | null) => ui.setBuildBanner(sel);
 
-  function labelFor(def: any) { return (VERB[def.skill] ?? 'Gather') + ' ' + def.name; }
+  function labelFor(def: any) { return verbFor(def) + ' ' + def.name; }
 
   function equipItem(id: string) {
     const slot = toggleEquip(state, id);
@@ -836,6 +849,12 @@ async function boot() {
         omens.consider(ev);
       }
       omens.tick();
+      // A8: sweep expired boons and say what lifted. Cosmetic by design — every
+      // reader filters on the clock anyway, so a missed tick costs a Feed line
+      // and nothing else. See tickBoons() for why that is the right way round.
+      for (const b of tickBoons(state)) {
+        log.push('resonance', `${b.name} fades`, state.clock);
+      }
     }
     worldCore.pushNetworkParams(net.packForCore());
     const changed = worldCore.drainEvents();

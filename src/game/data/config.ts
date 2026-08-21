@@ -438,6 +438,35 @@ export const CFG = {
     deltaEpsilon: 0.05,
   },
 
+  // A8 — Cairns, Wardstones and the Hoarder: the three things in the world
+  // that are neither a resource node nor a siege.
+  //
+  // `enabled: false` is a real revert, not a mute. Both A8 features are the LAST
+  // rows in FEATURES and WorldGen's density table is a running cumulative sum,
+  // so dropping them restores the pre-A8 world tile for tile; the Hoarder leaves
+  // the day pool by the same flag. A negative playtest verdict is one boolean,
+  // the same discipline as CFG.drops.enabled and CFG.loot.enabled. Note that it
+  // is read when the WORLD is built — flipping it mid-run stops the payouts but
+  // does not un-place stones that are already standing.
+  a8: {
+    enabled: true,
+    /** Opening a Cairn wakes what was buried under it (features.ts `wake`).
+     *  Off, a Cairn is free Hallowed-tier loot — which is exactly the balance
+     *  question the playtest has to answer, so it gets its own switch rather
+     *  than being welded to `enabled`. */
+    cairnWake: true,
+    /** Most Boons live at once. Three lets a lucky cluster of Wardstones
+     *  combine without a run turning into a christmas tree of stacked auras.
+     *  At the cap the OLDEST boon is displaced and NAMED in the toast and the
+     *  Chronicle — displacing out loud beats refusing, because a refusal at a
+     *  Wardstone leaves the player either wasting the stone or waiting on a
+     *  timer whose end they cannot see. */
+    maxBoons: 3,
+    /** Global × on every Boon's duration. One number to make the whole
+     *  blessing layer longer or shorter without touching twelve rows. */
+    boonSecMul: 1.0,
+  },
+
   // N4.3: Omens — a detected step change on the wire becomes a temporary world
   // state. See systems/omens.ts; the per-kind numbers live in OMEN_DEFS, which
   // is a table, so balance is a row edit rather than a code change.

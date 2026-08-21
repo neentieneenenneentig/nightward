@@ -79,9 +79,27 @@ export function addXp(state: GameState, skill: string, amount: number): number {
 
 export function rollLoot(table: LootTable): Stack[] {
   const out: Stack[] = [];
+  const qty = (r: { min: number; max: number }) => r.min + Math.floor(Math.random() * (r.max - r.min + 1));
+  // A8: grouped rows are a weighted pick-one and are collected first, so the
+  // ungrouped half behaves byte for byte as it did before groups existed.
+  let groups: Map<string, LootTable> | null = null;
   for (const roll of table) {
-    if (Math.random() < roll.chance) {
-      out.push({ id: roll.id, n: roll.min + Math.floor(Math.random() * (roll.max - roll.min + 1)) });
+    if (roll.group) {
+      if (!groups) groups = new Map();
+      const g = groups.get(roll.group);
+      if (g) g.push(roll); else groups.set(roll.group, [roll]);
+      continue;
+    }
+    if (Math.random() < roll.chance) out.push({ id: roll.id, n: qty(roll) });
+  }
+  if (groups) {
+    for (const rows of groups.values()) {
+      let total = 0;
+      for (const r of rows) total += r.chance;
+      let x = Math.random() * total;
+      let pick = rows[rows.length - 1];
+      for (const r of rows) { x -= r.chance; if (x <= 0) { pick = r; break; } }
+      out.push({ id: pick.id, n: qty(pick) });
     }
   }
   return out;

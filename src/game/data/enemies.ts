@@ -5,7 +5,7 @@ import type { LootTable } from '../types';
 
 /** X1: Enemy behavior — data-driven AI, no engine changes per enemy. */
 export interface EnemyBehavior {
-  kind: 'charge' | 'ranged' | 'siege' | 'exploder' | 'buffer' | 'healer' | 'summoner' | 'swarm';
+  kind: 'charge' | 'ranged' | 'siege' | 'exploder' | 'buffer' | 'healer' | 'summoner' | 'swarm' | 'flee';
   // ranged / siege
   projectileSpeed?: number;       // px/s (default 180)
   preferredRangeTiles?: number;   // tries to keep this distance (default 4)
@@ -30,6 +30,12 @@ export interface EnemyBehavior {
   summonMax?: number;             // max alive at once
   // swarm — tiny, ignores collision with each other, clumps together
   swarmSize?: number;             // extra spawns per wave slot
+  // A8 flee — runs from the player and is GONE if it gets clear. The only
+  // behavior in the table whose success condition is the player's failure, so
+  // every number here is really a difficulty knob on one chase.
+  spookTiles?: number;            // starts running when the player is this close
+  fleeSpeedMul?: number;          // × speed while running (>1 = faster than you)
+  escapeTiles?: number;           // gets this far and it is gone, with its hoard
 }
 
 export interface EnemyDef {
@@ -47,6 +53,13 @@ export interface EnemyDef {
   weight: number;
   boss?: boolean;      // world bosses: never spawn in the ordinary horde
   daytime?: boolean;   // also roams by day around the player (prey, not siege)
+  /** A8: never joins a night wave, whatever `fromNight`/`weight` say. A thing
+   *  whose whole behaviour is running away has no business in a siege — it
+   *  would spawn at the hall, immediately flee the hall, and despawn. */
+  dayOnly?: boolean;
+  /** A8: LOOT_BANDS key this corpse's drops roll on. Absent = `common`, which
+   *  is what hordes.hurt() has always passed and what every other foe wants. */
+  lootBand?: string;
   /** X1: Data-driven behavior — if absent, defaults to 'charge'. */
   behavior?: EnemyBehavior;
   art: { size: number; body: RGB[]; eye: RGB };
@@ -262,5 +275,48 @@ export const ENEMIES: EnemyDef[] = [
     loot: [{ id: 'iron_bar', min: 2, max: 5, chance: 1 }, { id: 'sword_iron', min: 1, max: 1, chance: 0.25 }, { id: 'armor_iron', min: 1, max: 1, chance: 0.2 }, { id: 'ring_iron', min: 1, max: 1, chance: 0.35 }, { id: 'amulet_iron', min: 1, max: 1, chance: 0.35 }, { id: 'relic_null', min: 1, max: 1, chance: 1 }],
     fromNight: 99, weight: 0, boss: true,
     art: { size: 52, body: ramp('#26123a', '#4a2170', '#8a4fc4'), eye: ramp('#ffb0ff')[0] },
+  },
+
+  // ---- A8: the Hoarder ------------------------------------------------------
+  //
+  // The loot goblin. It is the only enemy in the bestiary you can LOSE to
+  // without taking a point of damage, and that is the entire mechanic: a fight
+  // whose failure state is watching something walk off with your Sovereign.
+  //
+  // The chase is tuned to be barely losable. The player runs at 160 px/s
+  // (CFG.player.speed); the Hoarder runs at 108 × 1.5 = 162. On open ground it
+  // pulls away at 2 px/s — about half a tile every eight seconds — so a
+  // straight sprint from full spook range loses, narrowly, and the counterplay
+  // is everything that is NOT running faster: a chill (×0.65) or a tower slow
+  // (×0.6) drops it under you, an echo or a bow hits it without closing, and
+  // trees, water and cliffs corner it because it has no pathfinding either.
+  //
+  // `dmg: 1` is a formality — the flee branch never enters the attack path, so
+  // it is a number the Hoarder cannot spend. It is 1 rather than 0 because
+  // testDataIntegrity requires every enemy to be able to hurt something, and
+  // exempting a row from a data rule is how rows start lying.
+  {
+    id: 'hoarder', name: 'The Hoarder',
+    hp: 90, speed: 108, dmg: 1, atkCooldown: 99, telegraphSec: 0.2, xp: 120, gold: [40, 90],
+    // A pick-one group, for the same reason the Cairn has one: a Hoarder you
+    // actually caught must never drop nothing. Losing the chase is the failure
+    // state — winning it and getting an empty corpse would make the whole
+    // mechanic read as broken rather than as unlucky.
+    loot: [
+      { id: 'sword_silver',  min: 1, max: 1, chance: 22, group: 'hoard' },
+      { id: 'armor_silver',  min: 1, max: 1, chance: 20, group: 'hoard' },
+      { id: 'ring_silver',   min: 1, max: 1, chance: 20, group: 'hoard' },
+      { id: 'amulet_silver', min: 1, max: 1, chance: 20, group: 'hoard' },
+      { id: 'charm_silver',  min: 1, max: 1, chance: 18, group: 'hoard' },
+      { id: 'silver_ore',    min: 1, max: 3, chance: 0.8 },
+      { id: 'echo_dust',     min: 1, max: 2, chance: 0.6 },
+    ],
+    lootBand: 'hoard',
+    // weight 0.16 against gnawer 10 + wisp 4 is ~1.1% of day spawns. At one day
+    // spawn every 3 s that is roughly one or two Hoarders in a full run — rare
+    // enough to be an event, common enough that a run can actually contain one.
+    fromNight: 1, weight: 0.16, daytime: true, dayOnly: true,
+    behavior: { kind: 'flee', spookTiles: 11, fleeSpeedMul: 1.5, escapeTiles: 21 },
+    art: { size: 18, body: ramp('#4a3a10', '#8a6a1a', '#e8c34a'), eye: ramp('#ffffff')[0] },
   },
 ];
