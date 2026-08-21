@@ -582,9 +582,9 @@ already be the largest single upgrade to the game's premise since N1.**
 
 | Phase | Contents | Why this order |
 |---|---|---|
-| **N4.0 — Right of way** | Retire the favicon-fetch beacons; rate-limit the attack path; global backoff + `Retry-After`; same-origin baseline beacon; `NW_NO_NET`; drop `ipapi.co` + `ipify`. | **Goes first.** Removes the only part of the system that contacts hosts which have not invited us (§6.2), and removes ~1,000 requests/run of traffic that N4's own measurements would otherwise be layered on top of. Deletes code; adds none. |
-| **N4.1 — The Deep Wire** | `cfL4` parsing, TAO waterfalls, `PerformanceObserver` on resources, real `min_rtt`/`rtt_var`/loss. Identity consolidated onto Cloudflare; `ipify` dropped, `ipapi.co` decided per §2.5. | Highest value, lowest risk, **zero new bandwidth cost** — it reads headers on requests we already make. Also retires the 429-flaky endpoint. |
-| **N4.2 — The Side Cart** | Drawer, five tabs, Chronicle strip, honesty tags, export. Extract `updateObservatory()` into `ui/lens/`. | The user asked for the panel first. It also makes everything after it *visible*, which is how we'll know the measurements are right. |
+| **N4.0 — Right of way** ✅ | Retire the favicon-fetch beacons; rate-limit the attack path; global backoff + `Retry-After`; same-origin baseline beacon; `NW_NO_NET`; drop `ipapi.co` + `ipify`. | **Goes first.** Removes the only part of the system that contacts hosts which have not invited us (§6.2), and removes ~1,000 requests/run of traffic that N4's own measurements would otherwise be layered on top of. Deletes code; adds none. |
+| **N4.1 — The Deep Wire** ✅ | `cfL4` parsing, TAO waterfalls, `PerformanceObserver` on resources, real `min_rtt`/`rtt_var`/loss. Identity consolidated onto Cloudflare; `ipify` dropped, `ipapi.co` decided per §2.5. | Highest value, lowest risk, **zero new bandwidth cost** — it reads headers on requests we already make. Also retires the 429-flaky endpoint. |
+| **N4.2 — The Side Cart** ✅ | Drawer, five tabs, Chronicle strip, honesty tags, export. Extract `updateObservatory()` into `ui/lens/`. | The user asked for the panel first. It also makes everything after it *visible*, which is how we'll know the measurements are right. |
 | **N4.3 — The Chronicle** ✅ | `ChronicleStore`, tiered retention, scheduled jittered probes, change detection **+ Omens: detected changes become world events (§5.3)**. | Needs N4.1's signals and N4.2's surface to be worth anything. Store shipped early with N4.2; jitter + Omens shipped 2026-08-20. |
 | **N4.4 — Scrying** | DoH: resolver race, PTR on own IP, AAAA/IPv6, TTL, DNSSEC `AD`, per-beacon real IPs. | Self-contained. Tiny bandwidth. Delivers a ROADMAP promise outstanding since N1. |
 | **N4.5 — The Sounding** | Download/upload soundings, bufferbloat sweep, data budget + consent UI, the Sounding Stone building and its game rewards. | Deliberately last: it is the only phase that spends the player's data, and it should sit on top of a system that's already proven. |
@@ -662,21 +662,18 @@ alternating across both resolvers. `qa/specs/wire.spec.ts` asserts all three pro
 2. **City / ASN / ISP.** Dropping `ipapi.co` costs these. Reverse-DNS (PTR) recovers ISP-ish
    naming for free and now ships. Is country + colo + PTR enough, or is a geo-IP vendor
    worth re-adding behind the same opt-in as the data budget?
-3. **Sequencing against the existing queue.** `fix/sound-rollback`, Batch B and B5 are all
-   unmerged. N4 does not touch their files, so it can run in parallel — but it should not
-   jump the merge queue ahead of a fix that is already verified.
+3. ~~**Sequencing against the existing queue.**~~ **Moot 2026-08-21.** Everything now sits on
+   one branch, `dev/night-build` — ten milestones deep, none merged. The sequencing question
+   became a merge-order question, and it is tracked in the ROADMAP's "Open and owed" table.
 
 ---
 
-## 10. Prior-art corrections to fold into the ROADMAP
+## 10. Prior-art corrections — folded in 2026-08-21
 
-- *"What we CANNOT get from a browser"* lists packet loss implicitly among agent-only data.
-  **Wrong** for Cloudflare-terminated paths — `cfL4` gives `lost`, `retrans`, `cwnd`,
-  `min_rtt`, `rtt_var`, `delivery_rate`. ICMP/pcap/ARP/LAN/dBm remain correct.
-- The Browser API availability matrix should gain rows for `serverTiming` (universal, but
-  gated on TAO), DoH (universal — `fetch` only), `RTCPeerConnection` (universal),
-  `PressureObserver` (Chromium), `userAgentData` (Chromium), and LoAF (Chromium). Notably
-  several of the *best* new signals are **universal**, which partly repairs the current
-  situation where Firefox and Safari players get a mostly-static Wire.
-- GDD §4.2's "19 tracked metrics" and the `downlink` claim will both need revising once
-  N4.1 lands.
+All three are now applied at the source rather than listed here, which is the whole point of
+a correction: the ROADMAP's availability matrix has the six new rows and the note that the
+best N4.1 signals are **universal**; its "What we CANNOT get from a browser" list no longer
+implies packet loss needs an agent; and GDD §4.2 reads "two dozen tracked metrics" with the
+`connection.downlink` 10 Mbps cap stated inline. This section is kept as a stub because two
+ROADMAP entries had *recorded* the first correction without anyone applying it, and the wrong
+text outlived both.

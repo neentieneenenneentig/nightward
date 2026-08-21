@@ -62,7 +62,9 @@ An implementation session may not declare a milestone complete without:
 
 1. **Static trio green:** `npm run typecheck` clean, `npm run build` green, `cargo test` all pass.
 2. **Full Gauntlet green at `?seed=1234&test`** with the console output pasted into the session
-   record — all existing tests AND all behavioral tests pass.
+   record — all existing tests AND all behavioral tests pass. **Run `npm run build` first**: the
+   Gauntlet harness drives a `vite preview` of `dist/`, so without a build it green-lights the
+   previous milestone (Testing doctrine §1).
 3. **The brief's acceptance checklist run live with evidence** — every item exercised and output
    captured (harness gotchas apply: verify via `window.__nw`, not screenshots).
 4. **Tag pushed** to the remote.
@@ -70,6 +72,76 @@ An implementation session may not declare a milestone complete without:
 **Known gaps are not allowed.** If something cannot be finished, stop and ask the user for explicit
 sign-off BEFORE merge — not disclosure after. "I'll fix it in the next PR" is not a valid merge
 strategy.
+
+## Testing doctrine (accumulated — this is where the suite's value lives)
+
+Six tautologies and one dead-hook certification have been found in this suite. Every one of
+them was green when it was found. The rules below are what each of them cost, written as
+rules so that the next one is caught by a reader rather than by an audit.
+
+**1. Build before you run the Gauntlet.** `scripts/run-gauntlet.mjs` drives
+`http://localhost:5199`, a port it does **not** start — that is a long-running `vite preview`
+serving `dist/`. **The Gauntlet tests the last build, not your working tree.** Three green
+runs were banked against stale code before this surfaced. `npm run build`, then
+`npm run gauntlet`, every time.
+
+**2. A negative assertion needs a positive control.** "With the effect off, nothing happened"
+passes just as happily when the effect is off *and* broken. Measure with it on, measure with
+it off, assert on the difference. Every matched pair in the suite exists because a one-sided
+version of it was green while the feature did nothing.
+
+**3. Never derive the expected value from the code under test.** `testXpCurve` summed
+`xpToNext()` and asserted `levelFromXp()` of that sum — the identity `f(f⁻¹(L)) === L`. It was
+green under `base 1 / growth 1.001` and under `base 99999 / growth 3.0`. Any test whose
+expectation is *computed* rather than *written down* is tautological until a mutation proves
+otherwise, and the mutation output belongs in the commit message, not a claim that it would
+have failed.
+
+**4. Driving a handler proves the handler works, never that the game calls it.** The C4 test
+called `applyEffect('thorns_reflect', …)`, got 6 back and went green — and it was the only
+caller of `applyEffect()` in the entire project. Seven effect hooks stayed placebo through
+three milestones behind that one assertion. Assert through the path the *player* takes.
+
+**5. Check the return value of the call your test is built on.** `testLoomKeystones` called
+`allocate('keystone_glass_echo')`; the node id is `keystone_glass`. It returned `false`, the
+whole `if (allocated)` body was unreachable, and the test closed on `ok(true, '…completed')`.
+
+**6. No disjunct escape hatches.** `!state.gameOver || m.nightsSurvived >= 3` passes for any
+run that merely did not end; so does `skillLevel >= beforeLevel || newLevel > 0`. If either
+half can carry the assertion alone, the assertion is the weaker half.
+
+**7. `ok(true, '…test completed')` is not a test.** It is the fossil left behind when the real
+assertions above it became unreachable.
+
+**8. Bound against what the phase can actually produce, not against a fixed number.** Phase 4
+steps a live, un-paused game whose rAF loop races the suite's own stepping; measured across
+three identical runs it survived 1, 4 and 6 nights. Any fixed lower bound there is a coin flip.
+
+**9. Every new data row needs a live consumer in the same commit.** This project's cardinal
+sin is a row or config knob that nothing reads. See the C4 entry in the ROADMAP for what
+fifteen registered effect hooks with seven consumers actually cost.
+
+### The shared-world hazards
+
+`regression.ts` tests all run against **one live world**, in order, and `ok()` **throws**.
+Both facts have bitten:
+
+- **Restore stubbed globals in `finally`, never inline.** Because `ok()` throws, an inline
+  restore leaks the stub into every later test the first time that assertion goes red. This
+  has applied to `Math.random`, `state.god`, `state.buildings` and `ctx.net.rollDamageMul`.
+- **A leaked `state.god = true` silently disarms every damage assertion after it.**
+  `damagePlayer` early-returns under god mode, so the later tests do not fail — they stop
+  measuring.
+- **Any new test that consumes `Math.random()` shifts the global stream for every test
+  downstream**, shaking latent flakes loose. Seen three times (vigor-starve, the Ironwake
+  dodge, the uniform-corridor Loom flake). A red test in a file you did not touch is usually
+  this, not a regression.
+- **Isolate what you are measuring from everything else that produces the same number.**
+  `combat.update()` also ticks the towers, so a "nothing burns" control measured 52 damage
+  from a tower built forty tests earlier. Ironwake's control cleared the sockets but not the
+  gear, so it measured two independent reflect sources and called it one.
+- **Assertion counts drift 1872–1874 run to run** from an RNG-dependent assertion loop. An
+  exact count is a weak regression signal; the test *names* are the strong one.
 
 ## Debugging & troubleshooting
 
