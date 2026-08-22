@@ -53,8 +53,10 @@ export class Minimap {
   setVisible(v: boolean) { this.attach(); this.cvs.style.display = v ? 'block' : 'none'; }
 
   /** `foes` is passed rather than read off a system so this stays a pure view:
-   *  it can be driven from a test, or from a replay, without a HordeSystem. */
-  draw(state: GameState, nowMs: number, foes: { x: number; y: number; def?: any }[] = []) {
+   *  it can be driven from a test, or from a replay, without a HordeSystem.
+   *  `sight` is the Scrying multiplier (N4.4): fast DNS widens the radar,
+   *  slow DNS narrows it. Default 1 = the authored radius, unchanged. */
+  draw(state: GameState, nowMs: number, foes: { x: number; y: number; def?: any }[] = [], sight = 1) {
     if (nowMs - this.lastT < 1000 / HZ) return;
     this.lastT = nowMs;
 
@@ -64,7 +66,7 @@ export class Minimap {
     g.clearRect(0, 0, C, C);
 
     const px = state.player.x, py = state.player.y;
-    const span = RADIUS_TILES * TILE;
+    const span = RADIUS_TILES * TILE * Math.max(0.5, Math.min(2, sight));
     const half = C / 2;
     const k = half / span;                // world px → map px
 

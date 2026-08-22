@@ -700,7 +700,7 @@ async function boot() {
     // A4: drawn after the fog so the radar is never dimmed by it — the point of
     // a radar is that it works when sight does not.
     minimap.setVisible(CFG.loot.minimap !== false && !ui.isOpen());
-    if (CFG.loot.minimap !== false) minimap.draw(state, performance.now(), hordes.foes);
+    if (CFG.loot.minimap !== false) minimap.draw(state, performance.now(), hordes.foes, net.getGameValue('scrying'));
 
     Sound.setMood(state.gameOver ? 'dead' : bossNear ? 'boss' : ph.isNight ? 'night' : 'day');
     ui.refresh();

@@ -116,6 +116,17 @@ const paths: LensTab = {
             { inspect: 'routes-resolver', quality: 'measured' })).join(''));
     }
 
+    // N4.4: Scrying — the ROADMAP promise since N1. DNS resolution is the
+    // radar's eye: the median DoH time is the number, the radar radius is the
+    // effect, and IPv6 detection rides the same answers.
+    const sight = net.getGameValue('scrying');
+    out += section('SCRYING',
+      row('DNS median', fmt(s.dnsMedianMs, 0, 'ms'), { inspect: 'scrying', quality: 'measured', color: '#f96' })
+      + row('Radar sight', fmt(sight, 2, '×'), { inspect: 'scrying', quality: 'derived', color: sight >= 1 ? '#7fd6a0' : '#f96' })
+      + (s.ipv6Live
+        ? row('IPv6', 'seen', { inspect: 'identity-ipv6', quality: 'measured' })
+        : row('IPv6', 'not yet seen', { inspect: 'identity-ipv6', quality: 'unavailable', why: 'no host with an AAAA record has been resolved yet' })));
+
     const probes = s.endpointProbes ?? [];
     const seen = new Set<string>();
     let shallow = '';

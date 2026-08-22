@@ -12,7 +12,7 @@ import {
   type NetworkSnapshot, type NetMapping, type NetGameMapping,
   type TraceHop, type BeaconEcho, type BeaconTarget,
   ACTION_ECHO_POOLS, ACTION_COOLDOWNS, allBeacons,
-  DOH_RESOLVERS, WIRE_BUDGET, jitteredGap,
+  DOH_RESOLVERS, WIRE_BUDGET, DNS_MIN_SAMPLES, jitteredGap, parseDohAnswer,
 } from '../data/network';
 import { biomeForConnection, biomeForProfile, BIOMES, type BiomeDef } from '../data/biomes';
 import { DeepWire } from './deepwire';
@@ -99,6 +99,12 @@ export class NetworkSystem {
   private resolverTurn = 0;
   /** Per-resolver latency samples — the resolver race. */
   resolverStats: Map<string, { n: number; total: number; best: number }> = new Map();
+  /** N4.4: every successful DoH resolution time (A/AAAA/PTR), ring-buffered.
+   *  The median is the "Scrying" number — fast resolution sharpens the radar. */
+  private dnsSamples: number[] = [];
+  /** N4.4: hosts already probed for AAAA. One extra query per host per run,
+   *  so IPv6 detection costs ~13 queries across a full session. */
+  private aaaaChecked: Set<string> = new Set();
   /** Same-origin control probe: full timing, zero third-party exposure. */
   baseline: { ms: number; dns: number; tcp: number; tls: number; ttfb: number; proto: string } | null = null;
   /** TLS version / key exchange / HTTP protocol, from Cloudflare trace. */
@@ -507,6 +513,11 @@ export class NetworkSystem {
       pulseMs: 0,
       fluxMs: 0,
       deepLive: false,
+      // N4.4: Scrying. ipv6Live is "not yet seen" until a host returns an AAAA
+      // address; dnsMedianMs sits at the neutral 50 ms the mapping table is
+      // authored against, so an unmeasured run reads exactly 1.0× sight.
+      ipv6Live: false,
+      dnsMedianMs: 50,
       traceChain: [],
       endpointProbes: [],
       // X1: new Lens fields (battery/heap refreshed by pollSensors)
@@ -634,6 +645,11 @@ export class NetworkSystem {
       detail: r.ip, ip: r.ip, ttl: r.ttl, resolver: r.resolver, ad: r.ad,
     });
     this.discoveredEndpoints.add(t.label);
+    // N4.4: first sighting of a host gets one AAAA query — the IPv6 detection
+    // costs ~13 extra DoH queries across a full session, and answers the
+    // question "does this network's resolver carry v6" without ever fetching
+    // the host itself.
+    if (!this.aaaaChecked.has(t.host)) void this.probeAAAA(t.host);
 
     const samples = this.echoSamples.get(t.host) ?? [];
     const jitterAtBirth = samples.length >= 2
@@ -651,11 +667,15 @@ export class NetworkSystem {
       `${t.label} → ${r.ip} in ${r.ms.toFixed(0)}ms via ${r.resolver} (ttl ${r.ttl}${r.ad ? ' · dnssec' : ''})${wasWarm ? '' : ' — route discovered'}`);
   }
 
-  /** One DoH query. Alternates resolvers so both get raced over a session. */
-  private async resolveHost(host: string, type = 'A'): Promise<{ ms: number; ip: string; ttl: number; ad: boolean; resolver: string } | null> {
+  /** One DoH query. Alternates resolvers so both get raced over a session.
+   *
+   *  `gateKey` lets the paired AAAA probe of the same host take its own spacing
+   *  slot: the host-spacing gate is about not hammering one route, and an
+   *  A+AAAA pair is one logical resolution, not two violations. */
+  private async resolveHost(host: string, type = 'A', gateKey?: string): Promise<{ ms: number; ip: string; ttl: number; ad: boolean; resolver: string; v6: boolean } | null> {
     const res = DOH_RESOLVERS[this.resolverTurn++ % DOH_RESOLVERS.length];
     const rHost = new URL(res.url).hostname;
-    if (!this.gate.take(host, WIRE_BUDGET.hostSpacingSec)) return null;
+    if (!this.gate.take(gateKey ?? host, WIRE_BUDGET.hostSpacingSec)) return null;
     const ctl = new AbortController();
     const tm = setTimeout(() => ctl.abort(), 5000);
     const t0 = performance.now();
@@ -664,25 +684,59 @@ export class NetworkSystem {
         signal: ctl.signal,
         headers: res.accept ? { Accept: res.accept } : undefined,
       });
-      if (!resp.ok) { this.gate.penalise(rHost, resp); return { ms: -1, ip: '', ttl: 0, ad: false, resolver: res.label }; }
+      if (!resp.ok) { this.gate.penalise(rHost, resp); return { ms: -1, ip: '', ttl: 0, ad: false, resolver: res.label, v6: false }; }
       const data = await resp.json();
       const ms = performance.now() - t0;
-      const ans = (data?.Answer ?? []).filter((a: any) => a.type === 1 || a.type === 28 || a.type === 12);
+      this.recordDnsSample(ms);
+      const a = parseDohAnswer(data);
       const st = this.resolverStats.get(res.label) ?? { n: 0, total: 0, best: Infinity };
       st.n++; st.total += ms; st.best = Math.min(st.best, ms);
       this.resolverStats.set(res.label, st);
-      return {
-        ms, resolver: res.label,
-        ip: ans[0]?.data ?? '',
-        ttl: ans[0]?.TTL ?? 0,
-        ad: !!data?.AD,
-      };
+      return { ms, resolver: res.label, ip: a.ip, ttl: a.ttl, ad: a.ad, v6: a.v6 };
     } catch {
       this.gate.penalise(rHost, null);
-      return { ms: -1, ip: '', ttl: 0, ad: false, resolver: res.label };
+      return { ms: -1, ip: '', ttl: 0, ad: false, resolver: res.label, v6: false };
     } finally {
       clearTimeout(tm);
       this.gate.release();
+    }
+  }
+
+  /** N4.4: fold a successful resolution time into the running DNS median.
+   *  The median — not the mean — is the Scrying number, because one slow
+   *  resolver walking the answer set should not permanently dim the radar. */
+  private recordDnsSample(ms: number) {
+    if (!(ms > 0)) return;
+    this.dnsSamples.push(ms);
+    if (this.dnsSamples.length > 40) this.dnsSamples.shift();
+    // A single cold-cache resolution measures one cache miss, not this
+    // network. Publishing it would snap the radar to a clamp on the first
+    // probe and drift it back over the next minute, which a player reads as a
+    // bug rather than as weather. Below the floor the neutral value stands —
+    // the same rule pillar 5 applies to a probe that never answers at all.
+    if (this.dnsSamples.length < DNS_MIN_SAMPLES) return;
+    const sorted = [...this.dnsSamples].sort((a, b) => a - b);
+    const mid = sorted.length >> 1;
+    this.snap.dnsMedianMs = sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+
+  /** N4.4: probe a host for an AAAA record, once per host per run. A single
+   *  IPv6 answer is enough to mark the session's resolver as carrying v6. */
+  private async probeAAAA(host: string) {
+    // Marked before the first await, so two beacons landing in one tick cannot
+    // both fire the query.
+    this.aaaaChecked.add(host);
+    const r = await this.resolveHost(host, 'AAAA', 'aaaa:' + host);
+    // `null` means the rate gate refused — no request left the machine, so we
+    // have not asked yet and must not pretend we have. Unmark, and the next
+    // sighting of this host tries again. A resolver that answered and said
+    // nothing useful (`ms === -1`) HAS been asked, and stays marked: the honest
+    // line is between "never asked" and "asked and got nothing", not between
+    // success and failure.
+    if (!r) { this.aaaaChecked.delete(host); return; }
+    if (r.v6) {
+      this.snap.ipv6Live = true;
+      this.netLog('net-ep', `IPv6: ${host} resolves to ${r.ip}`);
     }
   }
 
