@@ -297,10 +297,59 @@ it does not stay as *the* axis.
 | **Purity** | *inverse* gear score on a win — the lowest-geared kill | the category speedrunners actually love |
 | **Pact** | the covenant held, weighted by nights (N4.5/A7, already built) | difficulty class |
 | **Legacy** | today's composite | the all-rounder |
+| **Adjusted** | Legacy divided by the run's **assistance index** — how much the wire helped | the only axis that compares two different networks (SR9/SR10) |
 
 The pact axis is the quiet win here: **the covenant system is already a difficulty selector with
 five tiers and a raise-only rule, which is exactly the shape a speedrun leaderboard wants.** It
 was built for a data budget and it turns out to be a category system.
+
+### SR9 + SR10 — The board, and what the wire did to it
+
+> **The problem this fixes, stated plainly: the leaderboard currently ranks your ISP.**
+>
+> `NET_GAME_MAP` has roughly thirty-two live targets, and a large share of them move the score
+> directly — `simSpeed` (how fast the world runs), `goldRate`, `xpRate`, `fortune` (drop
+> rarity), `enemyScale`, `damage`, `moveSpeed`, `gatherSpeed`, `mercy` (dodge forgiveness),
+> `homeward` (walk home after a death), `dropMemory`, `wardedGate` (wall HP), `swiftRoad`
+> (cooldowns), `resourceYield`, `regenRate`, `scrying`. That is the entire premise of the game
+> working exactly as designed — **and it means two runs on two networks were never comparable.**
+>
+> A board that records only the outcome is a board that quietly credits a good connection to the
+> player holding it. Recording the wire is what makes the board legible, and eventually
+> normalisable.
+
+**And there is a second thing it creates, which is worth more than the first.** Pillar 3 forbids
+persistence, so the Chronicle — N4.3's tiered store of network readings — **dies at the end of
+every session**. It has never been able to answer "is my connection worse this week than last".
+The leaderboard is the one structure in this game that legitimately survives a run. Putting the
+wire on it means **the leaderboard becomes the game's first long-term network history**, at
+one-sample-per-run granularity, entirely inside the existing pillar-3 carve-out. That is a
+capability the Deep Wire batch could not give itself.
+
+Three layers go on each record, and they answer different questions:
+
+| layer | what it is | the question it answers |
+|---|---|---|
+| **Conditions** | a `Bucket`-shaped digest per Chronicle series — `min / med / p95 / max / n / quality` | what was the wire actually doing |
+| **Consequences** | the `getGameValue()` outputs, time-weighted over the run | how much did the wire help or hurt *this score* |
+| **Comparison** | this run against your own rolling baseline, per metric | was this a good wire *for you* |
+
+**Consequences matter more than conditions and are cheaper to store.** "RTT p50 was 34 ms" is
+interesting; "`simSpeed` averaged ×1.09 for the whole run" is *the thing that changed the
+result*. Sixteen scalars beat a wall of sensors, and they are already the honest summary because
+every mapping row is clamped to a declared band.
+
+**The wire-adjusted score.** Once consequences are recorded, an **assistance index** falls out —
+a weighted product of the score-affecting mapping outputs against their neutral values — and
+`adjustedLegacy = legacyScore / assistance`. It will not be perfect and the plan does not pretend
+otherwise. It is recorded now for the same reason the seed and input log are: *the data has to
+exist before the analysis can*, and retrofitting it into a shipped record format costs a
+migration or a permanently incomparable back-catalogue.
+
+**Split across two phases, deliberately, and the split is not where it looks.** SR9 lands the
+**whole v3 record including every wire field**, even the ones nothing reads yet. SR10 is the
+comparison and presentation layer on top. One format change, one migration — adding fields to a
+record format twice means doing the migration twice, and the second one has real user data in it.
 
 ---
 
@@ -440,6 +489,9 @@ which is the colour grammar every Diablo game is built on.
 | **A wall most runs lose to is a wall most players quit at** | Q2 chose a wall deliberately, and the failure mode is a player who never sees the finale land a hit | the four scored outcomes are the mitigation, not a consolation: a losing run still produces a damage number and a survival time to beat. Ship SR3 instrumented and watch the *second* run, not the first |
 | **Keyboard-only strands existing pointer code** | `BuildSystem` takes screen coordinates and `main.ts`'s pointer handlers are the only caller | SR0 adds a tile-space entry point rather than rewriting the system, and the pointer path is deleted in the same commit so no dead branch survives |
 | **Six leaderboard axes is no leaderboard** | categories nobody understands are categories nobody plays | ship three (Time, Purity, Legacy), add the rest only if they are asked for |
+| **A record format that leaks identity** | SR9's certificate and any later global board SHIP these records, and the wire readings include IP, PTR, colo, timezone and VPN evidence | an explicit allowlist enforced by a test, not a comment — conditions are recorded, identity never is |
+| **The board silently stops recording** | `saveToLeaderboard()` ends in `catch { /* quota exceeded — silently drop */ }`, which is survivable at 400 bytes a record and a hazard with a wire block | budget the block under ~800 bytes, degrade by stripping `wire` from old records rather than dropping the new one, and raise a toast — silent data loss is tolerated nowhere else in this codebase |
+| **Assistance indexing is pseudo-science** | "your wire helped you 9%" is a confident number over an unvalidated formula | version the formula on the record so an old card can be RECOMPUTED, show `n` on every comparison, and refuse to render a baseline under five runs |
 | **Pillar 1 pressure** | the temptation, once lighting exists, to "just add one texture" | the rule is unconditional and has survived two batches. Normal maps are generated. Nothing is fetched |
 
 ---
@@ -460,7 +512,8 @@ data, SR4–SR8 touch the renderer, and they do not collide.
 | **SR1 — Three Acts** | `CFG.sr.actCurve`, act-driven density and elite gating, the act named in the HUD, instrumentation | SR0 |
 | **SR3 — The Reckoning** | the summons trigger, the boss as a wall, four outcomes, the certificate with axes, Gear Score | SR1 |
 | **SR2 — The Quickening** | the level-up draft over Loom nodes, weapon evolution over A5 weaves, elemental affixes, pickup radius | SR1 |
-| **SR9 — The board** | category comparators over the board that **already exists** (`nw.leaderboard`, `saveToLeaderboard`, `migrate`), plus the seed + input log + checksum that makes a global board possible later | SR3 |
+| **SR9 — The board** | category comparators over the board that **already exists** (`nw.leaderboard`, `saveToLeaderboard`, `migrate`); the v3 record in FULL — seed + input log + checksum, and the whole `wire` block even where nothing reads it yet; the privacy allowlist and the quota fix | SR3 |
+| **SR10 — Wire history** | the comparison layer: per-metric baselines from your own past records, the assistance index, both vocabularies on the scorecard | SR9 |
 
 **First: SR0.** It is the smallest phase in the batch, it is mostly deletion, and every phase
 after it assumes a control model. Building SR1's acts against a mouse and then removing the
@@ -505,6 +558,11 @@ gets defended or compressed on what the instrument says, not on what either of u
 **M3 — how many runs does it take to beat the wall?** Q2 chose a boss most runs lose to. The
 failure mode is a player who quits before the finale ever lands. Watch the *second* run and the
 fifth, not the first.
+
+**M5 — does the assistance index mean anything?** SR10 ships a formula that is probably wrong.
+The test is whether `adjustedLegacy` actually compresses the spread between runs on good and
+bad wires, measured across a real history rather than argued about. `assist.formula` is
+versioned on every record precisely so the answer can be applied retroactively.
 
 **M4 — is the draft narrower than the Loom?** Three cards from fifteen nodes is a much tighter
 tree than fifteen nodes browsed, and B3.b resized the Loom specifically so that "one keystone is
@@ -932,6 +990,11 @@ found, wore and lost to a death scatter still counts. That precedent is already 
 `bestHit`, `bestBurst10s`, `bossDamageDealt` — all optional, so every v2 card stays valid, the
 same carve-out `elitesFelled` / `pact` / `trophy` already took. `migrate()` handles it.
 
+**v3 is cut once.** The seed/input-log fields (§2) and the whole `wire` block
+([SR10](#sr10--the-wire-record-and-its-history)) land in the *same* format bump, even where
+nothing reads them yet. Bumping a record format twice means running a migration twice, and the
+second one has real user data in it.
+
 > **The cost Q2's verdict carries.** If most runs lose, the scorecard cannot only reward winning.
 > `bossDamageDealt` and `reckoningSec` are not decoration — they are what makes a losing run a
 > run with a number to beat. A board whose only category is "did you kill it" has three rows.
@@ -1011,6 +1074,13 @@ export const CATEGORIES = [
 
 **Ship three, not six** (§6): Time, Purity, Legacy. Add the rest when someone asks.
 
+**SR9 lands the whole v3 format, including the parts SR10 reads.** The `wire` block is specced
+in [SR10](#sr10--the-wire-record-and-its-history); it is *written* here. Recording a field
+nothing consumes is normally this codebase's cardinal sin — the exception is bought explicitly:
+a record format is the one structure where the data must exist **before** the analysis, because
+the back-catalogue cannot be re-recorded later. The dormant-row rule is suspended for exactly
+these fields and for exactly that reason, and §11's test list pins that they are all *written*.
+
 **The verification insurance (§2), and it must land in the same commit as v3.** Every record
 gains:
 
@@ -1035,3 +1105,174 @@ of them.
 `engineVersion` is the honest limit: a replay is only valid against the rules it ran under, and
 `window.NW.CFG` retunes balance at runtime. A verifier must pin the config too, or record that
 it was touched — the scorecard's existing `legit` flag is the precedent for that admission.
+
+---
+
+### SR10 — The wire record and its history
+
+Implementation for the design in [§3](#sr9--sr10--the-board-and-what-the-wire-did-to-it). SR9
+lands the **format**; SR10 lands the **reading of it**.
+
+#### The record shape
+
+`RunScorecard` v3 gains one optional block. Optional, like `elitesFelled` / `pact` / `trophy`
+before it, so every v2 card stays valid and `migrate()` needs no new branch to *load* — only to
+*label* a card that has no wire data as "not recorded".
+
+```ts
+/** SR9/SR10 — what the wire was doing while this run happened.
+ *  Conditions, consequences, comparison. Never identity — see the allowlist. */
+export interface WireRecord {
+  v: 1;
+  /** CONDITIONS — one digest per Chronicle series, reusing the Bucket shape the
+   *  store already produces: min/med/p95/max/n and the honesty tag. */
+  series: Record<string, { min: number; med: number; p95: number; max: number; n: number; q: Quality }>;
+  /** CONSEQUENCES — time-weighted mean of each score-affecting mapping output
+   *  over the run. Sixteen scalars, each already clamped to a declared band. */
+  values: Record<string, number>;
+  /** One-shot facts that do not vary across a run. */
+  shape: {
+    effectiveType: string;      // '4g' | '3g' | …
+    saveData: boolean;
+    deepLive: boolean;          // did the kernel-level wire ever report
+    natClass: string;           // 'cone' | 'symmetric' | … — never the address
+    udpV6: boolean;
+    protoDominant: string;      // 'h3' | 'h2' | 'http/1.1'
+    pact: string;               // already on the card; mirrored here for self-containment
+    soundings: number;          // N4.5 — how many were spent
+    downMbps?: number;          // only if a sounding actually measured it
+    upMbps?: number;
+    bloatGrade?: string;
+  };
+  /** VESSEL — the machine, because it moves the score too (jank → mercy). */
+  vessel: {
+    gpuTier: 'low' | 'mid' | 'high' | 'unknown';   // a TIER, never the GPU string
+    cores: number;
+    pressureMean: number;
+    jankP95: number;
+    reducedMotion: boolean;
+  };
+  /** ASSISTANCE — the single derived number, and the version of the formula
+   *  that produced it, because the formula will be wrong at first. */
+  assist: { index: number; formula: number };
+}
+```
+
+`assist.formula` is not decoration. The first version of the index will be wrong, and a stored
+number whose derivation is unknown is a number nobody can fix later — versioning it means an
+old record can be **recomputed** from `values` rather than discarded.
+
+#### Where each field already comes from
+
+Nothing here needs new measurement. Every one of these is a reading the game already takes.
+
+| block | source | already shipped in |
+|---|---|---|
+| `series` | `ChronicleStore.get(key)` → `Series.stats()` and the existing `Bucket` roll-up over the whole run | N4.3 |
+| `values` | `net.getGameValue(target)` for each of `NET_GAME_MAP`'s score-affecting targets | N1 → N4.7b |
+| `shape.natClass`, `udpV6` | `net.snap.natClass`, `net.snap.udpV6` | N4.7b |
+| `shape.protoDominant` | `net.protocolReality().dominant` | N4.7 |
+| `shape.downMbps`, `bloatGrade` | `sounding.last` | N4.5 |
+| `vessel.*` | `net.vessel.reading` — `pressureFrac`, `jankMs`, `cores`, `reducedMotion` | N4.6 |
+| `shape.pact`, `soundings` | `state.covenant`, `sounding.count` | N4.5/A7 |
+
+#### Sampling the consequences
+
+A mapping output read once at death is a lie — `simSpeed` swings across a run. It needs a
+**time-weighted mean**, and the cheap place to take it is the sensor poll that already runs at
+0.1 Hz in `NetworkSystem`:
+
+```ts
+// in ScoreboardSystem — accumulate, never store a series
+private wireAcc: Record<string, { sum: number; sec: number }> = {};
+sampleWire(dtSec: number) {
+  for (const t of SCORED_TARGETS) {
+    const a = (this.wireAcc[t] ??= { sum: 0, sec: 0 });
+    a.sum += this.ctx.net.getGameValue(t) * dtSec;
+    a.sec += dtSec;
+  }
+}
+```
+
+`SCORED_TARGETS` is a **data row, not a guess** — the explicit list of mapping targets that move
+the score, kept beside `CFG.legacy.weights` so the two are edited together. A target that starts
+affecting the score and is not added here silently stops being accounted for, which is the same
+dormant-row failure in a new place, so **the suite asserts every `SCORED_TARGETS` entry resolves
+to a real `NET_GAME_MAP` target**.
+
+#### The comparison layer (SR10)
+
+`loadLeaderboard()` already returns every past card. With `wire` on them, the baseline is a
+median over the player's own history — no server, no cohort, no statistics anybody has to trust:
+
+```ts
+export interface WireComparison {
+  metric: string;
+  now: number;
+  baselineMed: number;     // median across the last N records that HAVE wire data
+  deltaPct: number;
+  percentile: number;      // where this run sits in your own history, 0..100
+  n: number;               // how many records the baseline rests on — shown, always
+}
+export function compareWire(card: RunScorecard, history: RunScorecard[]): WireComparison[]
+```
+
+**`n` is displayed, always.** A "23% better than usual" computed from two prior runs is noise
+wearing a percentage sign, and the Lens doctrine is that a reading states what it rests on.
+Below `CFG.sr.wireBaselineMinRuns` (start at 5) the comparison renders as *"not enough history
+yet — N of 5 runs"* rather than as a number.
+
+**Presentation obeys pillar 7.** The scorecard is a bridge surface — it already prints
+`dominantRealm` (fiction) next to `peakRtt` (instrument) — so the wire block gets **both
+vocabularies**: the Veil says *"the wire ran quick for you tonight"*, the Lens panel says
+`pulse med 34 ms · p95 71 ms · ×1.09 simSpeed · +22% vs your median (n=14)`. Same row, two
+readings, exactly as the covenants do it.
+
+#### Two rulings this feature forces
+
+**1. Privacy — the record carries conditions, never identity.** This matters because SR9's
+certificate and any future global board would *ship* these records off the machine, and several
+of the readings involved are identifying. An explicit allowlist, and a test that fails on
+anything outside it:
+
+| never recorded | why |
+|---|---|
+| `publicIp`, `srflxIp`, `srflxIp6` | it is the player's address |
+| `isp` / PTR / reverse-DNS | names the subscriber's provider, often the subscriber |
+| `colo`, `country`, `timeZone`, coordinates | location. A city-scale CDN edge on a shareable certificate is still a location disclosure |
+| `maskEvidence` bands and signals | a shareable artefact asserting "strong evidence you are on a VPN" is an accusation attached to a name |
+| the unmasked GPU string, `enumerateDevices` counts | fingerprinting surface. `gpuTier` carries the useful part |
+
+The N4.7 masking panel was built on the rule that *evidence never leaves the machine*. A record
+format that quietly exports it would undo that, so the allowlist is enforced by a test rather
+than by a comment.
+
+**2. Storage — the quota `catch` must stop being silent.** `saveToLeaderboard()` currently ends
+in `catch { /* quota exceeded — silently drop */ }`. That is survivable when a record is ~400
+bytes; with a wire block it is a design hazard, because the failure mode is **the board quietly
+stops recording and nobody finds out for a month**. Three changes:
+
+- **Budget it.** `MAX_ENTRIES` is 50; the wire block must stay under ~800 bytes serialised, so
+  the whole board stays under ~60 KB against a ~5 MB quota. Numbers are rounded to two decimals
+  on write — full float precision on a p95 is noise stored at eight bytes a digit.
+- **Degrade, do not drop.** On quota failure, retry once having stripped `wire` from the oldest
+  half of the board. Losing history is better than losing the run that just finished.
+- **Say so.** A failed write raises a toast and a Chronicle line. Silent data loss is the one
+  thing this codebase's honesty doctrine has never tolerated anywhere else.
+
+#### What SR10 makes possible later
+
+The same argument as the seed and input log, and it is worth stating so nobody re-litigates it:
+**record now, analyse later.** With `values` and `assist` on every card, a future global board
+can rank on `adjustedLegacy` instead of raw score, and a cohort baseline can replace the
+personal one without changing the record format again. Without them, every card written before
+the idea occurred to anybody is permanently incomparable.
+
+#### Tests
+
+Every `SCORED_TARGETS` entry resolves to a live `NET_GAME_MAP` target; the time-weighted mean of
+a constant is that constant; a v2 card loads and reports its wire as *not recorded* rather than
+as zeroes (a zero would read as "the wire was terrible"); `compareWire` returns *insufficient
+history* below the minimum rather than a confident number; the allowlist test fails if any
+forbidden key appears anywhere in a serialised record; and a forced quota failure degrades the
+board rather than dropping the run.
