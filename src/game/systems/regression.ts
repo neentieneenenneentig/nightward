@@ -5369,6 +5369,245 @@ async function testDeepWireMappings(nw: any) {
   ok(net.get('flowBest') > 0, `flowBest falls back to the estimate (${net.get('flowBest')})`);
 }
 
+async function testScryingMappings(nw: any) {
+  const net = nw.sys.net;
+  const { NET_METRICS, NET_GAME_MAP } = await import('../data/network');
+
+  // The metric must exist and resolve — a typo'd key makes get() return 0,
+  // which reads as an impossibly fast (and wrong) DNS measurement.
+  const row = NET_METRICS.find((m: any) => m.key === 'dnsMs');
+  ok(row !== undefined, "NET_METRICS carries 'dnsMs'");
+  ok(Number.isFinite(net.get('dnsMs')), `net.get('dnsMs') is finite (${net.get('dnsMs')})`);
+
+  const gm = NET_GAME_MAP.find((m: any) => m.target === 'scrying');
+  ok(gm !== undefined, "NET_GAME_MAP carries target 'scrying'");
+
+  // Neutral 50 ms is the authored fallback, so sight sits at exactly 1.0× — an
+  // unmeasured run must not move the radar (pillar 5: fallback is the neutral
+  // value). Forcing the value here also keeps the assertion independent of
+  // whoever's network is running the suite.
+  const saved = net.snap.dnsMedianMs;
+  try {
+    net.snap.dnsMedianMs = 50;
+    const neutral = net.getGameValue('scrying');
+    ok(Math.abs(neutral - 1.0) < 1e-9, `50 ms DNS → sight 1.0× (got ${neutral})`);
+
+    // Fast DNS = more map revealed; slow DNS = less. Monotone, both inside band.
+    net.snap.dnsMedianMs = 10;
+    const fast = net.getGameValue('scrying');
+    net.snap.dnsMedianMs = 150;
+    const slow = net.getGameValue('scrying');
+    ok(fast > 1.0, `fast DNS widens sight (${fast.toFixed(3)})`);
+    ok(slow < 1.0, `slow DNS narrows sight (${slow.toFixed(3)})`);
+    ok(fast > slow, 'and the transform is monotone');
+    ok(fast <= gm.max && slow >= gm.min, `sight stays inside [${gm.min}, ${gm.max}]`);
+  } finally {
+    net.snap.dnsMedianMs = saved;
+  }
+}
+
+async function testScryingDohParser(nw: any) {
+  const { parseDohAnswer } = await import('../data/network');
+  const net = nw.sys.net;
+
+  // Fresh snapshot: IPv6 is "not yet seen", never "absent" — the field is a
+  // latched detection, not a verdict about the network.
+  ok(net.snap.ipv6Live === false, 'a fresh run has not seen IPv6 yet');
+  ok(Number.isFinite(net.snap.dnsMedianMs), `dnsMedianMs is finite (${net.snap.dnsMedianMs})`);
+
+  // The real shapes Cloudflare/Google return.
+  const a = parseDohAnswer({ AD: true, Answer: [{ name: 'x', type: 1, TTL: 300, data: '104.17.250.6' }] });
+  eq(a.ip, '104.17.250.6', 'an A answer reads the address');
+  eq(a.ttl, 300, 'TTL reads through');
+  eq(a.ad, true, 'the DNSSEC AD flag reads through');
+  eq(a.v6, false, 'an A answer is not IPv6');
+
+  const aaaa = parseDohAnswer({ Answer: [{ name: 'x', type: 28, TTL: 120, data: '2606:4700::6810:fa06' }] });
+  eq(aaaa.v6, true, 'an AAAA answer is recognised as IPv6');
+  eq(aaaa.ip, '2606:4700::6810:fa06', 'and the IPv6 address comes back');
+
+  // Untrusted third-party input: none of these may throw or produce NaN, and
+  // the address must stay bounded — it reaches innerHTML in the Lens.
+  const nasty: any[] = [
+    null, undefined, {}, { Answer: [] }, { Answer: 'not-an-array' },
+    { Answer: [{ type: 1, data: 42 }] }, { Answer: [{ type: 1, TTL: 'abc' }] },
+    { Answer: [{ type: 99, data: 'junk' }] }, { AD: 'yes', Answer: [{ type: 28, data: 'A'.repeat(500) }] },
+  ];
+  let clean = 0;
+  for (const input of nasty) {
+    const r = parseDohAnswer(input);
+    ok(Number.isFinite(r.ttl), 'malformed DoH yields a finite TTL');
+    ok(typeof r.ip === 'string', 'and a string address');
+    ok(r.ip.length <= 64, `and a bounded address (${r.ip.length} chars)`);
+    ok(typeof r.v6 === 'boolean' && typeof r.ad === 'boolean', 'and boolean flags');
+    clean++;
+  }
+  eq(clean, nasty.length, `all ${nasty.length} adversarial DoH responses handled without throwing`);
+}
+
+
+// N4.4's first two tests pin the mapping table and the parser — both real, and
+// both entirely upstream of the game. Neither can tell you whether the radar
+// ever moved. That is this file's oldest failure mode (WORKFLOW rule 3: driving
+// a handler proves the handler works, never that the game calls it), so the
+// radar gets measured in pixels, off the live HUD canvas, at three sight
+// values, against the geometry the design authored.
+async function testScryingRadar(nw: any) {
+  const { state } = nw;
+  const { TILE } = await import('../world/worldgen');
+  const map = document.getElementById('nw-map') as HTMLCanvasElement | null;
+  ok(!!map && !!nw.minimap, 'the radar canvas and the Minimap are both reachable');
+  if (!map || !nw.minimap) return;
+
+  // The radar draws buildings, drops and world bosses as well as foes, and a
+  // world boss is very nearly the same red as a foe. Clearing them makes the
+  // one red mark on the disc unambiguously OUR foe. All three are restored in
+  // the finally: this file's tests share one live world.
+  const savedDrops = state.drops, savedBuild = state.buildings, savedBosses = state.worldBosses;
+  // `draw()` throttles on an internal clock, so a measurement has to hand it a
+  // far-future timestamp to be sure it ran. That leaves the clock in the
+  // future, which is why this test — and testHudSurfaces, which has been doing
+  // it since A4 — must put it back. Without the reset, a `?test` run freezes
+  // the player's radar for the ~33 minutes the last stamp bought.
+  const RADIUS_TILES = 58;   // minimap.ts's authored disc, in tiles
+
+  const centre = map.width / 2;
+  /** Distance in LOGICAL px from the disc centre to the foe mark, or -1. */
+  const markRadius = (sight: number, stamp: number): number => {
+    nw.minimap.draw(state, stamp, [{ x: state.player.x + 40 * TILE, y: state.player.y }], sight);
+    const g = map.getContext('2d')!;
+    const d = g.getImageData(0, 0, map.width, map.height).data;
+    let sx = 0, sy = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], gg = d[i + 1], b = d[i + 2], a = d[i + 3];
+      // The foe mark is the only strongly-red thing left on the disc: the rim
+      // is (147,121,74) and the player pip is near-white, so "red, and much
+      // redder than it is green or blue" selects it and nothing else.
+      if (a > 40 && r > 150 && r > gg + 60 && r > b + 60) {
+        const px = (i / 4) % map.width, py = Math.floor((i / 4) / map.width);
+        sx += px; sy += py; n++;
+      }
+    }
+    if (!n) return -1;
+    return Math.hypot(sx / n - centre, sy / n - centre) / 2;   // backing px → logical
+  };
+
+  try {
+    state.drops = []; state.buildings = []; state.worldBosses = [];
+
+    const neutral = markRadius(1.0, performance.now() + 1e6);
+    ok(neutral > 0, `a foe 40 tiles out lands on the radar (${neutral.toFixed(1)}px from centre)`);
+
+    // State the claim in the design's units, not the code's: at neutral sight a
+    // 58-tile disc drawn into a 124px circle must put a 40-tile foe at
+    // 40/58 of the way out, i.e. ~42.8px. An assertion that recomputed
+    // `span` from RADIUS_TILES would pass no matter how wrong the render is.
+    const expected = (40 / RADIUS_TILES) * 62;
+    ok(Math.abs(neutral - expected) < 3,
+      `and it lands where a ${RADIUS_TILES}-tile disc says it should (${neutral.toFixed(1)}px, expected ~${expected.toFixed(1)}px)`);
+
+    const wide = markRadius(1.5, performance.now() + 2e6);
+    const narrow = markRadius(0.75, performance.now() + 3e6);
+    ok(wide > 0 && narrow > 0, `the foe is still on the disc at both extremes (${wide.toFixed(1)}px / ${narrow.toFixed(1)}px)`);
+
+    // Fast DNS = MORE world revealed = the same foe sits CLOSER to the centre,
+    // because more of the map has been folded into the same disc. This is the
+    // assertion the whole milestone rests on, and the one that would have
+    // caught a sight value that never reached the render at all.
+    ok(wide < neutral, `sharp Scrying widens the radar (${wide.toFixed(1)} < ${neutral.toFixed(1)})`);
+    ok(narrow > neutral, `dim Scrying narrows it (${narrow.toFixed(1)} > ${neutral.toFixed(1)})`);
+    ok(narrow > wide * 1.6, `and the two extremes are a real spread, not rounding (${(narrow / wide).toFixed(2)}×)`);
+
+    // CONTROL: the measurement itself is stable. Without this, three different
+    // numbers could be three different framings of noise.
+    const again = markRadius(1.0, performance.now() + 4e6);
+    ok(Math.abs(again - neutral) < 0.75,
+      `CONTROL: the same sight measures the same distance twice (${neutral.toFixed(1)} vs ${again.toFixed(1)})`);
+  } finally {
+    state.drops = savedDrops; state.buildings = savedBuild; state.worldBosses = savedBosses;
+    nw.minimap.lastT = -999;
+  }
+}
+
+// The three defects the first pass shipped. Each is a matched pair, because
+// each one is a claim about a boundary — asked vs never asked, measured vs
+// not yet measured — and a boundary needs both sides to mean anything.
+async function testScryingProbeDiscipline(nw: any) {
+  const net = nw.sys.net;
+  const { DNS_MIN_SAMPLES, DOH_READ_TYPES, parseDohAnswer } = await import('../data/network');
+
+  // ---- 1. every record type the game ASKS for must be a type it can READ ----
+  //
+  // `resolvePtr()` has always queried PTR (type 12). The extracted parser
+  // matched only 1 and 28, so the Vessel's ISP row could never fill again —
+  // and the suite stayed green, because the parser was only ever fed the types
+  // it already handled. Walking the table means the next dropped type fails
+  // here instead of going quiet in the HUD.
+  const sample: Record<number, string> = { 1: '104.17.250.6', 12: 'gateway.example.net.', 28: '2606:4700::6810:fa06' };
+  for (const key of Object.keys(DOH_READ_TYPES)) {
+    const t = Number(key);
+    const got = parseDohAnswer({ Answer: [{ name: 'x', type: t, TTL: 60, data: sample[t] }] });
+    eq(got.ip, sample[t], `a ${DOH_READ_TYPES[t]} (type ${t}) answer reads through the parser`);
+  }
+  eq(parseDohAnswer({ Answer: [{ type: 12, TTL: 60, data: 'host.isp.example.' }] }).v6, false,
+    'a PTR answer is not mistaken for IPv6');
+  // NEGATIVE CONTROL: a type the game does not read is still ignored, so the
+  // fix above widened the set rather than opening it.
+  eq(parseDohAnswer({ Answer: [{ type: 15, TTL: 60, data: 'mail.example.' }] }).ip, '',
+    'CONTROL: an MX answer the game never asks for is still ignored');
+
+  // ---- 2. the Scrying number holds neutral until it is actually measured ----
+  const savedSamples = [...(net.dnsSamples ?? [])];
+  const savedMedian = net.snap.dnsMedianMs;
+  try {
+    net.dnsSamples = [];
+    net.snap.dnsMedianMs = 50;
+    for (let i = 1; i < DNS_MIN_SAMPLES; i++) {
+      net.recordDnsSample(400);
+      eq(net.snap.dnsMedianMs, 50, `${i} sample(s) is not a measurement — Scrying holds neutral`);
+    }
+    // POSITIVE CONTROL: the floor is a floor, not a mute. One more lands it.
+    net.recordDnsSample(400);
+    ok(net.snap.dnsMedianMs > 50,
+      `the ${DNS_MIN_SAMPLES}th sample publishes the median (${net.snap.dnsMedianMs}ms)`);
+    ok(net.getGameValue('scrying') < 1.0, 'and a slow resolver narrows the radar');
+  } finally {
+    net.dnsSamples = savedSamples;
+    net.snap.dnsMedianMs = savedMedian;
+  }
+
+  // ---- 3. a host the gate refused has NOT been asked ----
+  //
+  // `ipv6Live: false` documents itself as "not yet seen". That is only honest
+  // if a host no request was ever made for gets asked again.
+  const savedResolve = net.resolveHost;
+  const savedChecked = new Set(net.aaaaChecked);
+  const savedV6 = net.snap.ipv6Live;
+  try {
+    net.aaaaChecked = new Set();
+    net.snap.ipv6Live = false;
+
+    net.resolveHost = async () => null;                       // the gate refused
+    await net.probeAAAA('denied.example');
+    ok(!net.aaaaChecked.has('denied.example'),
+      'a host the rate gate refused is left unmarked, so the next sighting retries');
+    eq(net.snap.ipv6Live, false, 'and nothing was learned about IPv6 from a request never sent');
+
+    net.resolveHost = async () => ({ ms: -1, ip: '', ttl: 0, ad: false, resolver: 'x', v6: false });
+    await net.probeAAAA('answered.example');                  // asked, got nothing
+    ok(net.aaaaChecked.has('answered.example'),
+      'CONTROL: a host that WAS asked stays marked even though the answer was empty');
+
+    net.resolveHost = async () => ({ ms: 12, ip: '2606:4700::1', ttl: 60, ad: false, resolver: 'x', v6: true });
+    await net.probeAAAA('v6.example');
+    eq(net.snap.ipv6Live, true, 'and one AAAA answer latches IPv6 for the session');
+  } finally {
+    net.resolveHost = savedResolve;
+    net.aaaaChecked = savedChecked;
+    net.snap.ipv6Live = savedV6;
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // N4.2 — The Lens side cart, and the Chronicle behind it
@@ -5702,6 +5941,11 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Cairn - opens on the Hallowed band, and wakes what it buried', fn: testCairnPayout },
   { name: 'Wardstone - the blessing reaches the same sites an affix does', fn: testWardstoneBoons },
   { name: 'Hoarder - it runs, it never bites, and it can get away', fn: testHoarderChase },
+  // ---- N4.4: Scrying ----
+  { name: 'Scrying - DNS median maps to radar sight, neutral when unmeasured', fn: testScryingMappings },
+  { name: 'Scrying - DoH answers parse adversarially, IPv6 latches', fn: testScryingDohParser },
+  { name: 'Scrying - the radar actually widens and narrows, measured in pixels', fn: testScryingRadar },
+  { name: 'Scrying - PTR reads, the floor holds, a refused host is retried', fn: testScryingProbeDiscipline },
 ];
 
 
@@ -6914,6 +7158,10 @@ async function testOrbsAndMinimap(nw: any) {
     nw.minimap.draw(state, performance.now() + 1e6, []);
     nw.minimap.draw(state, performance.now() + 2e6, [{ x: state.player.x + 40, y: state.player.y }]);
     ok(true, 'it draws without throwing, with and without foes');
+    // Those two stamps are far-future on purpose (draw() throttles), but they
+    // leave the throttle clock there — which silently freezes the live radar
+    // for the rest of a `?test` session. Put it back.
+    nw.minimap.lastT = -999;
   }
 }
 
