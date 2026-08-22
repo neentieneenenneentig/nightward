@@ -36,6 +36,7 @@ import { VitalsSystem } from './game/systems/vitals';
 import { LifespanSystem } from './game/systems/lifespan';
 import { LoomSystem } from './game/systems/loom';
 import { WeaveSystem } from './game/systems/weaves';
+import { HubSystem } from './game/systems/hub';
 import { ScoreboardSystem } from './game/systems/scoreboard';
 import { SoulFeedSystem } from './game/systems/soulfeed';
 import { MaterialEffectSystem } from './game/systems/materialEffects';
@@ -226,6 +227,13 @@ async function boot() {
   const weaves = new WeaveSystem(ctx);
   ctx.weaves = weaves;
 
+  // A6: the hub. Constructed after WeaveSystem because a reworked item keeps
+  // its uid and therefore its sockets, and after loot because both counters
+  // are thin wrappers over rollItem()/reforgeAffix(). No update() — a shop
+  // ticks when the player presses a button and at no other time.
+  const hub = new HubSystem(ctx);
+  ctx.hub = hub;
+
   // W6: Scoreboards — connection uptime, death scorecard, leaderboard
   const scoreboard = new ScoreboardSystem(ctx);
   ctx.scoreboard = scoreboard;
@@ -324,7 +332,28 @@ async function boot() {
   });
 
   const ui = new UI(state, {
-    interact: () => gather.tryStart(),
+    // A6: one key, two meanings. The hub wins when one is in reach because
+    // CFG.a6.reachTiles (1.5) is tighter than CFG.gather.reachTiles (1.6) —
+    // so a node and a counter can only both be live when you are practically
+    // inside the counter, and that is the thing you walked up to. A gather
+    // already in progress is never interrupted: tryStart() is what stops it
+    // being re-entered, and the hub check runs before it precisely so the
+    // panel cannot open on top of a swing you are mid-way through.
+    interact: () => {
+      if (!gather.active) {
+        const h = hub.near();
+        if (h) { ui.open(h.kind); return; }
+      }
+      gather.tryStart();
+    },
+    hubView: () => {
+      const h = hub.near();
+      return h ? { kind: h.kind, name: h.def.name } : null;
+    },
+    hubOffers: (slot: any) => hub.offers(slot),
+    hubBuy: (slot: any, sealId: string) => { const r = hub.buy(slot, sealId); if (r.ok) ui.rebuildPanel(); return r; },
+    hubBench: () => hub.bench(),
+    hubReforge: (uid: string, index: number) => { const r = hub.reforge(uid, index); if (r.ok) ui.rebuildPanel(); return r; },
     attack: () => combat.attack(),
     ignite: () => fire.tryIgnite(),
     enterBuild: (id: string) => (id ? build.enter(id) : build.cancel()),
@@ -500,7 +529,7 @@ async function boot() {
     // B3.a test seam: movement is composed inside sim(), so the Gauntlet can only
     // observe it by driving the axis. Exposed for that; nothing in the game reads it.
     input,
-    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, abilities, vitals, lifespan, loom, scoreboard, net, drops, weaves }, world, player, gen, chunks,
+    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, abilities, vitals, lifespan, loom, scoreboard, net, drops, weaves, hub }, world, player, gen, chunks,
     lens, chronicle, omens,   // N4.2/N4.3 test seam: drawer, series store, omens
     minimap,                  // A4 test seam
     mods: { rules: rulesMod, loot: lootMod, items: itemsMod, effects: effectsMod },  // A1 test seam

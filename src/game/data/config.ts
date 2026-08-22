@@ -467,6 +467,45 @@ export const CFG = {
     boonSecMul: 1.0,
   },
 
+  // A6 — the Hall becomes a hub: the Reliquary and the Forge-Warden, the two
+  // things in the game that take gold instead of materials.
+  //
+  // `enabled: false` is a real revert. Both rows are the LAST entries in
+  // BUILDINGS and BuildSystem.selectable() filters them, so with the flag off
+  // the build carousel is its pre-A6 self in the same order, no panel can be
+  // reached, and no gold can be spent. A negative playtest verdict is one
+  // boolean — the same discipline as CFG.drops.enabled, CFG.loot.enabled and
+  // CFG.a8.enabled.
+  a6: {
+    enabled: true,
+    /** How close you must stand for interact to open a hub instead of
+     *  gathering. Must stay TIGHTER than CFG.gather.reachTiles (1.6, above) —
+     *  a Reliquary raised beside a tree would otherwise steal the chop, and
+     *  the only way out of that would be a priority rule nobody can see.
+     *
+     *  The first pass shipped 2.4 with a comment claiming gather reach was 3.2.
+     *  It is 1.6, so the tie-break was inverted and the comment was the reason
+     *  nobody checked. `testHubReach` asserts the INEQUALITY rather than the
+     *  two numbers, which is what caught it.
+     *
+     *  1.5 tiles is 48px against a diagonal neighbour's 45.3, so every tile
+     *  touching the counter — corners included — can trade. */
+    reachTiles: 1.5,
+    /** THE retune knob. A-arsenal §5.6 predicted this: tribute is tuned
+     *  against a world where gold does nothing, and two sinks change what the
+     *  `goldRate` mapping and the Night Market keystone are worth. Every seal
+     *  price and every Forge-Warden bill multiplies through here, so moving
+     *  the whole economy is one edit — and it waits for the playtest, which is
+     *  what the plan asked for. */
+    priceMul: 1.0,
+    /** What each subsequent rework of the SAME item multiplies by. See
+     *  data/hub.ts reforgePrice(): rerolling one affix repeatedly is still a
+     *  slot machine unless the price climbs. At 1.8 the first rework on a
+     *  Hallowed costs 420, the second 756, the fourth 2,449 — which is most of
+     *  a run's income for one line of text. */
+    reforgeEscalation: 1.8,
+  },
+
   // N4.3: Omens — a detected step change on the wire becomes a temporary world
   // state. See systems/omens.ts; the per-kind numbers live in OMEN_DEFS, which
   // is a table, so balance is a row edit rather than a code change.

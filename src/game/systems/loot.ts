@@ -13,7 +13,7 @@
 // merged def (see data/items.ts).
 import { CFG } from '../data/config';
 import {
-  ITEMS, itemDef, registerRolled, type ItemDef, type RolledAffix, type RolledItem,
+  ITEMS, itemDef, registerRolled, rolledOf, type ItemDef, type RolledAffix, type RolledItem,
 } from '../data/items';
 import {
   CURSES, PREFIXES, SUFFIXES, type AffixDef, type AffixSlot,
@@ -244,6 +244,67 @@ export function rollItem(baseId: string, opts: RollOpts = {}): string {
   };
   registerRolled(rolled, mergeDef(base, rarity, chosen, uid, name));
   return uid;
+}
+
+// ------------------------------------------------------------- the rework ----
+
+export interface ReforgeResult {
+  ok: boolean;
+  /** Why it was refused — for the caller's message, never shown raw. */
+  why?: 'not-rolled' | 'no-affix' | 'no-slot' | 'no-pool';
+  before?: RolledAffix;
+  after?: RolledAffix;
+}
+
+/** A6 — replace exactly ONE affix on a rolled item, in place.
+ *
+ *  This lives here rather than in systems/hub.ts because everything it needs —
+ *  `eligible`, `resolve`, `mergeDef`, `nameFor` — is how an item is ASSEMBLED,
+ *  and there should go on being exactly one file that knows that. A rework is
+ *  a partial re-roll, not a new mechanism.
+ *
+ *  Three rules, each of which is a decision:
+ *
+ *  1. **The uid does not change.** `state.sockets`, `state.player.equip`, the
+ *     soul bindings and every ground drop are keyed by it, and re-registering
+ *     under the same uid means a worn item's stats update on the next read with
+ *     nothing to notify. Threads stay socketed in their order; a weave survives
+ *     a rework, which is right — you reworked the metal, not the weaving.
+ *
+ *  2. **A cursed slot rerolls from the CURSES pool.** Riftborn's curse is the
+ *     price of the best tier in the game (data/rarity.ts, rule 2). Letting gold
+ *     replace it with a blessing would make the Forge-Warden a laundry for the
+ *     one rule that keeps the top of the ladder honest. You may change WHICH
+ *     curse you carry. You may not stop carrying one.
+ *
+ *  3. **The affix being replaced stays in its own pool.** Only the item's OTHER
+ *     affixes are excluded, so a rework can land the same affix at a different
+ *     value. That is the near-miss repair the whole feature is for: a Keen at
+ *     ×1.09 wants another draw at Keen, not a guarantee of something else.
+ *
+ *  Stats are recomputed from the authored base every time, so a hundred
+ *  reworks cannot drift a number the way an in-place edit would. */
+export function reforgeAffix(uid: string, index: number): ReforgeResult {
+  const roll = rolledOf(uid);
+  if (!roll) return { ok: false, why: 'not-rolled' };
+  const old = roll.affixes[index];
+  if (!old) return { ok: false, why: 'no-affix' };
+  const base = ITEMS[roll.base];
+  const slot = affixSlotOf(base);
+  if (!base || !slot) return { ok: false, why: 'no-slot' };
+
+  const pool = old.cursed
+    ? eligible(CURSES, slot, roll.rarity, base)
+    : [...eligible(PREFIXES, slot, roll.rarity, base), ...eligible(SUFFIXES, slot, roll.rarity, base)];
+  const held = new Set(roll.affixes.filter((_, i) => i !== index).map((a) => a.id));
+  const pick = pickWeighted(pool.filter((a) => !held.has(a.id)));
+  if (!pick) return { ok: false, why: 'no-pool' };
+
+  const next = resolve(pick);
+  const affixes = roll.affixes.map((a, i) => (i === index ? next : a));
+  const name = nameFor(base, affixes);
+  registerRolled({ ...roll, affixes, name }, mergeDef(base, roll.rarity, affixes, uid, name));
+  return { ok: true, before: old, after: next };
 }
 
 /** Roll a whole loot result in place. Gear becomes one uid per unit — two

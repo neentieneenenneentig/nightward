@@ -767,6 +767,45 @@ html, body, #nw-observatory, .nw-pbody {
   font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
 }
 
+/* ---- A6: the hub (Reliquary + Forge-Warden) ----------------------------- */
+.nw-hub-purse { display: flex; justify-content: space-between; align-items: baseline;
+  padding: 6px 8px; margin-bottom: 8px; border-bottom: 1px solid var(--metal-lo);
+  font-family: var(--font-display); }
+.nw-hub-purse b { color: var(--gold); font-size: 1.15em; }
+.nw-hub-purse .lack { color: var(--bad); }
+/* the slot chooser — the half of a purchase you DO decide */
+.nw-hub-slots { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 10px; }
+.nw-hub-slot { padding: 5px 10px; border: 1px solid var(--metal-lo); background: var(--bg-deep);
+  color: var(--ink-dim); cursor: pointer; font-family: var(--font-display); font-size: .95em; }
+.nw-hub-slot.on { color: var(--accent); border-color: var(--metal); background: var(--bg-lift); }
+.nw-hub-slot:hover { color: var(--ink); }
+/* one seal, one price */
+.nw-seal .name { font-family: var(--font-display); }
+.nw-seal .band { color: var(--gold); }
+.nw-seal .price { color: var(--gold); font-family: var(--font-display); margin-right: 8px; }
+.nw-seal .price.lack { color: var(--bad); }
+.nw-hub-stock { display: flex; gap: 3px; margin-top: 4px; flex-wrap: wrap; }
+.nw-hub-stock img { width: 20px; height: 20px; image-rendering: pixelated; opacity: .8; }
+/* the bench */
+.nw-bench { border: 1px solid var(--metal-lo); background: var(--bg-deep); margin-bottom: 10px; }
+.nw-bench-hd { display: flex; align-items: center; gap: 8px; padding: 7px 8px;
+  border-bottom: 1px solid var(--metal-lo); background: var(--bg-lift); }
+.nw-bench-hd img { width: 30px; height: 30px; image-rendering: pixelated; }
+.nw-bench-hd .nm { flex: 1; min-width: 0; font-family: var(--font-display); }
+.nw-bench-hd .cost { font-size: .9em; color: var(--gold); white-space: nowrap; }
+.nw-bench-hd .cost.lack { color: var(--bad); }
+.nw-bench-worn { font-size: .8em; color: var(--ink-dim); }
+.nw-bench-worn b { color: var(--gold); font-weight: 400; }
+.nw-affix { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 6px 8px; background: none; border: 0; border-top: 1px solid rgba(51,41,26,.5);
+  color: var(--ink); font: inherit; cursor: pointer; }
+.nw-affix:first-of-type { border-top: 0; }
+.nw-affix:hover:not(:disabled) { background: var(--bg-lift); color: var(--ink-bright); }
+.nw-affix:disabled { opacity: .5; cursor: default; }
+.nw-affix .txt { flex: 1; min-width: 0; }
+.nw-affix .rew { font-size: .82em; color: var(--accent); white-space: nowrap; }
+.nw-affix.cursed .txt { color: var(--bad); }
+
 /* ---- mobile / touch device adaptions ---- */
 /* Touch devices: collapse action bar to right-side vertical stack */
 [data-touch] .nw-actions {

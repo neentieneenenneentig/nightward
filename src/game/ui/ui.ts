@@ -3,11 +3,14 @@
 // All gameplay actions are delegated back to the game via `hooks`.
 import { CFG } from '../data/config';
 import { itemDef, itemName } from '../data/items';
-import { escapeHtml, rarityColor, rarityDef, rarityOf } from './rarity';
+import { affixLines, escapeHtml, rarityColor, rarityDef, rarityOf } from './rarity';
 import { bindItemTooltip, bindHtmlTooltip, hideItemTooltip } from './tooltip';
 import { SKILLS } from '../data/skills';
 import { RECIPES } from '../data/recipes';
 import { BUILDINGS } from '../data/buildings';
+import { HUB_SLOTS } from '../data/hub';
+import type { OfferView, ReforgeView } from '../systems/hub';
+import type { AffixSlot } from '../data/affixes';
 import { ECHOES } from '../data/echoes';
 import type { SlotView } from '../systems/abilities';
 import { iconUrl } from '../../engine/procgen/icons';
@@ -73,6 +76,21 @@ export interface UIHooks {
    *  Before this existed, LoomSystem.allocate() had no production caller at all —
    *  the tree was unreachable and every point earned was unspendable. */
   allocateLoom(nodeId: string): boolean;
+  /** A6: the hub counter the player is standing at, or null. Drives the
+   *  interact button's live state as well as which panel `interact()` opens —
+   *  one question asked in one place, so the prompt can never promise a
+   *  Reliquary the keypress does not open. */
+  hubView(): { kind: 'reliquary' | 'forge'; name: string } | null;
+  /** A6: everything the Reliquary will sell in one slot. */
+  hubOffers(slot: AffixSlot): OfferView[];
+  /** A6: break a seal. Returns the refusal so the panel can SAY it — the
+   *  ability bar's lesson (a button that swallows a press is one the player
+   *  stops trusting), applied to a button that costs four figures. */
+  hubBuy(slot: AffixSlot, sealId: string): { ok: boolean; id?: string; why?: string };
+  /** A6: every carried piece the Forge-Warden will touch, with its price. */
+  hubBench(): ReforgeView[];
+  /** A6: rework one line on one piece. */
+  hubReforge(uid: string, index: number): { ok: boolean; why?: string };
   /** B3.b: what the Loom panel needs to draw itself. */
   loomView(): {
     points: number;
@@ -81,7 +99,7 @@ export interface UIHooks {
   };
 }
 
-type Panel = 'bag' | 'craft' | 'skills' | 'loom' | 'log' | 'leaderboard' | null;
+type Panel = 'bag' | 'craft' | 'skills' | 'loom' | 'log' | 'leaderboard' | 'reliquary' | 'forge' | null;
 
 const icon = (id: string) => iconUrl(id, itemDef(id).icon as any);
 
@@ -114,6 +132,10 @@ export class UI {
   private toasts: Toasts;
   private panel: Panel = null;
   private craftTab = 'crafting';
+  /** A6: which shape the Reliquary is currently quoting. Remembered across
+   *  openings — a player shopping for a blade is usually still shopping for a
+   *  blade the second time they walk up. */
+  private hubSlot: AffixSlot = 'weapon';
 
   // cached dynamic nodes
   private hpFill!: HTMLElement;
@@ -491,7 +513,7 @@ export class UI {
     this.panelHost.appendChild(scrim);
 
     const head = el('div', 'nw-phead');
-    const titles: Record<string, string> = { bag: 'BAG', craft: 'CRAFTING', skills: 'SKILLS', loom: 'THE LOOM', log: 'LOG', leaderboard: 'LEADERBOARD' };
+    const titles: Record<string, string> = { bag: 'BAG', craft: 'CRAFTING', skills: 'SKILLS', loom: 'THE LOOM', log: 'LOG', leaderboard: 'LEADERBOARD', reliquary: 'THE RELIQUARY', forge: 'THE FORGE-WARDEN' };
     head.innerHTML = `<h2>${titles[this.panel]}</h2>`;
     if (this.panel === 'craft') head.appendChild(this.craftTabs());
     const x = el('div', 'nw-x'); x.innerHTML = '&times;';
@@ -540,6 +562,114 @@ export class UI {
     else if (this.panel === 'loom') this.fillLoom(body);
     else if (this.panel === 'log') this.fillLog(body);
     else if (this.panel === 'leaderboard') this.fillLeaderboard(body);
+    else if (this.panel === 'reliquary') this.fillReliquary(body);
+    else if (this.panel === 'forge') this.fillForge(body);
+  }
+
+  // ---------------------------------------------------------- A6: the hub ----
+
+  /** The purse line both hub panels open with. Gold is the only currency the
+   *  HUD does not show a bar for, so a shop that did not state it would make
+   *  every price unreadable. */
+  private purseLine(need: number): HTMLElement {
+    const gold = this.state.player.gold;
+    const row = el('div', 'nw-hub-purse');
+    row.innerHTML = `<span>Your purse</span><b class="${gold < need ? 'lack' : ''}">${gold} gold</b>`;
+    return row;
+  }
+
+  private fillReliquary(body: HTMLElement) {
+    const offers = this.hooks.hubOffers(this.hubSlot);
+    const note = el('div', 'nw-note');
+    note.innerHTML = `A sealed relic is bought <b>unopened</b>. You choose the shape and the
+      seal &mdash; what is inside is the seal's business. Nothing here reaches the rift.`;
+    body.appendChild(note);
+    body.appendChild(this.purseLine(offers.length ? offers[0].gold : 0));
+
+    const chips = el('div', 'nw-hub-slots');
+    for (const s of HUB_SLOTS) {
+      const chip = el('div', 'nw-hub-slot' + (s.slot === this.hubSlot ? ' on' : ''));
+      chip.textContent = `${s.glyph} ${s.label}`;
+      chip.tabIndex = 0; chip.setAttribute('role', 'tab');
+      chip.setAttribute('aria-selected', String(s.slot === this.hubSlot));
+      const pick = () => { this.hubSlot = s.slot; this.renderPanel(); };
+      chip.addEventListener('click', pick);
+      chip.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      chips.appendChild(chip);
+    }
+    body.appendChild(chips);
+
+    for (const o of offers) {
+      const row = el('div', 'nw-row nw-seal');
+      // The stock is shown because "you buy the shape and the odds" is only
+      // honest if the shape is visible. A seal that quietly excludes half the
+      // ladder while the panel says nothing is a shop lying by omission.
+      const stock = o.stock.map((id) =>
+        `<img src="${icon(id)}" alt="" title="${escapeHtml(itemName(id))}">`).join('');
+      row.innerHTML = `
+        <div class="info">
+          <div class="name">${o.seal.name} &middot; <span class="band">${o.floor} &rarr; ${o.ceiling}</span></div>
+          <div class="sub">${o.seal.blurb}</div>
+          <div class="nw-hub-stock">${stock}</div>
+        </div>
+        <span class="price${o.affordable ? '' : ' lack'}">${o.gold}g</span>`;
+      const btn = el('button', 'nw-make' + (o.affordable ? '' : ' short')) as HTMLButtonElement;
+      btn.textContent = 'Break seal';
+      btn.disabled = !o.affordable;
+      btn.addEventListener('click', () => {
+        const r = this.hooks.hubBuy(this.hubSlot, o.seal.id);
+        if (!r.ok && r.why) this.toast(r.why, 'bad');
+        this.renderPanel();
+      });
+      row.appendChild(btn);
+      body.appendChild(row);
+    }
+  }
+
+  private fillForge(body: HTMLElement) {
+    const bench = this.hooks.hubBench();
+    const note = el('div', 'nw-note');
+    note.innerHTML = `The Forge-Warden reworks <b>one line</b> on one piece, and the new line
+      can be worse than the old one. Each rework on the same piece costs more than the last.`;
+    body.appendChild(note);
+    body.appendChild(this.purseLine(bench.length ? Math.min(...bench.map((b) => b.gold)) : 0));
+
+    if (!bench.length) {
+      const empty = el('div', 'nw-empty');
+      empty.textContent = 'Nothing you carry has a line worth reworking. Plain gear has none.';
+      body.appendChild(empty);
+      return;
+    }
+
+    for (const v of bench) {
+      const lines = affixLines(v.uid);
+      const card = el('div', 'nw-bench');
+      const mats = v.mats.map((m) => {
+        const have = invCount(this.state, m.id) >= m.n;
+        return `<span class="${have ? 'have' : 'lack'}">${m.n}&times; ${itemName(m.id)}</span>`;
+      }).join(' &middot; ');
+      const hd = el('div', 'nw-bench-hd');
+      hd.innerHTML = `
+        <img src="${icon(v.uid)}" alt="">
+        <div class="nm"><span style="color:${v.color}">${escapeHtml(v.name)}</span>
+          <div class="nw-bench-worn">${v.worn ? '<b>worn</b> &middot; ' : ''}${v.rarity}${v.prior ? ` &middot; reworked ${v.prior}&times;` : ''} &middot; ${mats}</div></div>
+        <span class="cost${v.affordable ? '' : ' lack'}">${v.gold}g</span>`;
+      card.appendChild(hd);
+
+      for (const a of v.affixes) {
+        const btn = el('button', 'nw-affix' + (a.cursed ? ' cursed' : '')) as HTMLButtonElement;
+        btn.innerHTML = `<span class="txt">${escapeHtml(lines[a.index]?.text ?? a.label)}</span>`
+          + `<span class="rew">${a.cursed ? 'recast the curse' : 'rework'}</span>`;
+        btn.disabled = !v.affordable;
+        btn.addEventListener('click', () => {
+          const r = this.hooks.hubReforge(v.uid, a.index);
+          if (!r.ok && r.why) this.toast(r.why, 'bad');
+          this.renderPanel();
+        });
+        card.appendChild(btn);
+      }
+      body.appendChild(card);
+    }
   }
 
   private fillLog(body: HTMLElement) {
@@ -1052,7 +1182,21 @@ export class UI {
     }
   }
 
-  private interactTarget() { return this.hooks.gatherView() != null; }
+  /** A6: the interact button lights for a hub counter as well as a node, and
+   *  says which. Without this the one HUD affordance the player has for "there
+   *  is something here" would go dark standing in front of the two most
+   *  expensive buildings in the game. */
+  private interactTarget() {
+    const hub = this.hooks.hubView();
+    const label = hub ? hub.name : 'Interact';
+    if (this.interactBtn.title !== label) {
+      this.interactBtn.title = label;
+      this.interactBtn.setAttribute('aria-label', hub ? `Open ${label}` : 'Interact');
+      const l = this.interactBtn.querySelector('.nw-btn-label');
+      if (l) l.textContent = label;
+    }
+    return hub ? true : this.hooks.gatherView() != null;
+  }
 
   /** W6/L1: Leaderboard panel — current run stats + historical "perfect run" board. */
   private fillLeaderboard(body: HTMLElement) {

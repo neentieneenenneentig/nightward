@@ -29,7 +29,14 @@ export class BuildSystem {
    * Missing materials do NOT hide a blueprint — you can browse it, just not place. */
   private selectable(): BuildingDef[] {
     const { state } = this.ctx;
-    return BUILDINGS.filter((b) => !(b.unique && state.buildings.some((x: any) => x.type === b.id)));
+    return BUILDINGS.filter((b) => {
+      // A6's escape hatch. The two hub rows are the LAST entries in BUILDINGS,
+      // so dropping them here restores the pre-A6 carousel in its original
+      // order rather than leaving a hole in the middle of it — the same
+      // reasoning A8 used for its two FEATURES rows.
+      if (b.hub && !CFG.a6.enabled) return false;
+      return !(b.unique && state.buildings.some((x: any) => x.type === b.id));
+    });
   }
 
   /** B key / Build button: enter placement browsing where you left off. */

@@ -84,6 +84,14 @@ export interface GameState {
    *  is the ORDERED thread kinds that item currently holds. Order is the whole
    *  game — a weave is a sequence, and reordering breaks it (see data/weaves.ts). */
   sockets: Record<string, string[]>;
+  /** A6: how many times each rolled item has been through the Forge-Warden.
+   *  Keyed by rolled item uid, exactly like `sockets`. The count is the price:
+   *  data/hub.ts escalates each rework off it, which is what keeps the
+   *  Forge-Warden a repair rather than a reroll grinder. A real state field
+   *  rather than a stowaway on the RolledItem, because the registry is reset
+   *  per run by resetRolled() and this has to be cleared by newWorld() on the
+   *  same beat as everything else the player accumulated. */
+  reforged: Record<string, number>;
   /** A8: Boons currently blessing the player — timed entries into the effect
    *  vocabulary, granted by Wardstones. A real state field rather than an
    *  underscore-prefixed stowaway like `_moveBurstUntil`, because newWorld()
@@ -180,6 +188,7 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     worldBosses: [],
     drops: [],
     sockets: {},
+    reforged: {},
     boons: [],
     region: '',
     explored: {},
