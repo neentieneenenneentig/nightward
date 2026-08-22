@@ -1,10 +1,10 @@
 # NIGHTWARD — Roadmap
 
 This file is the **ship record**: newest first, one entry per milestone, what it changed and
-what it caught. It is not a plan. Live plans are [`A-arsenal.md`](A-arsenal.md) (Batch A) and
-[`N4-deep-wire.md`](N4-deep-wire.md) (the N4 phases); what the game *is* lives in
-[`../GDD.md`](../GDD.md); how we work lives in [`WORKFLOW.md`](WORKFLOW.md). A plan that has
-shipped is deleted, not archived — see "Retired plan documents" at the bottom.
+what it caught. It is not a plan. The live plan is [`S-speedrun.md`](S-speedrun.md) (Batch SR —
+the speedrun ARPG and the look); what the game *is* lives in [`../GDD.md`](../GDD.md); how we
+work lives in [`WORKFLOW.md`](WORKFLOW.md). A plan that has shipped is deleted, not archived —
+see "Retired plan documents" at the bottom, where Batch A and the N4 Deep Wire now live.
 
 > **Pivot (2026-07-16):** The world is no longer a dream — it's your network. Live browser
 > network metrics (RTT, jitter, bandwidth, connection type, real clock) drive every game
@@ -14,45 +14,31 @@ shipped is deleted, not archived — see "Retired plan documents" at the bottom.
 
 ## Where we are — 2026-08-22
 
-**Active branch: `dev/night-build`.** Nineteen milestones are shipped-and-unmerged on it —
-B5, B6, N4.1, N4.2, N4.3, N4.4, N4.5, N4.6, N4.7, N4.7b, A1, A2, A3, A4, A5, A6, A7, A8 and
-the C4 repair. `main` is still at the last tagged release, and nothing merges to it without
-explicit sign-off.
+**`dev/night-build` merged to `main`.** Nineteen milestones in one merge — B5, B6, N4.1
+through N4.7b, A1 through A8, and the C4 repair. `main` had been sitting at N4.0 since
+2026-08-19; it is now the whole night build.
 
-**Gauntlet 2653 across 140 tests**, green. Typecheck clean on both tsconfigs, build green.
-(Counts drift by a few from RNG-dependent assertion loops — the test *names* are the
-regression signal, not the total.)
+**Gauntlet 2659 across 140 tests**, green on `main` after the merge. Typecheck clean on both
+tsconfigs, build green. (Counts drift by a few from RNG-dependent assertion loops — the test
+*names* are the regression signal, not the total.)
 
-> ### Both live plans are now fully built.
->
-> [`A-arsenal.md`](A-arsenal.md) and [`N4-deep-wire.md`](N4-deep-wire.md) have no unshipped
-> phases left. **A2** was unblocked on 2026-08-22 when both its N4.3 numbers were decided and
-> shipped the same day; **A7** was welded to **N4.5** by its own brief and the two shipped as
-> one selector; **N4.6** and **N4.7** followed; and **N4.7b** closed §2.6, the last unbuilt
-> section in either document.
->
-> By this file's own doctrine a plan that has shipped is **deleted, not archived** — see
-> *Retired plan documents* at the bottom. Neither has been retired yet, because one idea in
-> each is still standing and the call on whether it is worth keeping is the user's:
->
-> | document | what is left in it | worth building? |
-> |---|---|---|
-> | `N4-deep-wire.md` §2.8f | **Connection-limit probing.** Fire N parallel requests at an `h1` host and an `h2` host; the HTTP/1.1 six-connection limit shows up as visible head-of-line stair-stepping while h2 multiplexes flat. Researched, never phased — it is in §2.8's list but in no phase row | costs a handful of requests. Would pair naturally with N4.7's Protocol Reality panel, which currently *names* the protocol without demonstrating what it changes |
-> | `A-arsenal.md` §4.3 | **Classes, declined.** Recorded as a decision, not a gap | no — the verdict was to build the Loom out instead, and the Loom is built |
->
-> Everything else in both files is either shipped or an answered question. Say the word and
-> they get deleted with their path and sha recorded below, the way `BG-batch-proposal.md` was.
+**Both former live plans are retired.** [`A-arsenal.md`](A-arsenal.md) and
+[`N4-deep-wire.md`](N4-deep-wire.md) reached zero unshipped phases and were deleted the same
+day, with their paths and shas in *Retired plan documents* at the bottom and the two ideas
+worth keeping carried out first.
+
+**The new plan is [`S-speedrun.md`](S-speedrun.md) — Batch SR, “The Reckoning”.** The game becomes what it has
+been circling for two batches: a fifteen-minute speedrun ARPG that ends in a boss fight and a
+scored run. And the look gets the pass it has been owed since Batch G.
 
 ### Open and owed
 
 | | what | decided by |
 |---|---|---|
-| **playtest verdict** | **eighteen** milestones — Batch G, Batch B, `fix/sound-rollback`, N4.1–N4.7b, A1–A8, the C4 repair. Automated pass started 2026-08-22; the **feel** verdict is still owed and cannot be delegated | user |
-| **merge to `main`** | `dev/night-build` is 68 commits and nineteen milestones ahead. Nothing merges without an explicit go-ahead | user |
-| **retire the plan docs** | both live plans are fully built. Delete them (recording path + sha) or keep them for §2.8f? | user |
+| **playtest verdict** | nineteen milestones, now on `main`. The **feel** verdict is still owed and cannot be delegated | user |
+| **tag a release** | `main` moved nineteen milestones in one merge and is untagged. Last tag is `v0.9.3-godmode-logging` | user |
+| **Batch SR scope** | the new plan's open questions — see [`S-speedrun.md`](S-speedrun.md) §9 | user |
 | **balance queue** | **done, 2026-08-22.** Seven applied, one overturned by its own re-measurement — see below | — |
-| **unstarted, ungated** | **none.** Both batches are complete | — |
-| **unstarted, gated** | **none** | — |
 
 ---
 
@@ -2805,10 +2791,26 @@ once existed, so the path and the sha live here.
 | `docs/plans/BG-batch-proposal.md` (1933 lines) | Batch B "The Reachable Run" + Batch G "Depth" — the findings behind them, the full plan, and seven review logs | `git show d7a5cf6:docs/plans/BG-batch-proposal.md` |
 | `docs/plans/HANDOFF-B-implementer.md` (243) | the B0 → B4 → B1 implementer handoff | `git show 00ac111:docs/plans/HANDOFF-B-implementer.md` |
 | `docs/plans/B5-ground-drops.md` (452) | B5 ground drops, and the B6 level-up flourish | `git show ebe5a2a:docs/plans/B5-ground-drops.md` |
+| `docs/plans/A-arsenal.md` (646) | Batch A “The Arsenal” — the Hero Siege yoink. The honest audit, the five gaps, the forever-character collision, and the A1–A8 designs. **All eight shipped 2026-08-21/22.** | `git show 1fb41fd:docs/plans/A-arsenal.md` |
+| `docs/plans/N4-deep-wire.md` (680) | N4 “The Deep Wire” — the research (with evidence), the Lens side-cart, the derived truths, the data-budget consent design, and the N4.0–N4.7 phasing. **All eight phases shipped 2026-08-19–22.** | `git show 1fb41fd:docs/plans/N4-deep-wire.md` |
 
 Everything in them that was still load-bearing moved out first: the testing lessons from those
 seven review logs into [`WORKFLOW.md`](WORKFLOW.md) §"Testing doctrine", and the one design
 question nobody had answered (B5 Q2, `goldDrops`) into "Open and owed" at the top of this file.
+
+**A-arsenal.md and N4-deep-wire.md were retired on 2026-08-22, the day the last phase in each
+shipped.** Two things were carried out of them first, because neither is recorded anywhere else:
+
+- **N4 §2.8f — connection-limit probing**, the one researched idea in either document that was
+  never phased. Fire N parallel requests at an `h1` host and an `h2` host; HTTP/1.1's
+  six-connection limit shows up as visible head-of-line stair-stepping while h2 multiplexes
+  flat. It would pair with N4.7's Protocol Reality panel, which currently *names* the protocol
+  without demonstrating what it changes. It is **not** scheduled: it means a burst of parallel
+  requests at third-party hosts, and N4.0 deliberately deleted exactly that pattern. If it is
+  ever built it should be same-origin. Recorded here so the idea survives its document.
+- **A-arsenal §4.3 — classes, declined.** Hero Siege's one system we chose not to take, on the
+  grounds that a forever-character's class fantasy does not survive a fifteen-minute run.
+  Build the Loom out instead. The Loom is built.
 The rest was analysis of a version of the game that no longer exists — §3's xp-budget arithmetic
 describes a curve B1 replaced, §7's screenshots describe terrain Batch G relit.
 
