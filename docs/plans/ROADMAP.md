@@ -18,7 +18,8 @@ shipped is deleted, not archived — see "Retired plan documents" at the bottom.
 B6, N4.1, N4.2, N4.3, N4.4, A1, A4, A3, A5, A8 and the C4 repair. `main` is still at the last
 tagged release, and nothing merges to it without explicit sign-off.
 
-**Gauntlet 2134 across 124 tests**, green. Typecheck clean on both tsconfigs, build green.
+**Gauntlet 2133–2136 across 124 tests**, six consecutive green runs. Typecheck clean on both
+tsconfigs, build green.
 (Counts drift by a few from RNG-dependent assertion loops — the test *names* are the
 regression signal, not the total.)
 
@@ -108,7 +109,24 @@ regression signal, not the total.)
 > reproduces the exact regression this milestone shipped with; the sample floor removed; the
 > gate-refusal release removed. `grep -c MUTATION` is 0.
 >
-> ### One older bug, fixed in passing
+> ### The visual gate found the mechanic's actual value
+>
+> Screenshots of the radar at 10 / 50 / 150 ms (`qa/gate-n44/`) show a ring of twelve marks at
+> a fixed forty tiles sitting comfortably inside the disc at sharp Scrying and pressed against
+> the rim at dim. But the thing the numbers did not predict is what happens to marks BEYOND the
+> ring: at 1.4× three world-boss chevrons are on the disc, and at 0.75× they are simply gone.
+> **A sharp connection shows you the lords before they show you themselves**, and a slow one
+> does not. That is a real mechanic rather than a number on a HUD, and it is the argument for
+> the radar being the right home for this reading.
+>
+> ### One flake, and one older bug, both fixed in passing
+>
+> The ability bar's "it spends exactly 18 resolve" failed about one run in four at 86 against
+> 82 — Bramblebreak killing a foe and `resolvePerKill` landing inside the same synchronous
+> `cast()`. Nothing about the bar was wrong; the test was measuring the horde. Latent, and
+> shaken loose by N4.4 rather than caused by it: the AAAA retry changed how many requests are
+> in flight, and the suite's frame timing rides on that. Eighth incident of this kind.
+>
 >
 > `minimap.draw()` throttles at 10 Hz, so a test must hand it a far-future timestamp to be sure
 > it ran — and **testHudSurfaces has been stamping `performance.now() + 2e6` since A4 without
