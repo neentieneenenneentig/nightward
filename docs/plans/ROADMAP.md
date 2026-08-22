@@ -48,7 +48,7 @@ regression signal, not the total.)
 | | what | decided by |
 |---|---|---|
 | **playtest verdict** | **eighteen** milestones — Batch G, Batch B, `fix/sound-rollback`, N4.1–N4.7b, A1–A8, the C4 repair. Automated pass started 2026-08-22; the **feel** verdict is still owed and cannot be delegated | user |
-| **merge to `main`** | `dev/night-build` is 66 commits and nineteen milestones ahead. Nothing merges without an explicit go-ahead | user |
+| **merge to `main`** | `dev/night-build` is 68 commits and nineteen milestones ahead. Nothing merges without an explicit go-ahead | user |
 | **retire the plan docs** | both live plans are fully built. Delete them (recording path + sha) or keep them for §2.8f? | user |
 | **balance queue** | **done, 2026-08-22.** Seven applied, one overturned by its own re-measurement — see below | — |
 | **unstarted, ungated** | **none.** Both batches are complete | — |
