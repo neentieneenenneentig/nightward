@@ -4,6 +4,7 @@
 // game logic.
 import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import { itemName } from '../data/items';
+import { AFFIX_POWER, ELITE_RANKS, affixDef } from '../data/elites';
 import { isBeamworthy, rarityTint } from '../ui/rarity';
 import { TILE } from './worldgen';
 import type { WorldArt } from './art';
@@ -19,6 +20,10 @@ function tex(c: HTMLCanvasElement): Texture {
   t.source.scaleMode = 'nearest';
   return t;
 }
+
+/** '#rrggbb' -> 0xrrggbb. Pixi wants a number; the data tables are authored in
+ *  CSS hex because that is what a designer reads and what the HUD shares. */
+const hexNum = (css: string) => parseInt(css.replace('#', ''), 16);
 
 /** Blinking warning tint while a foe/boss is committed to a telegraphed hit. */
 function telegraphTint(telegraphT: number, animT: number): number {
@@ -36,6 +41,14 @@ class FoeView {
   private w: number;
   private sz: number;
   private heightClass: number;
+  /** A2: the aura ring and the nameplate. Both null on an ordinary foe, so the
+   *  99% of the horde that is not elite pays one null check per frame and no
+   *  allocation at all — a wave is 40+ foes and this runs every frame for each
+   *  of them. */
+  private ring: Graphics | null = null;
+  private plate: Text | null = null;
+  private ringTints: number[] = [];
+  private unseen = false;
   constructor(foe: Foe, art: WorldArt) {
     this.frames = art.enemies.get(foe.def.id)!.map(tex);
     this.sprite = new Sprite(this.frames[0]);
@@ -45,6 +58,53 @@ class FoeView {
     this.heightClass = foe.def.art.size > 24 ? 3 : foe.def.art.size > 16 ? 2 : 1;
     this.shadow = new Graphics();
     this.cont.addChild(this.shadow, this.sprite, this.bar);
+    if (foe.elite) this.buildElite(foe);
+  }
+
+  /** A2 — the two things that make an elite readable before it reaches you.
+   *
+   *  The RING is on the ground, under the sprite and over the shadow, in the
+   *  affixes' own colours. A ring rather than a tint on the body because the
+   *  bodies are already the bestiary's colour language — tinting a Wisp green
+   *  to say "Vigorous" would collide with the Vile Spore, and the player would
+   *  learn two contradictory things from one hue. Multiple affixes draw
+   *  concentric arcs, so a champion's three colours are all legible at once
+   *  instead of blending into mud.
+   *
+   *  The NAMEPLATE is text above the hp bar, in the rank's colour: brass for an
+   *  elite, violet for a champion. It names every affix, because rule 3 of the
+   *  milestone is that a rolled property you discover by dying to it is not a
+   *  mechanic. */
+  private buildElite(foe: Foe) {
+    const e = foe.elite!;
+    const rank = ELITE_RANKS[e.rank];
+    this.unseen = e.has.has('unseen');
+    this.ringTints = e.affixes.map((id) => hexNum(affixDef(id)?.color ?? '#d8a83a'));
+
+    const g = new Graphics();
+    const base = this.sz * 0.52;
+    this.ringTints.forEach((tint, i) => {
+      const r = base + i * 2.5;
+      // Squashed vertically to sit ON the ground plane rather than hovering as
+      // a circle in screen space — the same 0.4 ratio the contact shadows use,
+      // so the ring reads as painted on the dirt beneath the thing.
+      g.ellipse(0, this.sz * 0.34, r, r * 0.4).stroke({ width: 1.5, color: tint, alpha: 0.85 });
+    });
+    this.ring = g;
+    // Index 1: above the shadow, below the sprite.
+    this.cont.addChildAt(g, 1);
+
+    this.plate = new Text({
+      text: e.name,
+      style: {
+        fontFamily: 'monospace', fontSize: 8, fontWeight: 'bold',
+        fill: hexNum(rank.color), stroke: { color: 0x140f18, width: 1 },
+      },
+    });
+    this.plate.resolution = WORLD_TEXT_RES;
+    this.plate.anchor.set(0.5, 1);
+    this.plate.position.set(0, -this.w / 2 - 7);
+    this.cont.addChild(this.plate);
   }
   /** G1: offset shadow based on light direction (light from top-left during day = shadow to bottom-right). */
   updateShadow(lightDX: number, lightDY: number, alpha: number) {
@@ -54,13 +114,26 @@ class FoeView {
     const oy = sz * 0.38 + lightDY * heightClass * 1.5;
     shadow.ellipse(ox, oy, sz * 0.4, sz * 0.16).fill({ color: 0x0a080e, alpha });
   }
-  sync(foe: Foe, alpha: number, revealHp = false) {
+  sync(foe: Foe, alpha: number, revealHp = false, px = 0, py = 0) {
     const fx = foe.px + (foe.x - foe.px) * alpha;
     const fy = foe.py + (foe.y - foe.py) * alpha;
     this.sprite.texture = this.frames[Math.floor(foe.animT / 0.22) % 2];
     this.sprite.tint = telegraphTint(foe.telegraphT, foe.animT);
     this.cont.position.set(Math.round(fx), Math.round(fy));
     this.cont.zIndex = fy;
+
+    // A2 Unseen: the body fades at range; the RING and the NAMEPLATE do not.
+    // That is the whole design of the affix — it is hard to read, never hidden.
+    // A foe you cannot locate at all is an unfair hit, and the counterplay to
+    // "I can barely see it" is looking, which requires there to be something
+    // to see.
+    if (this.unseen) {
+      const far = Math.hypot(px - fx, py - fy) > AFFIX_POWER.unseenTiles * TILE;
+      this.sprite.alpha = far ? AFFIX_POWER.unseenAlpha : 1;
+    }
+    // The ring breathes. A static outline reads as a UI decal stuck to the
+    // ground; one that pulses reads as something the creature is doing.
+    if (this.ring) this.ring.alpha = 0.75 + 0.25 * Math.sin(foe.animT * 3 + foe.uid);
     const frac = foe.hp / foe.maxHp;
     this.bar.clear();
     // C4: 'see_foe_hp' — the Nullmaw relic and the 'of the Eye' suffix. The bar
@@ -161,7 +234,7 @@ class DropView {
     this.shadow.clear();
     this.shadow.ellipse(lightDX * 1.5, 7 + lightDY * 1.5, 7, 3).fill({ color: 0x0a080e, alpha });
   }
-  sync(d: GroundDrop, clock: number) {
+  sync(d: GroundDrop, clock: number, memoryMul = 1) {
     // The bob is what makes the eye find loot on a busy floor. hopH is the toss
     // arc; the bob only runs once the item has settled, so the two never fight.
     const bob = d.hopT > 0 ? 0 : Math.sin(clock * CFG.drops.bobHz * Math.PI * 2 + d.uid) * CFG.drops.bobPx;
@@ -175,7 +248,7 @@ class DropView {
     // blink out the last few seconds so a despawn is never a silent theft
     const D = CFG.drops;
     const age = clock - d.bornT;
-    const left = D.despawnSec - age;
+    const left = D.despawnSec * memoryMul - age;
     this.sprite.alpha = (!d.gear || !D.gearNeverDespawns) && left < D.blinkLastSec && left > 0
       ? 0.35 + 0.65 * (Math.sin(clock * 9) * 0.5 + 0.5)
       : 1;
@@ -393,8 +466,12 @@ export class Views {
     this.foes.get(uid)?.destroy();
     this.foes.delete(uid);
   }
-  syncFoes(foes: Foe[], alpha: number, revealHp = false) {
-    for (const f of foes) this.foes.get(f.uid)?.sync(f, alpha, revealHp);
+  /** A2 added `px`/`py`: the Unseen affix fades a body by DISTANCE, and the
+   *  view layer has no other way to know where the player is standing. Defaulted
+   *  rather than required so the two dozen call sites in the Gauntlet that drive
+   *  a redraw without a player keep working. */
+  syncFoes(foes: Foe[], alpha: number, revealHp = false, px = 0, py = 0) {
+    for (const f of foes) this.foes.get(f.uid)?.sync(f, alpha, revealHp, px, py);
   }
 
   // --- world bosses ---
@@ -418,7 +495,13 @@ export class Views {
    *  callbacks: drops are created and destroyed inside the sim (magnet pickup,
    *  despawn, cap eviction) where no view handle is in scope, and a missed
    *  callback would leak a sprite forever. */
-  syncDrops(drops: GroundDrop[], clock: number) {
+  /** N4.6 added `memoryMul`: DropSystem scales the despawn timer by the
+   *  vessel's storage headroom, and the blink-out warning has to be scaled by
+   *  the SAME number or the item starts blinking at a time that has nothing to
+   *  do with when it actually vanishes. A warning that fires at the wrong
+   *  moment is worse than no warning — it teaches the player a schedule the
+   *  game is not keeping. */
+  syncDrops(drops: GroundDrop[], clock: number, memoryMul = 1) {
     for (const d of drops) {
       let v = this.drops.get(d.uid);
       if (!v) {
@@ -427,7 +510,7 @@ export class Views {
         this.drops.set(d.uid, v);
         this.layer.addChild(v.cont);
       }
-      v.sync(d, clock);
+      v.sync(d, clock, memoryMul);
     }
     if (this.drops.size !== drops.length) {
       const live = new Set(drops.map((d) => d.uid));

@@ -120,7 +120,18 @@ export class Minimap {
     }
 
     // ---- danger ----
-    for (const f of foes) dot(f.x, f.y, 1.6, 'rgba(214,90,90,0.9)');
+    // A2: an elite is a different decision than a Gnawer, and the radar is
+    // where you make it — whether to walk toward this wave or around it gets
+    // decided before anything is on screen. Champions are drawn violet and
+    // fractionally larger than elites, elites brass, the rest the ordinary red,
+    // matching the nameplate colours exactly so the radar and the field teach
+    // the same vocabulary.
+    for (const f of foes) {
+      const rank = (f as any).elite?.rank;
+      if (rank === 'champion') dot(f.x, f.y, 2.8, 'rgba(181,108,224,0.95)');
+      else if (rank) dot(f.x, f.y, 2.2, 'rgba(216,168,58,0.95)');
+      else dot(f.x, f.y, 1.6, 'rgba(214,90,90,0.9)');
+    }
     for (const b of state.worldBosses ?? []) {
       const [x, y] = to(b.x, b.y);
       g.fillStyle = '#ff5a4a';

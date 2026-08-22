@@ -41,7 +41,7 @@ import { ScoreboardSystem } from './game/systems/scoreboard';
 import { SoulFeedSystem } from './game/systems/soulfeed';
 import { MaterialEffectSystem } from './game/systems/materialEffects';
 import { craft } from './game/systems/crafting';
-import { activeBoons, activeEffects, moveBurstMul, tickBoons } from './game/systems/effects';
+import { activeBoons, activeEffects, moveBurstMul, tickBoons, venomStacks } from './game/systems/effects';
 import { toggleEquip, invAdd, gearMod, playerMaxHp } from './game/rules';
 import { BUILDINGS } from './game/data/buildings';
 import { NET_GAME_MAP, NET_METRICS, BEACON_INSPECT, LENS_SECTION_INSPECT, allBeacons, type NetInspect } from './game/data/network';
@@ -58,6 +58,7 @@ import { phase, tintAt, startClock } from './game/systems/daynight';
 import { Fog } from './game/world/fog';
 import { domainAt, regionOf, regionKey } from './game/world/domains';
 import { Sound } from './engine/audio';
+import { vesselLine } from './game/systems/vessel';
 import { FloaterSystem } from './game/ui/floaters';
 import { ParticleSystem } from './engine/particles';
 import { PostProcess, type PostProcessConfig } from './engine/postprocess';
@@ -430,6 +431,21 @@ async function boot() {
         kind: 'boon' as const,
         color: b.color,
       })),
+      // A2: venom rides the SECOND row, beside the boons, because that row's
+      // question is "what is true of me right now" and venom is the loudest
+      // possible answer to it. It is not a boon and it is not pretending to be
+      // one — it is red, it says how many stacks, and the row's tooltip names
+      // both halves. A stacking DoT with no HUD presence is a health bar that
+      // empties for no visible reason, which is the one thing a survival meter
+      // must never do.
+      ...(venomStacks(state) > 0 ? [{
+        name: `Venom ×${venomStacks(state)}`,
+        good: false,
+        secs: Math.max(0, Math.ceil((state as any)._venomUntil - state.clock)),
+        blurb: 'what it opened has not closed',
+        kind: 'boon' as const,
+        color: '#8fd05a',
+      }] : []),
     ],
   });
 
@@ -539,6 +555,11 @@ async function boot() {
     input,
     sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, abilities, vitals, lifespan, loom, scoreboard, net, drops, weaves, hub }, world, player, gen, chunks,
     lens, chronicle, omens,   // N4.2/N4.3 test seam: drawer, series store, omens
+    // N4.6 test seam: the Deep Vessel's live reading. Exposed because every
+    // field on it is browser-conditional — a suite has to be able to force a
+    // pressure state or a jank peak and watch the mapping move, and the real
+    // observers cannot be made to fire on demand.
+    vessel: net.vessel,
     minimap,                  // A4 test seam
     mods: { rules: rulesMod, loot: lootMod, items: itemsMod, effects: effectsMod },  // A1 test seam
     get log() { return log; },  // expose full GameLog (entries + export + download)
@@ -562,6 +583,20 @@ async function boot() {
       list: () => regression.list(),
     },
   };
+
+  // N4.6: name the vessel in the Chronicle, once, after the async half has had
+  // a moment to resolve. Deferred rather than awaited because nothing in the
+  // boot path may block on a promise — the game is already playable, and this
+  // is a line of flavour, not a dependency. If the reads never resolve the line
+  // says so ("a vessel that does not name itself") rather than not appearing,
+  // because a missing log line teaches nothing and an honest absence does.
+  setTimeout(() => {
+    net.vessel.start(Sound.context);
+    log.push('system', `The vessel: ${vesselLine(net.vessel.reading)}`, state.clock);
+    if (net.vessel.reading.reducedMotion) {
+      log.push('system', 'Reduced motion is set — the camera will hold still', state.clock);
+    }
+  }, 1200);
 
   // ?test URL param → auto-run the regression suite after a short warm-up
   if (new URLSearchParams(location.search).has('test')) {
@@ -694,6 +729,12 @@ async function boot() {
   function render(alpha: number, frameMs: number) {
     const [fx, fy] = player.render(alpha);
     player.cont.zIndex = fy;
+    // N4.6: honour prefers-reduced-motion. Re-read every frame rather than
+    // latched at boot, because the setting can be toggled mid-session and the
+    // person toggling it is doing so precisely because something on screen is
+    // making them ill right now — a value that only takes effect on the next
+    // page load is not an accessibility setting, it is a promise of one.
+    cam.motionScale = net.vessel.reading.reducedMotion ? 0 : 1;
     cam.follow(fx, fy);
 
     const w = stage.app.screen.width, h = stage.app.screen.height;
@@ -706,9 +747,9 @@ async function boot() {
     chunks.tickGlow(performance.now());
     chunks.tickRelief(state.clock);
 
-    views.syncFoes(hordes.foes, alpha, activeEffects(state).has('see_foe_hp'));
+    views.syncFoes(hordes.foes, alpha, activeEffects(state).has('see_foe_hp'), state.player.x, state.player.y);
     views.syncBosses(state.worldBosses, alpha);
-    views.syncDrops(state.drops, state.clock);   // B5
+    views.syncDrops(state.drops, state.clock, net.getGameValue('dropMemory'));   // B5 + N4.6
     for (const b of state.buildings) views.syncBuilding(b);
 
     const ph = phase(state.clock);

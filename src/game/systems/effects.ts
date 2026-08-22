@@ -3,6 +3,7 @@
 // items declare which effects they carry via ItemDef.effects[].
 // Boss relics use the same system — they're just items with effect keys.
 import { CFG } from '../data/config';
+import { AFFIX_POWER } from '../data/elites';
 import type { Foe } from './hordes';
 
 export interface EffectContext {
@@ -115,6 +116,67 @@ export function armMoveBurst(state: any) {
 export function moveBurstMul(state: any): number {
   return (state.clock ?? 0) < (state._moveBurstUntil ?? 0) ? CFG.itemEffects.moveBurstMul : 1;
 }
+
+// ---- A2: Venom on the player ----------------------------------------------
+//
+// The Venomous affix. Lives here, beside the move-burst window, for exactly the
+// same reason: the arming site (combat.damagePlayer) and the ticking site
+// (combat.update) are the same system today, but the poison-tower DoT proved
+// this shape gets a second caller eventually, and a timer on `state` is
+// findable while a private field on CombatSystem is not.
+//
+// **Stacks, and stacks are what make it a mechanic.** One venom tick is a
+// rounding error against regen; four is a decision about whether to keep
+// fighting. Each application refreshes the whole duration AND adds a stack, so
+// the way out is disengagement — the same counterplay the affix's blurb
+// promises ("what it opens does not close") and the same one Kindled asks for.
+
+/** Land one application. Refreshes the window and adds a stack, to a ceiling. */
+export function applyVenom(state: any) {
+  const P = CFG.a2;
+  if (!P.enabled) return;
+  const now = state.clock ?? 0;
+  // A window that has already lapsed starts the count over rather than
+  // resuming it. Otherwise a foe that poisoned you two minutes ago is still
+  // contributing to a stack you took in a different fight.
+  const live = now < (state._venomUntil ?? 0);
+  state._venomStacks = Math.min(VENOM.maxStacks, (live ? (state._venomStacks ?? 0) : 0) + 1);
+  state._venomUntil = now + VENOM.sec;
+}
+
+/** Damage owed this tick, and 0 when nothing is running — so the caller adds it
+ *  unconditionally rather than branching. Accumulates fractional damage in
+ *  `_venomAcc` and pays out whole points, the same discipline the enemy-side
+ *  poison DoT uses: a health bar that ticks down by 0.032 is a bar that looks
+ *  broken. */
+export function tickVenom(state: any, dt: number): number {
+  const now = state.clock ?? 0;
+  if (now >= (state._venomUntil ?? 0) || !(state._venomStacks > 0)) {
+    state._venomStacks = 0;
+    state._venomAcc = 0;
+    return 0;
+  }
+  state._venomAcc = (state._venomAcc ?? 0) + VENOM.dps * state._venomStacks * dt;
+  const whole = Math.floor(state._venomAcc);
+  if (whole <= 0) return 0;
+  state._venomAcc -= whole;
+  return whole;
+}
+
+/** How many stacks are riding right now — for the HUD, which has to say so.
+ *  An invisible DoT is a health bar that empties for no reason. */
+export function venomStacks(state: any): number {
+  return (state.clock ?? 0) < (state._venomUntil ?? 0) ? (state._venomStacks ?? 0) : 0;
+}
+
+// Read from the affix table rather than duplicated into CFG: the numbers belong
+// beside the affix that spends them, and a second copy here is a second thing
+// to forget during a retune.
+const VENOM = {
+  get dps() { return AFFIX_POWER.venomDps; },
+  get sec() { return AFFIX_POWER.venomSec; },
+  get maxStacks() { return AFFIX_POWER.venomMaxStacks; },
+};
 
 // ---- A8: Boons ------------------------------------------------------------
 //

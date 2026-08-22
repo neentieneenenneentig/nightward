@@ -122,7 +122,12 @@ export class WorldBossSystem {
         b.telegraphT -= dt;
         if (b.telegraphT <= 0) {
           const dPlyNow = Math.hypot(p.x - b.x, (p.y - 10) - b.y);
-          if (dPlyNow < CFG.worldBoss.attackReachPx + CFG.combat.telegraphSlackPx) {
+          // N4.6 Mercy — the same compensation the horde's telegraph gets, and
+          // it matters more here: a lord's swing is the biggest single number
+          // in the game, and losing one to a dropped frame is the worst version
+          // of the unfairness this multiplier exists to remove.
+          const slack = CFG.combat.telegraphSlackPx * (this.ctx.net?.getGameValue?.('mercy') ?? 1);
+          if (dPlyNow < CFG.worldBoss.attackReachPx + slack) {
             this.ctx.damagePlayer(b.dmg, b.name);
             this.ctx.cam.shake?.(7);
           } else {

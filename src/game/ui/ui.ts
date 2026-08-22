@@ -222,7 +222,7 @@ export class UI {
       <div class="nw-badge" id="nw-nights" title="damage · defense · population · territory"></div>
       <div class="nw-badge" id="nw-echoes" style="display:none" title="echoes of the slain"></div>
       <div class="nw-badge" id="nw-omens" style="display:none" title="what the world is doing that it does not normally do — omens, read off the wire"></div>
-      <div class="nw-badge nw-boons" id="nw-boons" style="display:none" title="what is true of YOU that is not normally true — boons, carried from a Wardstone"></div>
+      <div class="nw-badge nw-boons" id="nw-boons" style="display:none" title="what is true of YOU that is not normally true — a boon carried from a Wardstone, or an affliction something put in you"></div>
       <div class="nw-badge nw-domain" id="nw-domain" title="the realm you stand in"></div>
       <div class="nw-spacer"></div>
       <div class="nw-badge nw-btn" id="nw-mute" style="pointer-events:auto" title="sound on/off">&#128266;</div>
@@ -1308,6 +1308,10 @@ export class UI {
           <div><span style="color:var(--metal-hi)">Age at death:</span> ${card.age}</div>
           <div><span style="color:var(--metal-hi)">Nights survived:</span> ${card.nightsSurvived}</div>
           <div><span style="color:var(--metal-hi)">Enemies killed:</span> ${card.enemiesKilled} (${card.bossesSlain} bosses)</div>
+          ${(card.elitesFelled || card.championsFelled)
+            ? `<div><span style="color:var(--metal-hi)">Elites felled:</span> ${card.elitesFelled ?? 0}`
+              + `${card.championsFelled ? `, <span style="color:#b56ce0">${card.championsFelled} champion${card.championsFelled === 1 ? '' : 's'}</span>` : ''}</div>`
+            : ''}
           <div><span style="color:var(--metal-hi)">Buildings:</span> ${card.buildingsBuilt}</div>
           <div><span style="color:var(--metal-hi)">Gold hoarded:</span> ${card.goldHoarded}</div>
           <div><span style="color:var(--metal-hi)">Dominant realm:</span> ${card.dominantRealm}</div>

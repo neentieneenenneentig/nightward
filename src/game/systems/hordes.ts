@@ -6,6 +6,10 @@
 // behind. Knobs in config.horde / config.dayspawn.
 import { CFG } from '../data/config';
 import { ENEMIES, type EnemyDef } from '../data/enemies';
+import {
+  AFFIX_POWER, ELITE_RANKS, ELITE_THREADS, affixDef, championChance, eliteChance,
+  eliteName, rollAffixes, rollEliteGear, type EliteRank,
+} from '../data/elites';
 import { SKILLS } from '../data/skills';
 import { addXp, awardSoulXp, hall, rollLoot, territoryScore } from '../rules';
 import { activeEffects, armMoveBurst } from './effects';
@@ -17,6 +21,13 @@ import { levelUpFlourish } from './flourish';
 import { epithetForRegion, prefixForBirth } from '../data/lexicon';
 
 const SKILL_NAME: Record<string, string> = Object.fromEntries(SKILLS.map((s) => [s.id, s.name]));
+
+/** A2 Anchored: x damage to structures. A free function rather than a method
+ *  because both call sites are inside expressions the reader is already parsing
+ *  a product out of — `* anchored(f)` reads as one more factor, which is
+ *  exactly what it is, and `* this.anchoredMul(f)` would not. */
+const anchored = (f: { elite?: { has: Set<string> } }) =>
+  f.elite?.has.has('anchored') ? AFFIX_POWER.anchoredStructureMul : 1;
 
 export interface Foe {
   uid: number;
@@ -31,6 +42,28 @@ export interface Foe {
   animT: number;
   dayMob?: boolean;   // day prey: wanders near home, never sieges, despawns when far
   homeX?: number; homeY?: number; // wander anchor (day mobs only)
+  /** A2: the rolled elite layer, or absent on an ordinary foe. A single object
+   *  rather than eight loose fields, so `f.elite` is the one truth test every
+   *  consumer asks and there is no way to have a nameplate without a rank. */
+  elite?: EliteState;
+}
+
+/** A2: what one elite roll produced. `has` is a Set because the affix checks run
+ *  in the march step and in hurt(), both of which are per-foe-per-tick paths —
+ *  an includes() over an array is fine at three entries and a Set costs nothing
+ *  to build once at spawn. */
+export interface EliteState {
+  rank: EliteRank;
+  affixes: string[];
+  has: Set<string>;
+  /** "Vigorous Swift Brute" — precomputed, because the nameplate is rebuilt by
+   *  the view on construction and the string never changes after the roll. */
+  name: string;
+  /** Kindled's tick accumulator. Per-foe rather than per-system: two Kindled
+   *  foes standing together should burn you twice, not take turns. */
+  auraT?: number;
+  /** Splitting: set on the lesser copies so one generation is all there is. */
+  spawned?: boolean;
 }
 
 /** X1: a ranged foe's shot in flight — advanced by the SIM tick (never
@@ -163,6 +196,195 @@ export class HordeSystem {
     }
   }
 
+  // ---- A2: elites & champions ---------------------------------------------
+  //
+  // Three methods, in the order they run: decide, apply, escort. Kept together
+  // rather than scattered through spawn()/wake() because the balance guard the
+  // plan warned about is only legible if the whole decision is in one place —
+  // "no more than one of {Vigorous, Warded}" is enforced in data/elites.ts, and
+  // "no more than N elites alive" is enforced here, and a reader needs to be
+  // able to find both without grepping.
+
+  /** How many elites (champions included) are on the field right now. */
+  eliteCount(): number {
+    let n = 0;
+    for (const f of this.foes) if (f.elite) n++;
+    return n;
+  }
+
+  /** Decide whether this spawn is an elite, and what it rolled.
+   *
+   *  Returns null — before touching Math.random — whenever the answer is no, so
+   *  a run with CFG.a2.enabled off consumes the RNG in exactly the pre-A2
+   *  sequence. That is not fastidiousness: the Gauntlet seeds worlds and
+   *  compares spawn sequences, and a feature flag that shifts the random stream
+   *  makes every seeded assertion in the suite disagree with itself depending
+   *  on a boolean it never mentions. */
+  rollElite(night: number, opts: { day?: boolean; cairn?: boolean } = {}): EliteState | null {
+    const A = CFG.a2;
+    if (!A.enabled) return null;
+    if (opts.day && !A.inDaySpawns) return null;
+    if (opts.cairn && !A.inCairns) return null;
+    if (this.eliteCount() >= A.maxAlive) return null;
+
+    const champ = championChance(night) * A.rateMul;
+    const elite = eliteChance(night) * A.rateMul;
+    const r = Math.random();
+    // Champion is tested first and the two windows do not overlap: at night 12
+    // that is a 10% champion and a further 30% elite, not 10% of a 30%. A
+    // nested test would make the champion curve silently depend on the elite
+    // one, so tuning either would move both.
+    const rank: EliteRank | null = r < champ ? 'champion' : r < champ + elite ? 'elite' : null;
+    if (!rank) return null;
+
+    const affixes = rollAffixes(rank, night);
+    // A champion that could afford nothing is not a champion. Can only happen
+    // if a retune drops the night-1 budget below the cheapest affix, and it
+    // would present as a violet nameplate on a foe that plays exactly like its
+    // neighbours — the dormant-row failure, wearing a crown.
+    if (!affixes.length) return null;
+    return { rank, affixes, has: new Set(affixes), name: '' };
+  }
+
+  /** Stamp a rolled elite onto a built foe: stats, name, and the log line.
+   *
+   *  Takes the foe AFTER all the ordinary birth scaling (night growth, the
+   *  wire, the echo) has landed, and multiplies on top of it. An elite is a
+   *  modifier on the foe the night would have produced anyway — computing it
+   *  from `def` would quietly discard four other systems' scaling. */
+  applyElite(f: any, e: EliteState) {
+    f.elite = e;
+    e.name = eliteName(f.epithetName ?? f.def.name, e.affixes);
+
+    if (e.has.has('vigorous')) {
+      f.maxHp = Math.round(f.maxHp * AFFIX_POWER.vigorousHpMul);
+      f.hp = f.maxHp;
+    }
+    // Warded and Swift are read where they are spent — hurt() and the march
+    // step — rather than baked in here, because both have to compose with
+    // things that change every tick (a chill, a tar pit, the Shelled soak).
+    // Baking them would be the classic mistake of turning a multiplier into a
+    // constant and then wondering why the slow tower stopped mattering.
+
+    // The Chronicle gets the blurbs, the toast gets the name. A toast is read
+    // in the half second before the thing reaches you and has room for one
+    // fact; the Chronicle is read afterwards, when "why did that hurt so much"
+    // is the question, and it is the only place the affix vocabulary is ever
+    // spelled out in full. Pillar 7 holds on both: 'the air around it burns',
+    // never 'fire aura, 4 dmg/s'.
+    const R = ELITE_RANKS[e.rank];
+    const told = e.affixes.map((id) => affixDef(id)?.blurb).filter(Boolean).join('; ');
+    this.ctx.log?.push('spawn',
+      `${R.name}: ${e.name} (${f.hp} hp) — ${told}`, this.ctx.state.clock);
+    return f;
+  }
+
+  /** A champion's retinue: `minions` copies of the same type, each carrying ONE
+   *  of the champion's affixes.
+   *
+   *  Sharing an affix rather than rolling fresh ones is the whole design. A pack
+   *  of individually-rolled elites is noise; a pack that all does the same thing
+   *  reads as a THEME — "these are the burning ones" — and a theme is something
+   *  the player can form a plan against in the two seconds they have. */
+  private spawnRetinue(champion: any, e: EliteState) {
+    const { state, world, views } = this.ctx;
+    const R = ELITE_RANKS[e.rank];
+    if (R.minions <= 0) return;
+    const shared = e.affixes[0];
+    for (let i = 0; i < R.minions; i++) {
+      if (CFG.a2.minionsRespectCap && this.foes.length >= CFG.horde.maxAlive) break;
+      let mx = 0, my = 0, placed = false;
+      for (let t = 0; t < 8 && !placed; t++) {
+        const ang = Math.random() * Math.PI * 2;
+        const d = (1.2 + Math.random() * 1.8) * TILE;
+        mx = champion.x + Math.cos(ang) * d;
+        my = champion.y + Math.sin(ang) * d;
+        placed = world.canStand(mx, my, 5);
+      }
+      if (!placed) continue;
+      const hp = Math.max(1, Math.round(champion.maxHp * 0.45));
+      const dmg = Math.max(1, Math.round(champion.baseDmg * 0.7));
+      const minion: any = {
+        uid: state.nextUid++, def: champion.def,
+        x: mx, y: my, px: mx, py: my,
+        hp, maxHp: hp, dmg, baseDmg: dmg,
+        atkT: 0, telegraphT: 0, animT: Math.random() + i * 0.3,
+        echoSoak: 0, echoMoveMul: 1, specialSkill: null,
+        epithetName: champion.def.name, hitCount: 0, blinked: false,
+      };
+      // Rank 'elite' so the retinue reads as brass against the champion's
+      // violet — a pack where every member wears the leader's colour makes the
+      // leader unfindable, which is precisely the target you need to find.
+      const me: EliteState = {
+        rank: 'elite', affixes: [shared], has: new Set([shared]),
+        name: eliteName(champion.def.name, [shared]),
+        // Marked as already-spawned so a Splitting retinue cannot split: the
+        // champion splits into two, each of ITS minions splitting into two more
+        // is sixteen foes out of one kill.
+        spawned: true,
+      };
+      minion.elite = me;
+      this.foes.push(minion);
+      views.addFoe(minion);
+    }
+  }
+
+  /** A2 Splitting: one generation of lesser copies, at the corpse.
+   *
+   *  Called from hurt() BEFORE the loot roll, and deliberately not recursive:
+   *  the copies carry `spawned: true`, which is the flag this method checks.
+   *  Two generations of two is four foes from one kill and reads as a bug; the
+   *  affix wants to be "and now there are two", full stop. */
+  private splitFoe(parent: Foe, e: EliteState) {
+    const { state, world, views } = this.ctx;
+    const P = AFFIX_POWER;
+    for (let i = 0; i < P.splitCount; i++) {
+      if (this.foes.length >= CFG.horde.maxAlive) break;
+      let sx = parent.x, sy = parent.y, placed = false;
+      for (let t = 0; t < 6 && !placed; t++) {
+        const ang = (i / P.splitCount) * Math.PI * 2 + Math.random();
+        const d = (0.6 + Math.random() * 0.9) * TILE;
+        sx = parent.x + Math.cos(ang) * d; sy = parent.y + Math.sin(ang) * d;
+        placed = world.canStand(sx, sy, 5);
+      }
+      // Falls back to the corpse's own tile: the parent was standing there a
+      // frame ago, so it is walkable by construction, and a Splitting foe that
+      // silently fails to split in a corridor is a mechanic that stops working
+      // exactly where the player most expects it to.
+      if (!placed) { sx = parent.x; sy = parent.y; }
+      const hp = Math.max(1, Math.round(parent.maxHp * P.splitHpMul));
+      const dmg = Math.max(1, Math.round((parent.baseDmg ?? parent.def.dmg) * P.splitDmgMul));
+      const copy: any = {
+        uid: state.nextUid++, def: parent.def,
+        x: sx, y: sy, px: sx, py: sy,
+        hp, maxHp: hp, dmg, baseDmg: dmg,
+        atkT: parent.def.atkCooldown, telegraphT: 0, animT: Math.random(),
+        echoSoak: 0, echoMoveMul: 1, specialSkill: null,
+        epithetName: parent.def.name, hitCount: 0, blinked: false,
+        dayMob: parent.dayMob, homeX: parent.homeX, homeY: parent.homeY,
+        // Carries the affix so the copies still read as the same thing that
+        // just died — and `spawned` so they cannot split again.
+        elite: {
+          rank: 'elite' as EliteRank, affixes: ['splitting'],
+          has: new Set(['splitting']), name: eliteName(parent.def.name, ['splitting']),
+          spawned: true,
+        },
+      };
+      this.foes.push(copy);
+      views.addFoe(copy);
+    }
+    this.ctx.log?.push('combat', `${e.name} comes apart`, state.clock);
+  }
+
+  /** The base id an elite corpse is guaranteed to hand over. Uses the CURRENT
+   *  night rather than the night the foe spawned on, because a foe that
+   *  survived to dawn and died the next night is a foe that survived a night —
+   *  and the alternative is storing a birth night on every foe in the game to
+   *  serve one branch. */
+  private eliteReward(f: Foe, e: EliteState): string {
+    return rollEliteGear(Math.max(1, this.ctx.nightIndex?.() ?? 1));
+  }
+
   private spawn() {
     const { state, world, views } = this.ctx;
     const n = this.ctx.nightIndex();
@@ -250,8 +472,22 @@ export class HordeSystem {
     foe.epithetName = epithetName;
     foe.hitCount = 0;
     foe.blinked = false;
+    // A2: rolled BEFORE the view is created, because FoeView reads `elite` in
+    // its constructor to build the nameplate and the aura ring. Stamping the
+    // affixes on afterwards would give the first elite of every run a plain
+    // sprite until something happened to rebuild it — which is nothing, ever.
+    // Bosses are excluded: a domain lord that also rolled Vigorous would be a
+    // 1540-hp Nullmaw, and the five biggest fights in the game are hand-tuned
+    // for a reason.
+    const rolled = def.boss ? null : this.rollElite(n);
+    if (rolled) this.applyElite(foe, rolled);
     this.foes.push(foe);
     views.addFoe(foe);
+    if (rolled) {
+      const R = ELITE_RANKS[rolled.rank];
+      this.ctx.toast(`${R.name} — ${rolled.name}`, 'bad');
+      this.spawnRetinue(foe, rolled);
+    }
     this.toSpawn--;
     // X1: swarm enemies spawn in packs — extra copies in a cluster
     if (def.behavior?.kind === 'swarm' && (def.behavior.swarmSize ?? 1) > 1) {
@@ -333,8 +569,19 @@ export class HordeSystem {
         echoSoak: 0, echoMoveMul: 1, specialSkill: null, epithetName: def.name,
         hitCount: 0, blinked: false,
       };
+      // A2: a barrow can hold something that was buried with honours. Gated on
+      // CFG.a2.inCairns rather than sharing the night-wave path, because a
+      // Cairn is a fight the player chose to start and a night wave is one that
+      // arrives whether they are ready or not — those two deserve separate
+      // dials even when they currently hold the same value.
+      const rolled = this.rollElite(n, { cairn: true });
+      if (rolled) this.applyElite(foe, rolled);
       this.foes.push(foe);
       views.addFoe(foe);
+      if (rolled) {
+        this.ctx.toast(`${ELITE_RANKS[rolled.rank].name} — ${rolled.name}`, 'bad');
+        this.spawnRetinue(foe, rolled);
+      }
       woke++;
     }
     return woke;
@@ -376,8 +623,16 @@ export class HordeSystem {
       atkT: 0, telegraphT: 0, animT: Math.random(),
       dayMob: true, homeX: x, homeY: y,
     };
+    // A2: off by default (CFG.a2.inDaySpawns) and wired anyway, because a flag
+    // whose 'on' branch does not exist is not a flag, it is a comment. The
+    // Hoarder is excluded whatever the flag says — an elite whose entire
+    // behaviour is running away would just be a faster loss.
+    const rolled = def.behavior?.kind === 'flee'
+      ? null : this.rollElite(this.ctx.nightIndex?.() ?? 1, { day: true });
+    if (rolled) this.applyElite(foe as any, rolled);
     this.foes.push(foe);
     views.addFoe(foe);
+    if (rolled) this.ctx.toast(`${ELITE_RANKS[rolled.rank].name} — ${rolled.name}`, 'bad');
     const s = this.ctx.net?.snap;
     this.ctx.log?.push('spawn', `A ${def.name} prowls into view (${foe.hp} hp)`, state.clock);
   }
@@ -402,13 +657,40 @@ export class HordeSystem {
 
     const p = state.player;
 
+    // A2 Kindled: the ring that burns. Ticked here — above the telegraph return
+    // — so a Kindled foe frozen mid-swing still burns you, which is the point:
+    // the affix is about PRESENCE, and a fire that pauses while its owner winds
+    // up would teach the player to stand in it during exactly the wrong second.
+    if (f.elite?.has.has('kindled') && !state.gameOver) {
+      const e = f.elite;
+      e.auraT = (e.auraT ?? 0) + dt;
+      if (e.auraT >= AFFIX_POWER.kindledSec) {
+        e.auraT = 0;
+        const r = AFFIX_POWER.kindledTiles * TILE;
+        if (Math.hypot(p.x - f.x, (p.y - 10) - f.y) < r) {
+          // Routed through damagePlayer rather than subtracting hp, so armour,
+          // dodge, thorns, the Resolve multiplier and the soul-gear xp all fire
+          // exactly as they do for a bite. An affix that bypassed the damage
+          // pipeline would be an affix your gear cannot answer.
+          this.ctx.damagePlayer(AFFIX_POWER.kindledDmg, `${f.def.name}'s burning air`, f);
+        }
+        this.ctx.particles?.spawn?.('ember', f.x, f.y - 4, 2);
+      }
+    }
+
     // committed to an already-telegraphed hit — frozen mid-swing regardless of
     // what the player does next; only the final distance check decides hit/whiff
     if (f.telegraphT > 0) {
       f.telegraphT -= dt;
       if (f.telegraphT <= 0) {
         const dpNow = Math.hypot(p.x - f.x, (p.y - 10) - f.y);
-        if (dpNow < 24 + CFG.combat.telegraphSlackPx) this.ctx.damagePlayer(f.dmg, f.def.name, f);
+        // N4.6 Mercy: slack is the ENEMY's forgiveness — the distance at which
+        // a committed swing still connects after you moved. A machine dropping
+        // long frames is one where your dodge input landed inside a stall you
+        // could not see coming, so measured jank shrinks this and your dodges
+        // land. 1.0 on a smooth machine, and 1.0 wherever LoAF is unsupported.
+        const slack = CFG.combat.telegraphSlackPx * (this.ctx.net?.getGameValue?.('mercy') ?? 1);
+        if (dpNow < 24 + slack) this.ctx.damagePlayer(f.dmg, f.def.name, f);
         else this.ctx.log?.push('combat', `${f.def.name} lunges and misses`, state.clock);
       }
       return;
@@ -490,7 +772,7 @@ export class HordeSystem {
         const wdist = Math.hypot(tx - f.x, ty - f.y);
         if (wdist < 48 && f.atkT <= 0) {
           f.atkT = f.def.atkCooldown;
-          this.damageBuilding(nearestWall, Math.round(f.dmg * (beh.structureDmgMul ?? 2)), f);
+          this.damageBuilding(nearestWall, Math.round(f.dmg * (beh.structureDmgMul ?? 2) * anchored(f)), f);
           return;
         }
       }
@@ -544,7 +826,7 @@ export class HordeSystem {
     if (!targetPlayer && !f.dayMob && dist < 42) {
       if (f.atkT <= 0) {
         f.atkT = f.def.atkCooldown;
-        this.damageBuilding(h!, f.dmg * (beh?.structureDmgMul ?? 1), f);
+        this.damageBuilding(h!, f.dmg * (beh?.structureDmgMul ?? 1) * anchored(f), f);
       }
       return;
     }
@@ -623,8 +905,12 @@ export class HordeSystem {
         anyF._tiredSaid = false;
       }
     }
+    // A2 Swift: into the same product as every other speed modifier, never
+    // replacing it. That is the difference between "Swift foes are faster" and
+    // "Swift foes ignore your slow tower", and only the first one is a design.
+    const swift = f.elite?.has.has('swift') ? AFFIX_POWER.swiftSpeedMul : 1;
     const pace = spooked ? flee : (f.dayMob && !targetPlayer ? 0.4 : 1);
-    let step = f.def.speed * dt * pace * terrain * fear * chill * aura * towerSlow * tarSlow * fray * surge;
+    let step = f.def.speed * dt * pace * terrain * fear * chill * aura * towerSlow * tarSlow * fray * surge * swift;
     step *= buffSpeedMul;
     if (stunned) step = 0;
     let blocked: Building | null = null;
@@ -887,6 +1173,21 @@ export class HordeSystem {
     // feedsVitals defaults to awardXp (backward compat: swings feed both,
     // towers feed neither). Echoes pass awardXp=false, feedsVitals=true.
     const feedVitals = feedsVitals ?? awardXp;
+    // A2 Warded: a flat bite off every hit, and it never depletes.
+    //
+    // Applied BEFORE the Shelled soak on purpose. Shelled is a shield with a
+    // budget, so letting Warded eat first means the shield lasts the same
+    // number of HITS either way — which is what "a shell that cracks after
+    // three" promises. The other order would make a Warded Shelled foe's shell
+    // effectively permanent against a low-damage weapon, and nothing on screen
+    // would explain why.
+    //
+    // The floor is 1, matching damagePlayer()'s: an attack that connects always
+    // does something. Warded is meant to make chip damage bad, not to make a
+    // Flint Axe literally incapable of killing.
+    if (f.elite?.has.has('warded') && dmg > 0) {
+      dmg = Math.max(1, dmg - AFFIX_POWER.wardedSoak);
+    }
     // N2a: Shelled soak — extra soak until hit 3 times
     const ef = f as any;
     if (ef.echoSoak > 0) {
@@ -945,10 +1246,25 @@ export class HordeSystem {
       this.ctx.particles?.spawn?.('wisp', state.player.x, state.player.y - 8, 3);
     }
     // W6: track kills for scoreboard
-    this.ctx.scoreboard?.onKill?.(!!f.def.boss);
+    this.ctx.scoreboard?.onKill?.(!!f.def.boss, f.elite?.rank ?? null);
+
+    // A2: the elite layer's payouts. Read once here so gold, xp, the loot band
+    // and the thread roll all agree about what died — four separate lookups of
+    // `f.elite` is four chances for one of them to be forgotten by the next
+    // person to touch this function, which is the shape of every dormant row
+    // this project has had to dig back out.
+    const el = f.elite;
+    const rank = el ? ELITE_RANKS[el.rank] : null;
+
+    // A2 Splitting: it comes apart. Before the loot roll, so the copies are on
+    // the field while the coins are still bouncing — the whole beat of the
+    // affix is "you killed it and the fight got bigger", and it lands flat if
+    // the copies appear a second later.
+    if (el?.has.has('splitting') && !el.spawned) this.splitFoe(f, el);
 
     const [gMin, gMax] = f.def.gold;
     let goldWon = gMin + Math.floor(Math.random() * (gMax - gMin + 1));
+    if (rank) goldWon = Math.round(goldWon * rank.goldMul);
     // X1: Miser's Charm — player kills pay out more gold
     if (awardXp && activeEffects(state).has('gold_find')) goldWon = Math.round(goldWon * 1.25);
     // B5 Q2: awardGold decides — from CFG.drops.goldDrops — whether this is a
@@ -965,11 +1281,31 @@ export class HordeSystem {
     // 'common' exactly as it always has — and the one corpse in the game worth
     // a wide spread gets one, because a hoard that lands in a single pile does
     // not look like a hoard.
-    this.ctx.drops.spawn(rollLoot(f.def.loot), f.x, f.y,
-      { band: f.def.lootBand ?? 'common', spread: f.def.lootBand ? 2.4 : 1 });
+    //
+    // A2: an elite corpse rolls on the `elite` band and a champion's on
+    // `champion` — the two LOOT_BANDS rows A1 authored and left dormant with a
+    // comment naming this milestone as their first consumer. The band OUTRANKS
+    // the def's own, which only the Hoarder sets, and a Hoarder cannot be elite
+    // (see spawnDayMob), so the two can never actually contend.
+    const stacks = rollLoot(f.def.loot);
+    if (rank) {
+      // The guaranteed drop. A band sets which RUNGS are reachable; it cannot
+      // conjure an item out of a loot table that rolled nothing, and "guaranteed
+      // Touched+" has to mean the corpse actually produces something. Without
+      // this an elite is a harder fight for a 40% chance of two berries.
+      stacks.push({ id: this.eliteReward(f, el!), n: 1 });
+      if (Math.random() < rank.threadChance) {
+        stacks.push({ id: ELITE_THREADS[(Math.random() * ELITE_THREADS.length) | 0], n: 1 });
+      }
+    }
+    this.ctx.drops.spawn(stacks, f.x, f.y, {
+      band: rank ? rank.band : (f.def.lootBand ?? 'common'),
+      spread: rank || f.def.lootBand ? 2.4 : 1,
+    });
     if (awardXp) {
-      const lvl = addXp(state, 'combat', f.def.xp);
-      toast(`+${f.def.xp} ${SKILL_NAME['combat']} xp`);
+      const xpWon = Math.round(f.def.xp * (rank?.xpMul ?? 1));
+      const lvl = addXp(state, 'combat', xpWon);
+      toast(`+${xpWon} ${SKILL_NAME['combat']} xp`);
       // B6: combat levels were entirely silent before this — no sound, no flourish
       if (lvl) { levelUpFlourish(this.ctx); toast(`Combat reached level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Combat reached level ${lvl}`, state.clock); }
       if (state.player.equip?.charm) {

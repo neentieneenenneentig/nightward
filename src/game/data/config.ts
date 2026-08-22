@@ -447,6 +447,46 @@ export const CFG = {
     deltaEpsilon: 0.05,
   },
 
+  // A2 — Elites & champions. The rolled-affix layer on the night wave.
+  //
+  // `enabled: false` is a real revert and not a mute: with the flag off
+  // HordeSystem.rollElite() returns null before it touches Math.random, so a
+  // wave is byte-for-byte its pre-A2 self — same spawn sequence, same stats,
+  // same loot bands. The same discipline as CFG.drops.enabled, CFG.loot.enabled
+  // and CFG.a8.enabled, and it matters more here than for any of them: A2 is
+  // the milestone the plan itself predicted would make nights unwinnable.
+  //
+  // The affix vocabulary, the conflict groups, the per-night budget and the
+  // power numbers all live in data/elites.ts. What is HERE is only what the
+  // systems layer needs to decide whether and how often — a balance pass on
+  // "how many elites" should never have to read the affix table, and a balance
+  // pass on "how strong is Vigorous" should never have to read this file.
+  a2: {
+    enabled: true,
+    /** Global x on eliteChance()/championChance(). One number to make the whole
+     *  layer rarer or thicker without touching the two curves, which are shaped
+     *  (a floor, a slope and a cap) and would lose their shape to hand-edits. */
+    rateMul: 1.0,
+    /** Elites in day spawns too? Off: a day roamer is loot on legs and the day
+     *  is the part of the loop with no pressure in it by design. A Vigorous
+     *  Gnawer ambushing a player mid-gather is a different game than the one
+     *  the day/night cycle promises. Left as a switch because the Hoarder
+     *  proved the day CAN hold an event — but that event was opt-in, and this
+     *  one would not be. */
+    inDaySpawns: false,
+    /** Elites among the woken dead of a Cairn? On. A Cairn is already an opt-in
+     *  fight the player chose to start, which is exactly the shape that earns a
+     *  spike, and the Cairn's Hallowed-tier payout already prices it. */
+    inCairns: true,
+    /** Cap on elites alive at once, so a long night cannot accumulate a field
+     *  of them faster than the player can clear it. Champions count too. */
+    maxAlive: 6,
+    /** Champions arrive with minions. This caps the retinue against the horde's
+     *  own maxAlive so a champion spawning into a nearly-full field does not
+     *  silently eat the last four slots of the wave. */
+    minionsRespectCap: true,
+  },
+
   // A8 — Cairns, Wardstones and the Hoarder: the three things in the world
   // that are neither a resource node nor a siege.
   //

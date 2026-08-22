@@ -16,6 +16,9 @@ import {
 } from '../data/network';
 import { biomeForConnection, biomeForProfile, BIOMES, type BiomeDef } from '../data/biomes';
 import { DeepWire } from './deepwire';
+import { Vessel } from './vessel';
+import { maskEvidence, protocolReality, straightPath } from './truths';
+import { Sound } from '../../engine/audio';
 
 function noNet(): boolean {
   try {
@@ -79,6 +82,11 @@ class NetGate {
 }
 
 export class NetworkSystem {
+  /** N4.6: the machine this run is happening inside. Public so the Lens can
+   *  read the FULL reading — the snapshot carries only the four scalars the
+   *  mapping tables need. */
+  readonly vessel = new Vessel();
+
   private gate = new NetGate();
   private baseHref = (() => {
     try { return new URL(document.baseURI).href; } catch { return '/'; }
@@ -527,6 +535,19 @@ export class NetworkSystem {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       jsHeapUsedMB: (performance as any).memory?.usedJSHeapSize ? (performance as any).memory.usedJSHeapSize / 1e6 : 50,
       jsHeapTotalMB: (performance as any).memory?.totalJSHeapSize ? (performance as any).memory.totalJSHeapSize / 1e6 : 100,
+      // N4.6: the Deep Vessel's scalars, all at their neutral values. A browser
+      // that answers none of them plays exactly the game a browser that answers
+      // all of them plays, which is pillar 5 and is the common case here rather
+      // than the edge case — nearly every API behind these is Chromium-only.
+      cpuPressure: 0,
+      cpuPressureState: 'unknown',
+      jankMs: 0,
+      jankLive: false,
+      storageFreeFrac: 1,
+      audioSampleRate: 0,
+      // N4.7: 0 is "no reading", not "infinitely efficient". Every consumer
+      // checks for it before dividing or transforming.
+      pathEfficiency: 0,
     };
   }
 
@@ -561,7 +582,45 @@ export class NetworkSystem {
       this.snap.jsHeapUsedMB = mem.usedJSHeapSize / 1e6;
       this.snap.jsHeapTotalMB = (mem.totalJSHeapSize ?? mem.usedJSHeapSize) / 1e6;
     }
+    this.pollVessel();
   }
+
+  /** N4.6 — the Deep Vessel.
+   *
+   *  Rides the existing sensor poll rather than owning a timer. The observers
+   *  inside Vessel are callback-driven (the OS pushes CPU pressure; the browser
+   *  pushes long frames), so all this does is roll the jank window forward and
+   *  copy four scalars onto the snapshot for SENSORS and NET_GAME_MAP to read.
+   *
+   *  `start()` is idempotent and re-reads the SYNCHRONOUS half each time, which
+   *  is the point: the display and preference reads are the ones that actually
+   *  change mid-session — a window dragged to a second monitor, a theme
+   *  switched, reduced-motion toggled by someone who just got a headache. */
+  private pollVessel() {
+    try {
+      this.vessel.start(this.audioCtx ?? Sound.context);
+      this.vessel.tick();
+      const r = this.vessel.reading;
+      this.snap.cpuPressure = r.pressureFrac;
+      this.snap.cpuPressureState = r.pressure;
+      this.snap.jankMs = r.jankMs;
+      this.snap.jankLive = r.jankLive;
+      this.snap.storageFreeFrac = r.storageFreeFrac;
+      this.snap.audioSampleRate = r.sampleRate;
+      // N4.7: the straight path rides this poll too. It is pure arithmetic over
+      // readings already taken — no request, no observer — so recomputing it
+      // every ten seconds costs a haversine and picks up a colo that only
+      // named itself after the first trace landed.
+      this.snap.pathEfficiency = this.straightPath().efficiency;
+    } catch { /* a vessel that will not answer is a vessel at neutral */ }
+  }
+
+  /** The engine's AudioContext, handed in by main() so the vessel can read the
+   *  hardware pipeline without constructing a SECOND one. Optional: a run with
+   *  audio disabled reports sampleRate 0, which the Lens prints as
+   *  'unavailable' rather than inventing 48 kHz. */
+  setAudioContext(ctx: any) { this.audioCtx = ctx; }
+  private audioCtx: any = null;
 
   private pollConnection(nowMs: number) {
     if (nowMs - this.lastPollMs < 1000) return;
@@ -1293,6 +1352,47 @@ export class NetworkSystem {
       this.snap.isp = r.ip.replace(/\.$/, '');
       this.netLog('net-ep', `Reverse DNS: ${ip} → ${this.snap.isp}`);
     }
+  }
+
+  // ---- N4.7: derived truths ------------------------------------------------
+  //
+  // Three inferences over readings earlier milestones already paid for. No new
+  // requests, no new observers, no new state — each is a pure function of the
+  // snapshot plus the vessel, computed on demand. They are METHODS rather than
+  // snapshot fields for exactly that reason: a field would have to be kept
+  // fresh by something, and there is nothing to keep fresh.
+
+  /** N4.7 — speed-of-light efficiency, and the physical horizon beside it. */
+  straightPath() {
+    return straightPath(this.snap, this.vessel.reading.timeZone);
+  }
+
+  /** N4.7 — VPN/proxy evidence, hedged. Four independent signals, a confidence
+   *  band, never a verdict about the person. */
+  maskEvidence() {
+    // `snap.isp` is the reverse-DNS PTR of the public IP, which N4.0 resolves
+    // and stores under that name because ISP-ish naming is what it is FOR.
+    return maskEvidence(this.snap, this.vessel.reading.timeZone,
+      this.vessel.reading.languages, this.snap.isp === '...' ? '' : this.snap.isp,
+      // The fifth signal is the straight path's own contradiction check: a
+      // reach past the physical horizon proves the timezone is not where the
+      // machine is. Passed in rather than recomputed so the panel and the
+      // evidence can never disagree about the same arithmetic.
+      this.straightPath());
+  }
+
+  /** N4.7 — which wire protocol each host actually negotiated. Free: the
+   *  browser has been filling these entries in since the page loaded and
+   *  nothing has ever read `nextHopProtocol`. */
+  protocolReality() {
+    let entries: any[] = [];
+    try {
+      entries = [
+        ...performance.getEntriesByType('navigation'),
+        ...performance.getEntriesByType('resource'),
+      ] as any[];
+    } catch { /* a browser without the buffer reports nothing, honestly */ }
+    return protocolReality(entries);
   }
 
   /** Snapshot of outbound request accounting — the Lens shows this verbatim. */

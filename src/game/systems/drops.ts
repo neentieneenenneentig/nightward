@@ -266,8 +266,13 @@ export class DropSystem {
       }
 
       // --- 4. despawn ---
+      // N4.6 Drop Memory: how long the ground remembers what fell on it, scaled
+      // by the vessel's own storage headroom. A full hold lets go sooner. Gear
+      // is exempt above whatever the wire says — the one thing a player must
+      // never lose to a machine-shaped reason is the item they were walking to.
       if (d.gear && D.gearNeverDespawns) continue;
-      if (state.clock - d.bornT >= D.despawnSec) drops.splice(i, 1);
+      const memory = D.despawnSec * (this.ctx.net?.getGameValue?.('dropMemory') ?? 1);
+      if (state.clock - d.bornT >= memory) drops.splice(i, 1);
     }
 
     this.flushToasts();

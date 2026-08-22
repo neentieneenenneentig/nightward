@@ -9,6 +9,8 @@
 // still renders and says WHY — a missing row teaches nothing, and "unavailable"
 // with no reason is indistinguishable from a bug.
 import { NET_GAME_MAP } from '../../data/network';
+import { pressureFiction } from '../../systems/vessel';
+import { protoName } from '../../systems/truths';
 import { NET_LOG_LABELS, styleNetworkMsg } from '../ui';
 import { escapeHtml, fmt, note, row, section, sparkline, type LensCtx, type LensTab } from './core';
 
@@ -127,6 +129,62 @@ const paths: LensTab = {
         ? row('IPv6', 'seen', { inspect: 'identity-ipv6', quality: 'measured' })
         : row('IPv6', 'not yet seen', { inspect: 'identity-ipv6', quality: 'unavailable', why: 'no host with an AAAA record has been resolved yet' })));
 
+    // N4.7 — THE STRAIGHT PATH. Speed-of-light efficiency, and the hard
+    // physical horizon beside it.
+    //
+    // Two rows, deliberately, because they are honest about different things.
+    // THE HORIZON needs no coordinate at all — it is the speed of light in
+    // fibre and a measured round trip, so it is `measured` and it cannot be
+    // wrong. THE REACH needs a guess at where the player is, taken from the
+    // timezone, so it is `derived` and its error bar is printed rather than
+    // buried. Showing only the second would be presenting an estimate with the
+    // authority of a measurement.
+    const sp = net.straightPath?.();
+    if (sp) {
+      const effCol = sp.efficiency <= 0 ? undefined
+        : sp.efficiency < 1.6 ? '#7fd6a0' : sp.efficiency < 2.5 ? '#d8c07a' : '#f08a6a';
+      out += section('THE STRAIGHT PATH',
+        row('Edge', sp.colo ? escapeHtml(sp.colo) + (sp.coloKnown ? '' : ' (not in the table)') : '\u2014',
+            sp.coloKnown ? { inspect: 'identity-colo', quality: 'reported' }
+              : { quality: 'unavailable', why: 'the colo table carries the largest ~110 codes; an unlisted one gets no position rather than a made-up one' })
+        + row('Horizon', sp.horizonKm ? `\u2264 ${sp.horizonKm.toLocaleString()} km` : 'unavailable',
+            sp.horizonKm
+              ? { inspect: 'pathEff', quality: 'measured', why: `light in fibre covers 204 km/ms; at ${sp.rttMs.toFixed(1)} ms round trip the far end cannot be further than this` }
+              : { quality: 'unavailable', why: 'no round trip has been measured yet' })
+        + row('Reach', sp.reachKm ? `${sp.reachKm.toLocaleString()} \u00b1 ${sp.reachErrKm.toLocaleString()} km` : 'unavailable',
+            sp.reachKm ? { quality: 'derived', why: 'great-circle from a TIMEZONE-estimated position \u2014 longitude is good to about a zone width, latitude is the weak axis' }
+              : { quality: 'unavailable', why: escapeHtml(sp.verdict) })
+        + row('Fibre floor', sp.floorMs ? fmt(sp.floorMs, 1, 'ms') : '\u2014', { quality: 'derived' })
+        + row('Efficiency', sp.efficiency > 0 ? `\u00d7${sp.efficiency.toFixed(2)}` : 'unavailable',
+            sp.efficiency > 0 ? { inspect: 'homeward', quality: 'derived', color: effCol }
+              : { inspect: 'homeward', quality: 'unavailable', why: escapeHtml(sp.verdict) })
+        + row('Measured from', escapeHtml(sp.rttSource), { quality: 'reported' })
+        + (sp.efficiency > 0 ? note(escapeHtml(sp.verdict)) : '')
+        + note('Measured round trip against the round trip physics allows for that distance. 1.0 means '
+          + 'your packets went straight; 3.0 means they toured. The kernel min_rtt is used where the '
+          + 'deep wire reaches, because connection.rtt is quantised to 25 ms buckets and at short '
+          + 'distances the bucket is bigger than the whole measurement.'));
+    }
+
+    // N4.7 — PROTOCOL REALITY. Free: the browser has been filling these entries
+    // in since the page loaded and nothing has ever read nextHopProtocol.
+    const pr = net.protocolReality?.();
+    if (pr) {
+      const protoRows = Object.entries(pr.counts)
+        .sort((a, b) => (b[1] as number) - (a[1] as number))
+        .map(([p, n]) => row(escapeHtml(protoName(p)), `${n} of ${pr.readable}`,
+          { quality: 'reported', color: p.startsWith('h3') ? '#7fd6a0' : p === 'http/1.1' ? '#f08a6a' : undefined }))
+        .join('');
+      out += section('PROTOCOL REALITY',
+        (protoRows || row('nothing readable', '\u2014',
+          { quality: 'unavailable', why: 'cross-origin entries without Timing-Allow-Origin report a blank protocol' }))
+        + row('Unreadable', `${pr.total - pr.readable} of ${pr.total} entries`, { quality: 'derived' })
+        + (pr.readable ? note(escapeHtml(pr.verdict)) : '')
+        + note('QUIC and TCP behave completely differently under loss \u2014 h3 has no head-of-line '
+          + 'blocking, so the same 2% loss that ruins an HTTP/1.1 page is nearly invisible on HTTP/3. '
+          + 'The fray reading has been treating those two situations as identical.'));
+    }
+
     const probes = s.endpointProbes ?? [];
     const seen = new Set<string>();
     let shallow = '';
@@ -180,6 +238,31 @@ const identity: LensTab = {
       + row('Clock drift', `${net.clockSkewMs > 0 ? '+' : ''}${(net.clockSkewMs / 1000).toFixed(2)}s`,
           { inspect: 'identity-skew', quality: 'derived' }));
 
+    // N4.7 — THE MASKING. Evidence with confidence, never a verdict.
+    //
+    // A false positive here accuses a player of something. Somebody living
+    // abroad, running a browser in a second language, or on a mobile carrier
+    // whose CGNAT reverse-DNS happens to say "cloud" must never see the word
+    // VPN stated as fact. So: every signal is shown with what it actually
+    // compared, the weights are visible, and the summary describes the EVIDENCE
+    // rather than the person.
+    const mask = net.maskEvidence?.();
+    if (mask) {
+      const bandCol = { none: '#7fd6a0', weak: '#8fb6e8', mixed: '#d8c07a', strong: '#f08a6a' }[mask.band];
+      out += section('THE MASKING',
+        mask.signals.map((sig: any) => row(
+          `${sig.hit ? '\u25cf' : '\u25cb'} ${escapeHtml(sig.name)}`,
+          `${escapeHtml(sig.detail)} <span style="color:#5a5a6e;">w ${sig.weight.toFixed(2)}</span>`,
+          { quality: 'derived', color: sig.hit ? '#f08a6a' : undefined })).join('')
+        + row('Confidence', `${(mask.confidence * 100).toFixed(0)}% \u00b7 ${escapeHtml(mask.band)}`,
+            { quality: 'derived', color: bandCol })
+        + note(escapeHtml(mask.verdict))
+        + note('Four independent signals, each individually weak. Any one of them has an innocent '
+          + 'explanation; three agreeing is a strong case, and a strong case is still not proof. '
+          + 'A signal whose inputs are unknown is SKIPPED rather than counted as a miss \u2014 "we could '
+          + 'not check" is not evidence either way. Nothing here is transmitted anywhere.'));
+    }
+
     out += section('WHAT WE CANNOT SEE',
       row('LAN / gateway', 'unavailable', { quality: 'unavailable', why: 'a browser cannot enumerate the local network' })
       + row('ICMP / traceroute', 'unavailable', { quality: 'unavailable', why: 'raw sockets are not available to page JavaScript' })
@@ -197,34 +280,98 @@ const vessel: LensTab = {
   title: 'VESSEL',
   render({ net }) {
     const s = net.snap;
+    const v = net.vessel?.reading;
     const ua = navigator.userAgent;
     const brand = /Edg|Chrome|Firefox|Safari/.exec(ua)?.[0] ?? '—';
-    let gpu = '—';
-    try {
-      const c = document.createElement('canvas');
-      const gl: any = c.getContext('webgl2') || c.getContext('webgl');
-      if (gl) {
-        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
-        gpu = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
-      }
-    } catch { /* a hardened browser may refuse; that is a reading too */ }
+
+    // N4.6: read from the Vessel system, NOT from a canvas built here.
+    //
+    // The previous version of this tab created a WebGL context on every render
+    // to ask for the GPU string. This panel refreshes at 4 Hz while open, and
+    // browsers cap live WebGL contexts (16 in Chrome) — so a Lens left open for
+    // four seconds could evict the context the GAME is rendering with. The
+    // Vessel reads it once at boot and calls WEBGL_lose_context immediately.
+    const yes = (b: boolean) => b ? 'yes' : 'no';
+    const bytes = (n: number) => n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB`
+      : n >= 1e6 ? `${(n / 1e6).toFixed(0)} MB` : `${(n / 1e3).toFixed(0)} kB`;
 
     let out = section('MACHINE',
       row('Browser', escapeHtml(brand), { inspect: 'vessel-ua', quality: 'reported' })
+      + (v?.uaDeep
+        ? row('System', escapeHtml([v.platform, v.platformVersion].filter(Boolean).join(' ')), { quality: 'reported' })
+          + row('Architecture', escapeHtml([v.architecture, v.bitness && v.bitness + '-bit'].filter(Boolean).join(' / ') || '—'), { quality: 'reported' })
+          + (v.model ? row('Model', escapeHtml(v.model), { quality: 'reported' }) : '')
+        : row('System', 'unavailable',
+            { quality: 'unavailable', why: 'getHighEntropyValues() is Chromium-only — Firefox and Safari give the UA string and nothing more' }))
       + row('CPU cores', fmt(s.cpuCores, 0), { quality: 'reported' })
       + row('Device memory', fmt(s.deviceMemory, 0, 'GB'), { quality: 'reported' })
-      + row('GPU', escapeHtml(String(gpu).slice(0, 64)), { inspect: 'vessel-gpu', quality: 'reported' })
-      + row('Screen', `${screen.width}×${screen.height} @${devicePixelRatio}x`, { inspect: 'vessel-screen', quality: 'reported' })
-      + row('Locale', escapeHtml(s.locale || navigator.language), { quality: 'reported' })
-      + row('Timezone', escapeHtml(s.timezone), { quality: 'reported' }));
+      + row('GPU', escapeHtml(String(v?.gpuRenderer || '—').slice(0, 64)),
+          v?.gpuUnmasked
+            ? { inspect: 'vessel-gpu', quality: 'reported' }
+            : { inspect: 'vessel-gpu', quality: 'unavailable', why: 'the unmasked-renderer extension was withheld — what is shown is the scrubbed marketing string, not the chip' })
+      + (v?.gpuVendor ? row('GPU vendor', escapeHtml(v.gpuVendor.slice(0, 40)), { quality: 'reported' }) : ''));
 
-    out += section('STATE',
-      row('Battery', s.batteryLevel >= 0 ? `${(s.batteryLevel * 100).toFixed(0)}%${s.batteryCharging ? ' ⚡' : ''}` : 'unavailable',
-          s.batteryLevel >= 0 ? { quality: 'reported' }
-            : { quality: 'unavailable', why: 'the Battery Status API is Chromium-only and may be disabled' })
+    out += section('DISPLAY',
+      row('Screen', `${screen.width}×${screen.height} @${devicePixelRatio}x`, { inspect: 'vessel-screen', quality: 'reported' })
+      + row('Dynamic range', v?.hdr ? 'high (HDR)' : 'standard', { quality: 'reported' })
+      + row('Colour gamut', escapeHtml(v?.gamut ?? 'srgb'), { quality: 'reported' }));
+
+    // ---- N4.6: the four reads that actually move the game ----------------
+    const pressLive = v && v.pressure !== 'unknown';
+    out += section('STRAIN',
+      row('Vessel strain', pressLive ? `${escapeHtml(v!.pressure)} · ${escapeHtml(pressureFiction(v!.pressure))}` : 'unavailable',
+          pressLive
+            ? { quality: 'measured', inspect: 'veilPressure', color: v!.pressureFrac > 0.5 ? '#f08a6a' : '#7fd6a0' }
+            : { quality: 'unavailable', inspect: 'veilPressure', why: "PressureObserver('cpu') is Chromium 125+ — the JS-heap proxy is standing in" })
+      + row('Stutter', v?.jankLive ? (v.jankMs > 0 ? `${fmt(v.jankMs, 0, 'ms')} worst of ${v.jankCount} in 20s` : 'none in 20s') : 'unavailable',
+          v?.jankLive
+            ? { quality: 'measured', inspect: 'mercy', color: v.jankMs > 100 ? '#f08a6a' : '#7fd6a0' }
+            : { quality: 'unavailable', inspect: 'mercy', why: 'long-animation-frame is Chromium 123+' })
       + row('JS heap', s.jsHeapUsedMB > 0 ? `${fmt(s.jsHeapUsedMB, 0)} / ${fmt(s.jsHeapTotalMB, 0)} MB` : 'unavailable',
           s.jsHeapUsedMB > 0 ? { quality: 'reported' }
-            : { quality: 'unavailable', why: 'performance.memory is Chromium-only' }));
+            : { quality: 'unavailable', why: 'performance.memory is Chromium-only' })
+      + row('Battery', s.batteryLevel >= 0 ? `${(s.batteryLevel * 100).toFixed(0)}%${s.batteryCharging ? ' ⚡' : ''}` : 'unavailable',
+          s.batteryLevel >= 0 ? { quality: 'reported' }
+            : { quality: 'unavailable', why: 'the Battery Status API is Chromium-only and may be disabled' })
+      + note('Strain is the OS telling the browser telling us — a FIRST-PARTY load signal. Where it '
+        + 'reports it supersedes the JS-heap proxy entirely, because heap size measures what this tab '
+        + 'allocated and says nothing about whether the machine is struggling. Stutter runs the other '
+        + 'way from every other reading here: measured jank makes the game EASIER, widening your dodge '
+        + 'window, because a frame you never saw is not a mistake you made.'));
+
+    out += section('THE HOLD',
+      row('Storage', v?.storageQuota
+            ? `${bytes(v.storageUsage)} of ${bytes(v.storageQuota)} used`
+            : 'unavailable',
+          v?.storageQuota ? { quality: 'reported', inspect: 'dropMemory' }
+            : { quality: 'unavailable', inspect: 'dropMemory', why: 'navigator.storage.estimate() is unavailable or refused here' })
+      + row('Free', `${((v?.storageFreeFrac ?? 1) * 100).toFixed(0)}%`, { quality: 'derived', inspect: 'dropMemory' })
+      + row('Sample rate', v?.sampleRate ? `${(v.sampleRate / 1000).toFixed(1)} kHz` : 'unavailable',
+          v?.sampleRate ? { quality: 'reported' }
+            : { quality: 'unavailable', why: 'the AudioContext has not been started — it needs a click or a keypress first' })
+      + row('Audio latency', v?.outputLatency ? `${(v.outputLatency * 1000).toFixed(1)} ms out / ${(v.baseLatency * 1000).toFixed(1)} ms buffer`
+            : v?.baseLatency ? `${(v.baseLatency * 1000).toFixed(1)} ms buffer` : 'unavailable',
+          v?.baseLatency ? { quality: 'measured' }
+            : { quality: 'unavailable', why: 'outputLatency is Chromium-only; baseLatency needs a running context' })
+      + row('Devices', v?.devicesLive ? `${v.audioIn} in · ${v.audioOut} out · ${v.videoIn} camera${v.videoIn === 1 ? '' : 's'}` : 'unavailable',
+          v?.devicesLive ? { quality: 'reported' }
+            : { quality: 'unavailable', why: 'enumerateDevices() is blocked by a permissions policy here' }));
+
+    out += section('POSTURE',
+      row('Locale', escapeHtml(s.locale || navigator.language), { quality: 'reported' })
+      + (v?.languages?.length ? row('Languages', escapeHtml(v.languages.join(', ')), { quality: 'reported' }) : '')
+      + row('Timezone', escapeHtml(s.timezone), { quality: 'reported' })
+      + row('Calendar', escapeHtml(`${v?.calendar ?? '—'} · ${v?.numberingSystem ?? '—'}`), { quality: 'reported' })
+      + row('Reduced motion', yes(!!v?.reducedMotion),
+          { quality: 'reported', color: v?.reducedMotion ? '#7fd6a0' : undefined })
+      + row('Contrast', v?.forcedColors ? 'forced colours' : v?.highContrast ? 'more' : 'standard', { quality: 'reported' })
+      + row('Privacy control', v?.gpc ? 'GPC on' : v?.doNotTrack ? 'DNT on' : 'neither set', { quality: 'reported' })
+      + row('Cross-origin isolated', yes(!!v?.isolated), { quality: 'reported' })
+      + note('Reduced motion is the one reading on this panel the game OBEYS rather than measures: '
+        + 'with it on the camera does not shake at all. Everything else here stays in this tab, is '
+        + 'never transmitted, and dies with the page — which is worth saying plainly, because this '
+        + 'is the same list of APIs a fingerprinting script reads. The difference is entirely in what '
+        + 'happens next.'));
 
     out += note('Geolocation is deliberately never requested. It fires a browser permission prompt, and '
       + 'the identity probes already show IP-level geography without asking the player for anything.');

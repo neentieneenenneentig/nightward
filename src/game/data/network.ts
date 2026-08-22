@@ -420,6 +420,44 @@ export interface NetworkSnapshot {
    *  session. The "Scrying" number — fast resolution sharpens the radar. */
   dnsMedianMs: number;
 
+  // ---- N4.6: the Deep Vessel — the machine, not the wire ----------------
+  //
+  // Scalars only. The FULL reading (GPU name, locale set, privacy posture,
+  // device counts) lives on `NetworkSystem.vessel.reading` and is read straight
+  // from there by the Lens, because this file is a pure data leaf with no
+  // imports and importing systems/vessel.ts for a type would make it a
+  // data→systems edge. What is here is exactly what SENSORS and NET_GAME_MAP
+  // need, and nothing else.
+  //
+  // Every one is neutral-when-unmeasured, and for two of them the neutral value
+  // is deliberately NOT zero-means-nothing: `storageFreeFrac` is 1 (a disk we
+  // could not measure is a disk with room), and `cpuPressure` is 0 (a machine
+  // we cannot ask about is a machine under no load). Reading them the other way
+  // would punish every Firefox and Safari player for their browser.
+  /** PressureObserver 'cpu' severity, 0 (nominal/unknown) .. 1 (critical). */
+  cpuPressure: number;
+  /** The raw state word, for the Lens. 'unknown' where unsupported. */
+  cpuPressureState: string;
+  /** Worst long-animation-frame in the last 20 s, ms. 0 = smooth or unmeasured;
+   *  `jankLive` is what tells those two apart. */
+  jankMs: number;
+  jankLive: boolean;
+  /** Free share of the origin's storage quota, 0..1. 1 = unmeasured. */
+  storageFreeFrac: number;
+  /** AudioContext.sampleRate, Hz. 0 = no context yet. */
+  audioSampleRate: number;
+
+  // ---- N4.7: derived truths ----------------------------------------------
+  /** Speed-of-light efficiency: measured RTT over the RTT physics allows for
+   *  the estimated distance to the edge. 1.0 = the packets went straight.
+   *
+   *  0 is the sentinel for "no reading" and is what an unknown colo, an
+   *  untabled timezone or an unmeasured RTT all produce. The mapping below
+   *  checks for it explicitly — a 0 fed to a transform expecting a ratio would
+   *  read as infinitely efficient routing, which is the wrong direction as well
+   *  as the wrong number. */
+  pathEfficiency: number;
+
   /** S1: transient — night RTT stability % (computed at dawn). */
   _nightRttStability?: number;
 
@@ -667,7 +705,42 @@ export const NET_METRICS: NetMapping[] = [
     key: 'jsHeapUsed', label: 'JS Heap',
     compute: (s) => s.jsHeapUsedMB,
     fallback: 50, unit: 'MB', intervalMs: 10000,
-    inspect: { api: 'performance.memory.usedJSHeapSize — Chrome-only. Fallback: 50 MB.', action: 'always active (polled at 0.1 Hz)', flowsInto: 'Veil Pressure — difficulty scalar (more memory pressure = harder)' },
+    inspect: { api: 'performance.memory.usedJSHeapSize — Chrome-only. Fallback: 50 MB.', action: 'always active (polled at 0.1 Hz)', flowsInto: 'Veil Pressure — the FALLBACK proxy, used only where PressureObserver is silent' },
+  },
+
+  // ---- N4.6: the Deep Vessel ----------------------------------------------
+  // Local reads. No packets, no prompts, nothing transmitted. Each of the four
+  // below drives a NET_GAME_MAP row; the rest of the vessel reading is Lens
+  // content on its own tab.
+  {
+    key: 'cpuPressure', label: 'Vessel Strain',
+    compute: (s) => s.cpuPressure,
+    fallback: 0, unit: 'frac', intervalMs: 2000,
+    inspect: { api: "PressureObserver('cpu') — a FIRST-PARTY thermal/load state from the OS. Chromium 125+. Fallback: 0 (unstrained).", action: 'callback-driven (the OS pushes; we never poll)', flowsInto: 'Veil Pressure — supersedes the JS-heap proxy wherever it reports' },
+  },
+  {
+    key: 'jank', label: 'Vessel Stutter',
+    compute: (s) => s.jankMs,
+    fallback: 0, unit: 'ms', intervalMs: 1000,
+    inspect: { api: "PerformanceObserver('long-animation-frame') — real main-thread stalls over 50 ms, with attribution. Chromium 123+. Fallback: 0 (smooth).", action: 'callback-driven, 20 s rolling window', flowsInto: 'Mercy — a stuttering machine gets a wider dodge window' },
+  },
+  {
+    key: 'storageFree', label: 'The Hold',
+    compute: (s) => s.storageFreeFrac,
+    fallback: 1, unit: 'frac', intervalMs: 0,
+    inspect: { api: 'navigator.storage.estimate() — quota vs usage for this origin. Everywhere but old Safari. Fallback: 1 (empty).', action: 'boot page load (static)', flowsInto: 'Drop Memory — a full hold makes the ground forget loot sooner' },
+  },
+  {
+    key: 'pathEff', label: 'The Straight Path',
+    compute: (s) => s.pathEfficiency,
+    fallback: 0, unit: 'x', intervalMs: 30000,
+    inspect: { api: 'DERIVED — great-circle distance from the Cloudflare colo (IATA) to a timezone-estimated position, against the kernel min_rtt. The only reading in the game whose floor is a law of physics. Fallback: 0 (no reading).', action: 'recomputed on the sensor poll from readings already taken', flowsInto: 'Homeward — a direct route drops you closer to the hall when you fall' },
+  },
+  {
+    key: 'audioRate', label: 'The Sounding Board',
+    compute: (s) => s.audioSampleRate,
+    fallback: 48000, unit: 'Hz', intervalMs: 0,
+    inspect: { api: 'AudioContext.sampleRate — the hardware pipeline the engine already owns. Everywhere. Fallback: 48000.', action: 'read once, from the live engine context', flowsInto: 'nothing yet — surfaced for the Lens only' },
   },
 ];
 
@@ -1004,11 +1077,109 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   {
     label: 'Veil Pressure',
     netKey: 'jsHeapUsed',
-    // Memory pressure = the Veil presses harder. 20MB→0.9×, 200MB→1.4×.
-    transform: (mb: number) => Math.max(0.85, Math.min(1.5, 0.85 + mb * 0.003)),
+    // N4.6 UPGRADED THIS ROW rather than adding a second one, because
+    // getGameValue() resolves a target with `.find()` — first match wins — so a
+    // second row aimed at `veilPressure` would have been a dormant row with a
+    // label on it, which is the exact failure this project keeps digging back
+    // out of its own data tables.
+    //
+    // The heap number was always a proxy and a poor one: usedJSHeapSize
+    // measures how much THIS TAB has allocated, which says nothing about
+    // whether the MACHINE is struggling. A tab holding 300 MB on an idle
+    // workstation read identical to one thrashing on a fanless laptop.
+    // PressureObserver is the OS's own answer to the actual question.
+    //
+    // So: where the first-party signal reports, it wins outright. Where it does
+    // not — Firefox, Safari, an expired origin trial — the heap proxy is still
+    // better than nothing and stays. `cpuPressure` is 0 at BOTH 'nominal' and
+    // 'unknown', so the branch is on `cpuPressureState`, never on the number:
+    // a genuinely idle machine must not fall through to the proxy and get
+    // scaled by however much memory Pixi happens to be holding.
+    transform: (mb: number, ctx?: NetMappingContext) => {
+      const snap = ctx?.snap as any;
+      if (snap?.cpuPressureState && snap.cpuPressureState !== 'unknown') {
+        // nominal 1.0 → critical 1.5. Linear, and anchored at exactly 1.0 for
+        // an unbothered machine so the neutral case is the identity.
+        return Math.max(0.85, Math.min(1.5, 1 + (snap.cpuPressure ?? 0) * 0.5));
+      }
+      // Memory pressure = the Veil presses harder. 20MB→0.9×, 200MB→1.4×.
+      return Math.max(0.85, Math.min(1.5, 0.85 + mb * 0.003));
+    },
     target: 'veilPressure',
     min: 0.85,
     max: 1.5,
+  },
+
+  // ---- N4.6: the Deep Vessel's two game inputs ---------------------------
+  {
+    label: 'Mercy',
+    netKey: 'jank',
+    // N4.6. The one mapping in this table that COMPENSATES rather than
+    // parameterises, and it is deliberate.
+    //
+    // `telegraphSlackPx` is the distance at which an enemy's committed swing
+    // still connects — slack is the ENEMY's forgiveness, not yours. A machine
+    // dropping 200 ms frames is a machine where the player's dodge input landed
+    // during a stall they could not see coming, and charging them for the
+    // browser's stutter is the one difficulty source in this game nobody chose.
+    // So real, measured jank SHRINKS the slack: your dodges land.
+    //
+    // Every other row here says "your network shapes your world". This one says
+    // "and it will not be allowed to cheat you", which is the same doctrine
+    // read from the other end. A smooth machine gets 1.0 and nothing changes.
+    transform: (ms: number) => Math.max(0.55, Math.min(1, 1 - Math.max(0, ms - 50) / 500)),
+    target: 'mercy',
+    min: 0.55,
+    max: 1,
+  },
+  {
+    label: 'Homeward',
+    netKey: 'pathEff',
+    // N4.7. Speed-of-light efficiency decides how far a death throws you.
+    //
+    // Death already scatters the player `respawnMinTiles`..`respawnMaxTiles`
+    // from the hall — the fiction is that the thread snapped and the connection
+    // put you down somewhere else. So the natural question the mechanic was
+    // always asking is HOW GOOD that connection is at putting you where it
+    // meant to, and this milestone finally has a number for it: a path whose
+    // packets go straight drops you close, a path that tours the country drops
+    // you a long way out.
+    //
+    // Inside a fifteen-minute run (pillar 8) the walk home is a real cost, so
+    // the band is deliberately narrow: 0.8x to 1.3x of the authored distance,
+    // not a run-ending exile. And 0 — the no-reading sentinel — maps to exactly
+    // 1.0, so a player whose colo is not in the table plays the authored game.
+    transform: (eff: number) => {
+      if (!(eff > 0)) return 1;                    // no reading: neutral, always
+      return Math.max(0.8, Math.min(1.3, 0.62 + eff * 0.28));
+    },
+    target: 'homeward',
+    min: 0.8,
+    max: 1.3,
+  },
+  {
+    label: 'Drop Memory',
+    netKey: 'storageFree',
+    // N4.6. How long the ground remembers what fell on it. A full hold means
+    // the world lets go of loot sooner — the fiction is that the vessel has no
+    // room left to hold the memory, and the mechanic is a real, gentle pressure
+    // to pick things up rather than leave a field of stacks lying around.
+    //
+    // Floors at 0.7 rather than something dramatic because this multiplies a
+    // DESPAWN timer, and a player whose disk is full should get a slightly
+    // brisker floor, not have a Sovereign evaporate while they walk to it.
+    //
+    // CEILINGS at exactly 1.0, and that is pillar 5 rather than timidity. The
+    // fallback for an unreadable quota is `free = 1`, so a transform that paid
+    // a bonus at the top of the range would hand every browser that cannot
+    // answer storage.estimate() a permanent 15% gift — a fallback that is not
+    // the neutral value is a fallback that changes the game, which is the exact
+    // thing this project's fifth pillar forbids. An empty hold is the AUTHORED
+    // despawn time; a full one is brisker.
+    transform: (free: number) => Math.max(0.7, Math.min(1, 0.7 + free * 0.3)),
+    target: 'dropMemory',
+    min: 0.7,
+    max: 1,
   },
   {
     label: 'Battery Scarcity',

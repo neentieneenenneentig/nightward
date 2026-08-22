@@ -149,6 +149,18 @@ class AudioEngine {
   private nextT = 0;
   private timer: number | null = null;
 
+  /** N4.6: the live AudioContext, or null before the first gesture.
+   *
+   *  Read-only, and exposed for exactly one caller: the Deep Vessel reads
+   *  `sampleRate` / `baseLatency` / `outputLatency` off it as a hardware
+   *  fingerprint of the audio pipeline. It deliberately does NOT construct its
+   *  own context to do that — a second AudioContext is a second hardware
+   *  pipeline for no reason, and one built before a user gesture sits suspended
+   *  reporting outputLatency 0, which would be a fabricated measurement rather
+   *  than an honest absence. Null until init() runs, and the vessel prints
+   *  'unavailable' for all three until then. */
+  get context(): AudioContext | null { return this.ctx; }
+
   /** Call from a click/keypress. Safe to call repeatedly. */
   init() {
     if (this.ctx) { void this.ctx.resume(); return; }

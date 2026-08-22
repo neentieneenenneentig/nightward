@@ -27,6 +27,14 @@ export interface RunScorecard {
   buildingsBuilt: number;
   enemiesKilled: number;
   bossesSlain: number;
+  /** A2: elites and champions felled. Optional, so every v2 card written before
+   *  A2 stays valid and needs no migration — the same carve-out `trophy` took.
+   *  Separate from `enemiesKilled` rather than folded into it because "I killed
+   *  400 things" and "I killed 400 things, nine of which fought back properly"
+   *  are different runs, and the scorecard is the only place that difference is
+   *  ever recorded. */
+  elitesFelled?: number;
+  championsFelled?: number;
   goldHoarded: number;
   finalRealm: string;        // realm at time of death
   loomPointsEarned: number;
@@ -89,6 +97,8 @@ export class ScoreboardSystem {
   lowestDownlink = Infinity;
   enemiesKilled = 0;
   bossesSlain = 0;
+  elitesFelled = 0;
+  championsFelled = 0;
   buildingsBuilt = 0;
   private realLastMs = 0;
 
@@ -113,10 +123,12 @@ export class ScoreboardSystem {
     if (dl < this.lowestDownlink) this.lowestDownlink = dl;
   }
 
-  /** Call on enemy kill. */
-  onKill(isBoss: boolean) {
+  /** Call on enemy kill. `elite` is the A2 rank, absent on an ordinary foe. */
+  onKill(isBoss: boolean, elite?: 'elite' | 'champion' | null) {
     this.enemiesKilled++;
     if (isBoss) this.bossesSlain++;
+    if (elite === 'champion') this.championsFelled++;
+    else if (elite === 'elite') this.elitesFelled++;
   }
 
   /** Call on building placed. */
@@ -168,6 +180,8 @@ export class ScoreboardSystem {
       buildingsBuilt: this.buildingsBuilt,
       enemiesKilled: this.enemiesKilled,
       bossesSlain: this.bossesSlain,
+      elitesFelled: this.elitesFelled,
+      championsFelled: this.championsFelled,
       goldHoarded: state.player?.gold ?? 0,
       finalRealm: this.ctx.net?.currentBiome?.name ?? 'Unknown',
       loomPointsEarned,
