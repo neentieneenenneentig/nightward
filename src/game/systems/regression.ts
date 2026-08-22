@@ -7193,6 +7193,17 @@ async function testAbilityBar(nw: any) {
   const savedEchoes = state.player.echoes;
   const savedBar = state.player.abilityBar;
   const savedResolve = state.player.resolve;
+  // Steps 3-8 below measure Resolve to the point. Bramblebreak is a DAMAGE
+  // active, and a foe that dies to it grants `resolvePerKill` inside the same
+  // synchronous `cast()` call — so the meter reads high and the test blames the
+  // cost ("it spends exactly 18 resolve: expected 82, got 86"). Whether a foe
+  // is standing in reach depends entirely on where the suite left the player,
+  // which is ground this test did not choose. The claim here is about the bar's
+  // Resolve economy; the horde is not part of it, so it is a precondition to
+  // pin rather than a variable to measure (WORKFLOW rule 11).
+  const foes = nw.sys.hordes.foes;
+  const clearFoes = () => foes.splice(0, foes.length);
+  const savedFoes = clearFoes();
   try {
     // 1. the bar fills itself from held echoes, in the canonical ECHOES order
     state.player.echoes = { thornring: 1, cinder_trail: 1, rime_nova: 1, tide_lash: 1 };
@@ -7232,6 +7243,7 @@ async function testAbilityBar(nw: any) {
 
     // 6. past the lock but inside the cooldown: the cooldown says so
     nw.step(10); // 0.333s > the 0.25s global lock
+    clearFoes();  // a third of a second is long enough to spawn one
     const r4 = A.cast(0);
     ok(!r4.ok && r4.reason === 'cooldown', 'past the lock, the per-echo cooldown refuses');
 
@@ -7272,6 +7284,8 @@ async function testAbilityBar(nw: any) {
     state.player.resolve = savedResolve;
     state.god = savedGod;
     A.readyAt = {}; A.lockUntil = 0;
+    clearFoes();
+    foes.push(...savedFoes);
   }
 }
 

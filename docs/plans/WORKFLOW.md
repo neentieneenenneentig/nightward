@@ -167,12 +167,20 @@ Both facts have bitten:
   `damagePlayer` early-returns under god mode, so the later tests do not fail — they stop
   measuring.
 - **Any new test that consumes `Math.random()` shifts the global stream for every test
-  downstream**, shaking latent flakes loose. Seen seven times now (vigor-starve, the Ironwake
-  dodge, the uniform-corridor Loom flake, the D5 resonance band, and A8's three: the boon leak
-  through `wearOnly`, the night-phase regen control, and the chill march on blocked ground). A
-  red test in a file you did not touch is usually this, not a regression. **A milestone that
-  changes worldgen shifts more than the stream** — A8 added two blocking feature types, so
-  `canStand()` answers differently around wherever a test left the player.
+  downstream**, shaking latent flakes loose. Seen eight times now (vigor-starve, the Ironwake
+  dodge, the uniform-corridor Loom flake, the D5 resonance band, A8's three — the boon leak
+  through `wearOnly`, the night-phase regen control, the chill march on blocked ground — and
+  N4.4's ability-bar Resolve arithmetic). A red test in a file you did not touch is usually
+  this, not a regression. **A milestone that changes worldgen shifts more than the stream** —
+  A8 added two blocking feature types, so `canStand()` answers differently around wherever a
+  test left the player. **A milestone that changes network cadence shifts it too**: N4.4's
+  AAAA retry altered how many requests are in flight, which moved the frame timing the whole
+  suite rides on.
+- **An exact-arithmetic assertion needs the ambient world held still, not just the subject.**
+  The ability bar's "it spends exactly 18 resolve" measured 86 against 82 because Bramblebreak
+  killed a foe and `resolvePerKill` landed inside the same synchronous `cast()`. Nothing about
+  the bar was wrong. Before asserting an exact delta, ask what ELSE can move that number in
+  the window you are measuring, and pin it.
 - **Never measure movement on ground you did not choose.** `findUniformCorridor()` exists for
   this. Two separate tests have now measured 0.00px in both halves of a matched pair because
   the foe or the player was against water, a cliff or a tree, and reported it as a failure of
