@@ -18,7 +18,7 @@ shipped is deleted, not archived — see "Retired plan documents" at the bottom.
 B5, B6, N4.1, N4.2, N4.3, N4.4, A1, A4, A3, A5, A6, A8 and the C4 repair. `main` is still at
 the last tagged release, and nothing merges to it without explicit sign-off.
 
-**Gauntlet 2213–2215 across 128 tests**, six consecutive green. Typecheck clean on both
+**Gauntlet 2273–2276 across 130 tests**, fourteen consecutive green. Typecheck clean on both
 tsconfigs, build green. (Counts drift by a few from RNG-dependent assertion loops — the test
 *names* are the regression signal, not the total.)
 
@@ -26,14 +26,16 @@ tsconfigs, build green. (Counts drift by a few from RNG-dependent assertion loop
 unblocked on 2026-08-22** when both its N4.3 numbers were decided; A7 is still welded to N4.5.
 
 **Fifteen open balance verdicts were closed on 2026-08-22** — see *Decided* below. Eight of
-them cost work, and that queue comes before A2 or N4.5.
+them cost work; **that queue is now done** and the batch is described in *Balance batch,
+2026-08-22* further down.
 
 ### Open and owed
 
 | | what | decided by |
 |---|---|---|
 | **playtest verdict** | twelve milestones — Batch G, Batch B, `fix/sound-rollback`, N4.1–N4.4, A1 / A3 / A4 / A5 / A6 / A8, the C4 repair. Automated pass started 2026-08-22; the **feel** verdict is still owed and cannot be delegated | user |
-| **balance queue** | the eight verdicts below that cost work. Do these before A2 or N4.5 | — |
+| **merge to `main`** | `dev/night-build` is 60 commits and thirteen milestones ahead. Nothing merges without an explicit go-ahead | user |
+| **balance queue** | **done, 2026-08-22.** Seven applied, one overturned by its own re-measurement — see below | — |
 | **unstarted, ungated** | A2 (**unblocked** 2026-08-22), then N4.5–N4.7 | — |
 | **unstarted, gated** | A7 (on N4.5) | — |
 
@@ -49,7 +51,7 @@ deserves the same record as a retune**, or the same question gets asked again in
 | N4.3 | `surgeFxStrength` at 0.5 — too strong? | **0.35.** A2 will add elite auras and telegraphs on top, and 0.5 was tuned with nothing else competing for the screen | one config number |
 | N4.3 | Fray × Surge compounding to ×1.81 | **Uncapped.** A bad wire during a Surge is supposed to be dangerous, and the Omen chip warns you it is coming | nothing — **and this unblocks A2** |
 | A1 | `heavy` rolls flat +2–6 and inverts the base ladder | **Keep it flat.** A lucky blue copper blade out-rolling a plain iron one is the best thing that can happen to an early drop | nothing |
-| A1 | Riftborn measured ×2.23 base damage | **Trim to ~×1.8.** Still unmistakably best-in-slot, but Sovereign stays worth wearing instead of being a consolation prize | a table edit, then re-measure through a worn blade (WORKFLOW 16) |
+| A1 | Riftborn measured ×2.23 base damage | **Trim to ~×1.8.** Still unmistakably best-in-slot, but Sovereign stays worth wearing instead of being a consolation prize | a table edit, then re-measure through a worn blade (WORKFLOW 16) — **the re-measurement overturned the premise; see below** |
 | B5 Q2 | gold as physical coins | **Bosses only.** Routine kills credit instantly so a retreat never costs you gold; a boss bursts into a pile you walk through | `CFG.drops.goldDrops` becomes three-state, plus the burst |
 | A6 | seals priced against ~1,908g of tribute | **`priceMul` stays 1.0.** The top seal is a run-defining choice, not a purchase you repeat. Kill income rides on top and is still unmeasured | nothing — revisit if the playtest says otherwise |
 | A6 | the 1.8× rework escalation | **Keep 1.8.** Two reworks affordable, three a real decision, four a fantasy | nothing |
@@ -61,6 +63,122 @@ deserves the same record as a retune**, or the same question gets asked again in
 | N4.4 | the band floors at 75 ms and pins most players at the top | **Re-floor the transform at 25 ms.** Keeps neutral generous while spreading real-world latencies across the band, so the number moves during a session instead of sitting at the ceiling | the transform's floor |
 | — | how to close twelve playtest verdicts | **Run the playtest agent**, then the user plays. The agent answers the measurable half of twelve milestones at once; it does not replace a feel verdict | an agent run |
 | — | what next | **Apply these answers first**, before A2, N4.5 or any merge | the eight rows above |
+
+---
+
+> ## Balance batch — the eight verdicts that cost work, 2026-08-22 (branch `dev/night-build`, unmerged)
+>
+> Seven shipped. One did not, because doing the measurement its own cost column
+> demanded showed the number it was written against was wrong.
+>
+> | # | verdict | what shipped |
+> |---|---|---|
+> | 1 | `surgeFxStrength` 0.5 → 0.35 | one config number, leaving A2's auras room on the same pixels |
+> | 2 | Scrying slope ×0.01 → ×0.02 | `data/network.ts`, written as an offset FROM 50 ms so the neutral point stays visible in the arithmetic |
+> | 3 | a Scrying readout | `SCRYING ×1.32` under the radar, green above neutral, amber below, and shown at ×1.00 too — pillar 5 made visible rather than merely obeyed |
+> | 4 | split the Omen and Boon chips | two badge rows partitioned on `kind`, which `main()` already stamps. Not on `color` or `good`: those would be a second source of truth that disagrees the first time a benign omen is authored |
+> | 5 | Hoarder stamina | `staminaSec: 8`, `tiredFadeSec: 2`, `tiredSpeedMul: 0.95`. It decays *into* `pace`, so every chill, tar pit and tower slow still stacks on an exhausted Hoarder exactly as it stacked on a fresh one |
+> | 6 | grey the Reliquary ladder | `shelf()` joins `stock()` rather than replacing it — `stock()` is the buy pool `buy()` draws from and the 405-draw sweep asserts against, and widening it would have quietly put unreachable bases on sale |
+> | 7 | gold coins from bosses | `CFG.drops.goldDrops` is three-state and finally read by something |
+> | 8 | trim Riftborn to ~×1.8 | **not applied — see below** |
+>
+> ### Gold: the dormant row wakes up
+>
+> `CFG.drops.goldDrops` had been this project's one deliberately dormant config key for
+> months, kept because deleting it would have deleted the question. It now drives
+> `DropSystem.awardGold()`, the single seam every gold award in the game passes through —
+> the decision lives there rather than at the two call sites for the same reason A1's
+> rarity roll moved into `spawn()`: **two call sites is two chances to forget one, and the
+> one you forget is invisible.** A gold source that never bursts just quietly keeps
+> teleporting.
+>
+> Gold is a scalar on the player, not a stack in the bag, so the coin is a **pseudo-item**:
+> `GOLD_ID = '@gold'`, deliberately *not* an `ITEMS` row. A real row would have put gold
+> into every list that walks `ITEMS` — the Reliquary shelf, the loot tables, the affix
+> slots, the soul-gear feed — nine dormant rows to make one pile of coins bounce. Three
+> places special-case it: `bank()` credits the purse instead of calling `invAdd`,
+> `art.itemIcon()` hands it a coin spec instead of asking `itemDef()`, and the radar gives
+> it its own colour so a 2.4× spread's stragglers can be found.
+>
+> The property the tests actually pin is **conservation**: every award from 1 to 400 gold
+> is swept, and the coins on the floor must sum to the award exactly. A burst that rounded
+> would be a stealth nerf or a stealth buff to every boss in the game, and it would be
+> invisible — nobody counts a boss payout.
+>
+> ### Riftborn: the verdict that its own re-measurement overturned
+>
+> The verdict's cost column said "a table edit, **then re-measure through a worn blade**".
+> Doing the re-measurement first — 60,000 forced rolls per tier on `sword_iron`, folding in
+> the `swingSpeed` mod a curse can carry — produced this:
+>
+> | tier | raw mean | raw p50 | raw p90 | raw max | delivered mean |
+> |---|---|---|---|---|---|
+> | hallowed | ×1.533 | ×1.463 | ×1.924 | ×2.327 | ×1.489 |
+> | sovereign | ×1.763 | ×1.670 | ×2.188 | ×2.497 | ×1.701 |
+> | riftborn | ×1.912 | ×1.844 | ×2.343 | ×2.704 | **×1.807** |
+>
+> Three things fall out of it:
+>
+> 1. **×2.23 was never the typical Riftborn.** It sits around p85 of the raw distribution,
+>    read off the stat column rather than off the swing. The delivered mean is ×1.807 —
+>    the requested "~×1.8", already, today.
+> 2. **The trim would have inverted its own stated reason.** Riftborn leads Sovereign by
+>    +8.4% raw / +6.2% delivered, thin already for something at weight 4 that only drops
+>    inside a rift. Sweeping `statMul`: 1.48 cuts the lead to +3.9%, and 1.42 puts Riftborn
+>    *below* Sovereign on delivered damage. There is no `statMul` that lands the raw mean
+>    on 1.8 and leaves a tier gap worth the rarity.
+> 3. **The long tail is systemic, not Riftborn's.** A lucky Hallowed reaches ×2.33 — past
+>    the mean Riftborn and past the ×2.23 that started this. That overlap is rule 1 at the
+>    top of `data/rarity.ts`, and it is the same principle the `heavy` verdict upheld *on
+>    the same day*: "a lucky blue copper blade out-rolling a plain iron one is the best
+>    thing that can happen to an early drop."
+>
+> So the table is unchanged, the measurement is written into `data/rarity.ts` where the
+> numbers live, and `testRarityLadderIsWorthClimbing` now pins the *relation* — every rung
+> beats the one below it, and the top two stay between 3% and 20% apart — so a future
+> `statMul` edit cannot quietly collapse the ladder. Pinning "riftborn delivers ×1.807"
+> would fail on the next affix-pool edit and teach nobody anything (WORKFLOW 15).
+>
+> **This is a re-measurement, not a refusal.** If the feel verdict still says Riftborn is
+> too strong, the lever is the affix pool or the curse, not `statMul`.
+>
+> ### Two shared-world leaks, found by the batch and fixed
+>
+> The suite went from 6/6 green to roughly 1 run in 3 red, on two tests this batch never
+> touched. Both were latent leaks that the batch's extra second of runtime simply made
+> likely enough to see:
+>
+> - **`testAffixesDriveTheGame`** measured a Swift chestplate at ×1.008 against a rolled
+>   ×1.05. Diagnosed from `burst=1042.6 clock=1043.7`: C4's move-burst window, armed by an
+>   earlier test's kill, **expired between the two halves of the measurement** — the
+>   baseline ran inside the window and the comparison ran outside it. Now zeroed per
+>   attempt, along with Resolve and the two live-wire terms in the same nine-multiplier
+>   product. Pinned rather than given a wider tolerance, because a wider tolerance would
+>   have hidden the affix being wrong by exactly as much.
+> - **The new Hoarder stamina test** measured its own control at ×0.92 instead of ×1.00,
+>   because `fray` and `surge` are read off the live browser every tick and drift across
+>   twenty-eight seconds of sim. Same fix, same reason (WORKFLOW 11).
+>
+> Fourteen consecutive green runs after both.
+>
+> ### What was proved, and how
+>
+> Ten mutations, each caught by the assertion that names it: bosses never bursting; the
+> burst rounding; a coin reaching `invAdd`; the shelf reverting to the reachable half only;
+> boons folded back into the omen row; the stamina decay not reaching the mover; the tiring
+> line firing every frame (631 times); Riftborn trimmed to `statMul` 1.42; the Scrying slope
+> reverted to ×0.01.
+>
+> Visual gate in `qa/gate-balance-0822/` — eleven shots plus `measured.json`, driven through
+> the game's own verbs (`drops.awardGold`, `omens.consider`, `grantBoon`, `ui.open`) rather
+> than by writing display state. It confirms: a 240-gold boss burst becomes 6 coins summing
+> to 240 with 0 credited; a 37-gold routine kill credits 37 and leaves nothing on the floor;
+> Scrying reads ×1.50 / ×1.00 / ×0.75 at 25 / 50 / 70 ms; the two badge rows carry
+> "Famine 90s · Quickening 60s" and "Ember Ward 95s · Rime Ward 95s" separately, and the
+> boon row *disappears* rather than sitting empty; and the weapon shelf greys 0 / 2 / 4 of
+> its 8 blades across the three seals, which is the 240g → 620g → 1400g price gap made
+> visible. `scripts/shots-balance-0822.mjs` runs Chrome on its own throwaway
+> `--user-data-dir`, so it cannot touch a profile open on the machine.
 
 ---
 
@@ -381,7 +499,9 @@ deserves the same record as a retune**, or the same question gets asked again in
 > `network.ts` functions, confirmed every effect id now has a consumer outside `effects.ts`
 > (the C4 repair holding up under a check written independently of it), and left exactly one
 > genuinely unread key: `CFG.drops.goldDrops`, which stays because deleting it would delete
-> the question. Five CA keys were false positives — they cross into Rust as a positional
+> the question. *(It was read by nothing until 2026-08-22, when the B5 Q2 verdict landed and
+> `DropSystem.awardGold()` started reading all three of its states. There are now zero
+> unread keys — see the balance batch above.)* Five CA keys were false positives — they cross into Rust as a positional
 > `[f32; 6]`, so no consumer ever names them. **The sweep is deliberately not in
 > `package.json`:** it would have reported zero on C4, whose seven hooks *were* referenced by
 > the affix table and never by any behaviour. A tool that is clean on the bug you just spent
