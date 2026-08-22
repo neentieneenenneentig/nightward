@@ -29,6 +29,8 @@ import type { LogEntry } from '../systems/log';
 import { injectStyles } from './styles';
 import { Toasts } from './toast';
 import { loadLeaderboard, formatAge } from '../systems/scoreboard';
+import { COVENANTS, canSwear } from '../data/covenants';
+import type { SoundingResult } from '../systems/sounding';
 
 export interface UIHooks {
   interact(): void;
@@ -80,7 +82,7 @@ export interface UIHooks {
    *  interact button's live state as well as which panel `interact()` opens —
    *  one question asked in one place, so the prompt can never promise a
    *  Reliquary the keypress does not open. */
-  hubView(): { kind: 'reliquary' | 'forge'; name: string } | null;
+  hubView(): { kind: 'reliquary' | 'forge' | 'sounding'; name: string } | null;
   /** A6: everything the Reliquary will sell in one slot. */
   hubOffers(slot: AffixSlot): OfferView[];
   /** A6: break a seal. Returns the refusal so the panel can SAY it — the
@@ -91,6 +93,12 @@ export interface UIHooks {
   hubBench(): ReforgeView[];
   /** A6: rework one line on one piece. */
   hubReforge(uid: string, index: number): { ok: boolean; why?: string };
+  /** N4.5: the Sounding Stone panel's view model. Null when the flag is off. */
+  soundingView(): SoundingPanelView | null;
+  /** N4.5: fire a sounding. The system answers for itself when it cannot. */
+  runSounding(): void;
+  /** N4.5/A7: swear a deeper pact. Returns the refusal so the panel can SAY it. */
+  swearCovenant(id: string): { ok: boolean; why?: string };
   /** B3.b: what the Loom panel needs to draw itself. */
   loomView(): {
     points: number;
@@ -99,7 +107,21 @@ export interface UIHooks {
   };
 }
 
-type Panel = 'bag' | 'craft' | 'skills' | 'loom' | 'log' | 'leaderboard' | 'reliquary' | 'forge' | null;
+type Panel = 'bag' | 'craft' | 'skills' | 'loom' | 'log' | 'leaderboard' | 'reliquary' | 'forge' | 'sounding' | 'covenant' | null;
+
+/** N4.5: the view model the Sounding Stone panel draws. */
+export interface SoundingPanelView {
+  pactName: string;
+  budgetLabel: string;
+  budgetMB: number;
+  spentMB: number;
+  leftMB: number;
+  busy: boolean;
+  count: number;
+  cooldownSec: number;
+  blocked: string | null;
+  last: SoundingResult;
+}
 
 const icon = (id: string) => iconUrl(id, itemDef(id).icon as any);
 
@@ -227,6 +249,7 @@ export class UI {
       <div class="nw-spacer"></div>
       <div class="nw-badge nw-btn" id="nw-mute" style="pointer-events:auto" title="sound on/off">&#128266;</div>
       <div class="nw-badge nw-btn" id="nw-lb" style="pointer-events:auto" title="leaderboard (;)">&#127942;</div>
+      <div class="nw-badge nw-btn" id="nw-cov" style="pointer-events:auto" title="covenant — the data budget and the difficulty, one pact (p)">&#128737;</div>
       <div class="nw-badge nw-btn" id="nw-newworld" style="pointer-events:auto" title="new world">&#10227;</div>`;
     this.root.appendChild(top);
     this.hpFill = top.querySelector('#nw-hp')!;
@@ -246,6 +269,7 @@ export class UI {
     this.muteEl = top.querySelector('#nw-mute')!;
     top.querySelector('#nw-newworld')!.addEventListener('click', () => this.hooks.newWorld());
     top.querySelector('#nw-lb')!.addEventListener('click', () => this.toggle('leaderboard'));
+    top.querySelector('#nw-cov')!.addEventListener('click', () => this.toggle('covenant'));
     this.muteEl.addEventListener('click', () => {
       const on = this.hooks.toggleMute();
       this.muteEl.innerHTML = on ? '&#128266;' : '&#128263;';
@@ -459,6 +483,7 @@ export class UI {
     else if (kl === 'k') this.toggle('skills');
     else if (kl === 'm') this.toggle('loom');
     else if (kl === 'l') this.toggle('log');
+    else if (kl === 'p') this.toggle('covenant');
     else if (k === ';') this.toggle('leaderboard');
   }
 
@@ -517,7 +542,7 @@ export class UI {
     this.panelHost.appendChild(scrim);
 
     const head = el('div', 'nw-phead');
-    const titles: Record<string, string> = { bag: 'BAG', craft: 'CRAFTING', skills: 'SKILLS', loom: 'THE LOOM', log: 'LOG', leaderboard: 'LEADERBOARD', reliquary: 'THE RELIQUARY', forge: 'THE FORGE-WARDEN' };
+    const titles: Record<string, string> = { bag: 'BAG', craft: 'CRAFTING', skills: 'SKILLS', loom: 'THE LOOM', log: 'LOG', leaderboard: 'LEADERBOARD', reliquary: 'THE RELIQUARY', forge: 'THE FORGE-WARDEN', sounding: 'THE SOUNDING STONE', covenant: 'THE COVENANT' };
     head.innerHTML = `<h2>${titles[this.panel]}</h2>`;
     if (this.panel === 'craft') head.appendChild(this.craftTabs());
     const x = el('div', 'nw-x'); x.innerHTML = '&times;';
@@ -568,6 +593,8 @@ export class UI {
     else if (this.panel === 'leaderboard') this.fillLeaderboard(body);
     else if (this.panel === 'reliquary') this.fillReliquary(body);
     else if (this.panel === 'forge') this.fillForge(body);
+    else if (this.panel === 'sounding') this.fillSounding(body);
+    else if (this.panel === 'covenant') this.fillCovenant(body);
   }
 
   // ---------------------------------------------------------- A6: the hub ----
@@ -682,6 +709,98 @@ export class UI {
         card.appendChild(btn);
       }
       body.appendChild(card);
+    }
+  }
+
+  // -------------------------------------------------- N4.5/A7: the stone ----
+
+  private fillSounding(body: HTMLElement) {
+    const v = this.hooks.soundingView();
+    if (!v) {
+      const empty = el('div', 'nw-empty');
+      empty.textContent = 'There is no stone here.';
+      body.appendChild(empty);
+      return;
+    }
+    const note = el('div', 'nw-note');
+    note.innerHTML = `The stone listens to the deep and spends <b>your</b> data to do it. The budget
+      is what your pact consents to, and it is a hard ceiling for the whole run — not a per-sounding rate.`;
+    body.appendChild(note);
+
+    const row = el('div', 'nw-row');
+    row.innerHTML = `<div class="info">
+      <div class="name">${escapeHtml(v.pactName)}</div>
+      <div class="sub">${escapeHtml(v.budgetLabel)} &middot; ${v.spentMB.toFixed(1)} of ${v.budgetMB} MB spent &middot; ${v.leftMB.toFixed(1)} MB left &middot; ${v.count} sounding${v.count === 1 ? '' : 's'}</div>
+    </div>`;
+    body.appendChild(row);
+
+    const reason = v.blocked;
+    const btn = el('button', 'nw-make') as HTMLButtonElement;
+    btn.textContent = v.busy ? 'Listening…' : 'Listen';
+    btn.disabled = !!reason;
+    btn.addEventListener('click', () => this.hooks.runSounding());
+    body.appendChild(btn);
+
+    // The blocked() reason is shown VERBATIM — a stone that is greyed out with
+    // no explanation is the exact failure the Lens spent two milestones
+    // stamping out on the readings side.
+    if (reason) {
+      const why = el('div', 'nw-note');
+      why.textContent = reason;
+      body.appendChild(why);
+    }
+
+    const last = v.last;
+    if (last && last.verdict) {
+      const res = el('div', 'nw-row');
+      res.innerHTML = `<div class="info">
+        <div class="name">Last reading</div>
+        <div class="sub">${escapeHtml(last.verdict)}</div>
+        <div class="sub">${last.live
+          ? `down ${last.downMbps.toFixed(1)} Mbps &middot; up ${last.upMbps.toFixed(1)} Mbps &middot; silt ${last.bloatGrade}`
+            + (last.resolverName ? ` &middot; ${escapeHtml(last.resolverName)} ${last.resolverMs.toFixed(0)}ms` : '')
+          : 'the stone heard nothing'}</div>
+      </div>`;
+      body.appendChild(res);
+    }
+  }
+
+  private fillCovenant(body: HTMLElement) {
+    const current = this.state.covenant ?? 'quiet';
+    const note = el('div', 'nw-note');
+    note.innerHTML = `A covenant is a pact and a data budget — the same row. Deeper pacts make the nights
+      harder and the loot better, and every tier's <b>megabyte cost is stated here</b>, before you swear.
+      A pact can only be sworn deeper, never renounced.`;
+    body.appendChild(note);
+
+    for (const c of COVENANTS) {
+      const sworn = c.id === current;
+      const can = canSwear(current, c.id);
+      const row = el('div', 'nw-row nw-seal' + (sworn ? ' on' : ''));
+      row.innerHTML = `<div class="info">
+        <div class="name" style="color:${c.color}">${escapeHtml(c.name)}${sworn ? ' &middot; sworn' : ''}</div>
+        <div class="sub">${escapeHtml(c.blurb)}</div>
+        <div class="sub"><b>${escapeHtml(c.cost)}</b></div>
+        <div class="sub">${c.budgetMB} MB over a run &middot; ~${c.soundings} soundings &middot; enemies &times;${c.hpMul} hp &middot; &times;${c.dmgMul} dmg &middot; ${escapeHtml(c.rarityFloor)}-or-better loot${c.riftborn ? ' &middot; Riftborn reachable' : ''} &middot; Legacy &times;${c.legacyMul}</div>
+      </div>`;
+      const btn = el('button', 'nw-make') as HTMLButtonElement;
+      if (sworn) {
+        btn.textContent = 'Sworn';
+        btn.disabled = true;
+      } else if (can) {
+        btn.textContent = 'Swear';
+        btn.addEventListener('click', () => {
+          const r = this.hooks.swearCovenant(c.id);
+          if (!r.ok && r.why) this.toast(r.why, 'bad');
+          this.renderPanel();
+        });
+      } else {
+        btn.textContent = 'Unreachable';
+        btn.disabled = true;
+        btn.title = 'A pact can only be sworn deeper';
+      }
+      row.appendChild(btn);
+      body.appendChild(row);
     }
   }
 
@@ -1209,8 +1328,10 @@ export class UI {
     const interactable = gv || this.interactTarget();
     this.interactBtn.classList.toggle('disabled', !interactable && !gv);
 
-    // Panel body is rebuilt only when dirty (state changed) or on open/tab change.
-    if (this.panel && this._dirty) {
+    // Panel body is rebuilt only when dirty (state changed) or on open/tab
+    // change. The Sounding Stone is the exception: its cooldown and budget are
+    // live numbers, so it rebuilds while open.
+    if (this.panel && (this._dirty || this.panel === 'sounding')) {
       this._dirty = false;
       const body = document.getElementById('nw-pbody');
       if (body) { body.innerHTML = ''; this.fillBody(body); }

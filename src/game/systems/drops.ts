@@ -92,6 +92,7 @@ export class DropSystem {
       band: opts.band ?? (inRift ? 'rift' : 'common'),
       fortune: fortuneFrom(this.ctx.net),
       clock: state.clock,
+      covenant: state.covenant,
     });
 
     // The escape hatch. With drops disabled this is byte-for-byte the pre-B5

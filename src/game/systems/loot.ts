@@ -22,6 +22,7 @@ import {
   LOOT_BANDS, RARITIES, RARITY_ORDER, rarityDef, rarityIndex,
   type LootBand, type RarityId,
 } from '../data/rarity';
+import { activeCovenant } from '../data/covenants';
 import { rollSocketCount } from '../data/weaves';
 
 let uidSeq = 0;
@@ -94,6 +95,33 @@ export function rollRarity(band: LootBand = LOOT_BANDS.common, fortune = 1): Rar
  *  be strictly worse loot, which is a punishment rather than a tradeoff. */
 export function lootQuantityMul(fortune = 1): number {
   return Math.max(1, Math.min(1.4, 1 + (1 - fortune) * 0.8));
+}
+
+/** The band a roll actually uses, after the covenant has had its say.
+ *
+ *  Two edits, both one-directional so they can never break a band:
+ *
+ *    * the covenant's `rarityFloor` RAISES the band's floor — max(), so a
+ *      lord's guaranteed Hallowed can never be lowered, only a band whose own
+ *      floor sits below the pact's gets lifted up to it;
+ *    * when the pact does not carry Riftborn, a band whose ceiling reaches
+ *      `riftborn` is clipped to `sovereign`. The rift is still the rift; a
+ *      Quiet Pact simply has nothing Riftborn to find in it.
+ *
+ *  Reads through activeCovenant() so CFG.n45.enabled = false returns the band
+ *  untouched — the flag is the revert. */
+export function covenantBand(band: LootBand, covenantId?: string): LootBand {
+  if (!CFG.n45.enabled) return band;
+  const cov = activeCovenant(covenantId ?? 'quiet');
+  const ceiling = rarityIndex(band.ceiling ?? 'hallowed');
+  const floor = Math.min(
+    Math.max(rarityIndex(band.floor ?? 'plain'), rarityIndex(cov.rarityFloor)),
+    ceiling,
+  );
+  const ceil = (!cov.riftborn && rarityIndex('riftborn') <= ceiling)
+    ? Math.max(floor, Math.min(ceiling, rarityIndex('sovereign')))
+    : ceiling;
+  return { floor: RARITY_ORDER[floor], ceiling: RARITY_ORDER[ceil] };
 }
 
 // --------------------------------------------------------------- affixes ----
@@ -191,6 +219,9 @@ export interface RollOpts {
   fortune?: number;
   /** World clock, stored on the roll for the run trophy. */
   clock?: number;
+  /** N4.5/A7: the covenant the roll honours — its rarity floor and Riftborn
+   *  gate. Omit it (crafting) and the raw band is used unchanged. */
+  covenant?: string;
   /** Test seam: skip the weighted draw and roll exactly this tier. */
   forceRarity?: RarityId;
 }
@@ -206,7 +237,7 @@ export function rollItem(baseId: string, opts: RollOpts = {}): string {
   if (!base || !slot) return baseId;
 
   const band = typeof opts.band === 'string' ? LOOT_BANDS[opts.band] : opts.band;
-  const rarity = opts.forceRarity ?? rollRarity(band ?? LOOT_BANDS.common, opts.fortune ?? 1);
+  const rarity = opts.forceRarity ?? rollRarity(covenantBand(band ?? LOOT_BANDS.common, opts.covenant), opts.fortune ?? 1);
   const rd = rarityDef(rarity);
 
   const [lo, hi] = rd.affixes;

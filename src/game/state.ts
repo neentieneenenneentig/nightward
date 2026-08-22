@@ -1,6 +1,7 @@
 // The single source of truth. Everything that must survive a reload lives in
 // this plain-JSON-able object; systems are functions that mutate it.
 import { CFG } from './data/config';
+import { DEFAULT_COVENANT } from './data/covenants';
 import { ITEMS, itemDef, resetRolled } from './data/items';
 import { resetLootSeq } from './systems/loot';
 import type { SoulSlot } from './data/soulgear';
@@ -98,6 +99,17 @@ export interface GameState {
    *  has to clear it: a boon surviving a restart would be the shared-world
    *  hazard the Gauntlet keeps finding, with a 120-second fuse. */
   boons: import('./systems/effects').ActiveBoon[];
+  /** N4.5 + A7: the pact sworn this run — one control that is both the data
+   *  budget and the difficulty tier. See data/covenants.ts for why those are
+   *  the same row. Defaults to 'quiet', which is byte-for-byte the pre-N4.5
+   *  game and spends nothing: a player who never opens the panel has consented
+   *  to nothing and is owed the game that shipped. */
+  covenant: string;
+  /** Nights survived under each pact, keyed by covenant id. The Legacy
+   *  multiplier is weighted by this rather than read off whatever is held at
+   *  death — otherwise nine quiet nights plus one Abyssal oath on the way out
+   *  scores as an Abyssal run, and the selector stops meaning anything. */
+  nightsAtCovenant: Record<string, number>;
   region: string;                      // region key the player is currently in
   explored: Record<string, number>;    // region key → 1 (for fog / future minimap)
   nightsSurvived: number;
@@ -190,6 +202,11 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     sockets: {},
     reforged: {},
     boons: [],
+    // N4.5 + A7: the default is the pact that spends nothing and changes
+    // nothing. Consent is a choice the player makes, never a state they are
+    // found already in.
+    covenant: DEFAULT_COVENANT,
+    nightsAtCovenant: {},
     region: '',
     explored: {},
     nightsSurvived: 0,

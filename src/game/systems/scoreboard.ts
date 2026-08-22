@@ -14,6 +14,7 @@
 import { CFG } from '../data/config';
 import { allRolled } from '../data/items';
 import { bestRoll } from './loot';
+import { legacyWeight } from '../data/covenants';
 
 export interface RunScorecard {
   v: 2;
@@ -35,6 +36,10 @@ export interface RunScorecard {
    *  ever recorded. */
   elitesFelled?: number;
   championsFelled?: number;
+  /** N4.5/A7: the pact the run ended under. Optional, so every v2 card written
+   *  before the covenants exist stays valid — the same carve-out elitesFelled
+   *  took. */
+  pact?: string;
   goldHoarded: number;
   finalRealm: string;        // realm at time of death
   loomPointsEarned: number;
@@ -158,7 +163,7 @@ export class ScoreboardSystem {
     const age = Math.floor(state.player?.age ?? CFG.lifespan.startAge);
     const causeOfDeath: RunScorecard['causeOfDeath'] = state.gameOverCause ?? 'unknown';
     const legit = !state.everGod;
-    const legacyScore = computeLegacyScore({
+    const legacyScore = Math.round(computeLegacyScore({
       nightsSurvived: state.nightsSurvived ?? 0,
       enemiesKilled: this.enemiesKilled,
       bossesSlain: this.bossesSlain,
@@ -167,7 +172,7 @@ export class ScoreboardSystem {
       goldHoarded: state.player?.gold ?? 0,
       age,
       causeOfDeath,
-    });
+    }) * legacyWeight(state.nightsAtCovenant ?? {}, state.covenant ?? 'quiet'));
     return {
       v: 2,
       date: new Date().toISOString(),
@@ -189,6 +194,7 @@ export class ScoreboardSystem {
       causeOfDeath,
       legit,
       legacyScore,
+      pact: state.covenant ?? 'quiet',
       trophy: (() => {
         const best = bestRoll(allRolled());
         return best ? { name: best.name, rarity: best.rarity, affixes: best.affixes.length } : null;
@@ -221,7 +227,7 @@ export class ScoreboardSystem {
     const loomPointsEarned = this.loomPointsEarned();
     const age = Math.floor(state.player?.age ?? CFG.lifespan.startAge);
     // The run isn't over — no old-age bonus counted until it actually ends.
-    const legacyScore = computeLegacyScore({
+    const legacyScore = Math.round(computeLegacyScore({
       nightsSurvived: state.nightsSurvived ?? 0,
       enemiesKilled: this.enemiesKilled,
       bossesSlain: this.bossesSlain,
@@ -230,7 +236,7 @@ export class ScoreboardSystem {
       goldHoarded: state.player?.gold ?? 0,
       age,
       causeOfDeath: 'unknown',
-    });
+    }) * legacyWeight(state.nightsAtCovenant ?? {}, state.covenant ?? 'quiet'));
     return {
       connectionAge: Math.round(this.connectionUptime),
       dominantRealm: this.dominantRealm(),

@@ -22,7 +22,7 @@ import type { Stack } from '../types';
 import type { AffixSlot } from './affixes';
 import { CFG } from './config';
 
-export type HubKind = 'reliquary' | 'forge';
+export type HubKind = 'reliquary' | 'forge' | 'sounding';
 
 // ------------------------------------------------------------- the seals ----
 

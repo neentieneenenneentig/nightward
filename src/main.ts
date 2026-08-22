@@ -37,13 +37,15 @@ import { LifespanSystem } from './game/systems/lifespan';
 import { LoomSystem } from './game/systems/loom';
 import { WeaveSystem } from './game/systems/weaves';
 import { HubSystem } from './game/systems/hub';
+import { SoundingSystem, soundingReward } from './game/systems/sounding';
 import { ScoreboardSystem } from './game/systems/scoreboard';
 import { SoulFeedSystem } from './game/systems/soulfeed';
 import { MaterialEffectSystem } from './game/systems/materialEffects';
 import { craft } from './game/systems/crafting';
-import { activeBoons, activeEffects, moveBurstMul, tickBoons, venomStacks } from './game/systems/effects';
+import { activeBoons, activeEffects, grantBoon, moveBurstMul, tickBoons, venomStacks } from './game/systems/effects';
 import { toggleEquip, invAdd, gearMod, playerMaxHp } from './game/rules';
 import { BUILDINGS } from './game/data/buildings';
+import { canSwear, covenantDef } from './game/data/covenants';
 import { NET_GAME_MAP, NET_METRICS, BEACON_INSPECT, LENS_SECTION_INSPECT, allBeacons, type NetInspect } from './game/data/network';
 import { Minimap } from './game/ui/minimap';
 // A1/A4 test seam. The Gauntlet can only observe the roll through the same
@@ -273,6 +275,12 @@ async function boot() {
     scoreboard.onRift();  // W6: count rifts survived
   });
 
+  // N4.5: the Sounding Stone and the Covenant it reads. Instantiated after the
+  // NetworkSystem because a sounding's resolver race reads net.resolverStats;
+  // no update() — the stone ticks only when the player presses it.
+  const sounding = new SoundingSystem(ctx);
+  ctx.sounding = sounding;
+
   // N4.2: The Lens is now a right-edge side cart (src/game/ui/lens/). It used
   // to be a centred modal that covered the game, which is exactly the wrong
   // shape for a panel whose whole premise is that these numbers are driving the
@@ -304,7 +312,7 @@ async function boot() {
   let lastChronicleT = -1;
 
   const lens = new Lens(
-    { net, chronicle, log, omens, inspectFor: getInspectData },
+    { net, chronicle, log, omens, sounding, inspectFor: getInspectData },
     () => exportChronicle(chronicle, net, state, omens),
   );
 
@@ -358,6 +366,50 @@ async function boot() {
     hubBuy: (slot: any, sealId: string) => { const r = hub.buy(slot, sealId); if (r.ok) ui.rebuildPanel(); return r; },
     hubBench: () => hub.bench(),
     hubReforge: (uid: string, index: number) => { const r = hub.reforge(uid, index); if (r.ok) ui.rebuildPanel(); return r; },
+    // N4.5: the Sounding Stone's panel. Reads the live system; the run verb
+    // below fires the sounding and pays out the reward on completion.
+    soundingView: () => {
+      const cov = sounding.pact();
+      return {
+        pactName: cov.name,
+        budgetLabel: cov.budgetLabel,
+        budgetMB: cov.budgetMB,
+        spentMB: sounding.spent / 1e6,
+        leftMB: sounding.budgetLeft() / 1e6,
+        busy: sounding.busy,
+        count: sounding.count,
+        cooldownSec: Math.max(0, Math.ceil(sounding.readyAt - state.clock)),
+        blocked: sounding.blocked(),
+        last: sounding.last,
+      };
+    },
+    runSounding: () => {
+      if (sounding.busy) return;
+      sounding.sound().then((r) => {
+        const reward = soundingReward(r);
+        if (reward.gold) { state.player.gold += reward.gold; ctx.onGold?.(); }
+        if (reward.boon) grantBoon(state, reward.boon);
+        if (reward.line) log.push('system', reward.line, state.clock);
+        if (reward.boon) ctx.toast(`${reward.boon.name} — +${reward.gold} gold`, 'good');
+        else if (reward.gold) ctx.toast(`+${reward.gold} gold`, 'good');
+        else ctx.toast('The stone heard nothing back.', 'info');
+        ui.rebuildPanel();
+      });
+    },
+    // N4.5/A7: the covenant picker. The UI forwards the verb; the raise-only
+    // rule and the price both live in data/covenants.ts, so a panel can never
+    // disagree with the system about what may be sworn.
+    swearCovenant: (id: string) => {
+      if (!canSwear(state.covenant, id)) {
+        return { ok: false, why: 'A pact can only be sworn deeper, never renounced.' };
+      }
+      state.covenant = id;
+      const cov = covenantDef(id);
+      log.push('system', `You swear ${cov.name} — ${cov.cost}`, state.clock);
+      ctx.toast(`You swear ${cov.name}`, 'good');
+      ui.rebuildPanel();
+      return { ok: true };
+    },
     attack: () => combat.attack(),
     ignite: () => fire.tryIgnite(),
     enterBuild: (id: string) => (id ? build.enter(id) : build.cancel()),
@@ -553,7 +605,7 @@ async function boot() {
     // B3.a test seam: movement is composed inside sim(), so the Gauntlet can only
     // observe it by driving the axis. Exposed for that; nothing in the game reads it.
     input,
-    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, abilities, vitals, lifespan, loom, scoreboard, net, drops, weaves, hub }, world, player, gen, chunks,
+    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, abilities, vitals, lifespan, loom, scoreboard, net, drops, weaves, hub, sounding }, world, player, gen, chunks,
     lens, chronicle, omens,   // N4.2/N4.3 test seam: drawer, series store, omens
     // N4.6 test seam: the Deep Vessel's live reading. Exposed because every
     // field on it is browser-conditional — a suite has to be able to force a

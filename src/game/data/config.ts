@@ -555,6 +555,24 @@ export const CFG = {
     reforgeEscalation: 1.8,
   },
 
+  // N4.5 + A7 — the Sounding and the Covenants: ONE selector, two vocabularies.
+  //
+  // The covenant IS the difficulty tier and the data budget IS its price — see
+  // data/covenants.ts for why those can never be two axes. `enabled: false` is
+  // a real revert, not a mute, the same discipline as CFG.a6 / CFG.a8 / CFG.a2:
+  // the Sounding Stone row is the LAST entry in BUILDINGS and BuildSystem drops
+  // it, HubSystem.near() stops seeing it, the covenant panel never opens, and
+  // activeCovenant() returns the Quiet Pact everywhere the difficulty is read.
+  // With the flag off the game is byte-for-byte its pre-N4.5 self: no stone, no
+  // panel, every multiplier exactly 1.0, nothing spent.
+  n45: {
+    enabled: true,
+    /** Seconds the stone must recover between soundings. The cooldown IS the
+     *  rate limit IS the budget — one mechanism serving the game design and the
+     *  good-citizenship constraint at the same time. */
+    cooldownSec: 45,
+  },
+
   // N4.3: Omens — a detected step change on the wire becomes a temporary world
   // state. See systems/omens.ts; the per-kind numbers live in OMEN_DEFS, which
   // is a table, so balance is a row edit rather than a code change.

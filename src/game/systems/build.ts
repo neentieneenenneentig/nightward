@@ -30,11 +30,16 @@ export class BuildSystem {
   private selectable(): BuildingDef[] {
     const { state } = this.ctx;
     return BUILDINGS.filter((b) => {
-      // A6's escape hatch. The two hub rows are the LAST entries in BUILDINGS,
-      // so dropping them here restores the pre-A6 carousel in its original
-      // order rather than leaving a hole in the middle of it — the same
-      // reasoning A8 used for its two FEATURES rows.
-      if (b.hub && !CFG.a6.enabled) return false;
+      // A6's escape hatch, and N4.5's. The hub rows are the LAST entries in
+      // BUILDINGS, so dropping them here restores the pre-feature carousel in
+      // its original order rather than leaving a hole in the middle of it —
+      // the same reasoning A8 used for its two FEATURES rows. The Sounding
+      // Stone answers to its OWN flag: A6 off must not take N4.5 down with it.
+      if (b.hub === 'sounding') {
+        if (!CFG.n45.enabled) return false;
+      } else if (b.hub && !CFG.a6.enabled) {
+        return false;
+      }
       return !(b.unique && state.buildings.some((x: any) => x.type === b.id));
     });
   }

@@ -6,6 +6,7 @@
 // behind. Knobs in config.horde / config.dayspawn.
 import { CFG } from '../data/config';
 import { ENEMIES, type EnemyDef } from '../data/enemies';
+import { activeCovenant } from '../data/covenants';
 import {
   AFFIX_POWER, ELITE_RANKS, ELITE_THREADS, affixDef, championChance, eliteChance,
   eliteName, rollAffixes, rollEliteGear, type EliteRank,
@@ -132,6 +133,11 @@ export class HordeSystem {
       return;
     }
     state.nightsSurvived++;
+    // N4.5/A7: the pact is scored by the nights actually lived under it, so a
+    // last-minute swearing of the deep cannot reprice nine quiet nights.
+    const cov = state.covenant ?? 'quiet';
+    if (!state.nightsAtCovenant) state.nightsAtCovenant = {};
+    state.nightsAtCovenant[cov] = (state.nightsAtCovenant[cov] ?? 0) + 1;
     toast(`Dawn breaks. Nights survived: ${state.nightsSurvived}`, 'good');
     this.ctx.log?.push('combat', `Dawn breaks — nights survived: ${state.nightsSurvived}`, state.clock);
   }
@@ -425,6 +431,9 @@ export class HordeSystem {
     // X1: 'Veil Pressure' — JS heap weight leans on foe hp too
     const netScale = (this.ctx.net?.getGameValue?.('enemyScale') ?? 1.0)
       * (this.ctx.net?.getGameValue?.('veilPressure') ?? 1.0);
+    // N4.5/A7: the covenant's difficulty consequences ride ON TOP of the
+    // existing product, never replacing it — the pact is the difficulty tier.
+    const cov = activeCovenant(state.covenant);
 
     // N2a: echo-derived stats for night-wave mobs (C2)
     const echo = this.ctx.net?.lastEcho;
@@ -456,12 +465,12 @@ export class HordeSystem {
       epithetName = [prefix, def.name, suffix].filter(Boolean).join(' ');
     }
 
-    const scaledDmg = Math.round(def.dmg * dmgMul * netScale * echoDmgMul);
+    const scaledDmg = Math.round(def.dmg * dmgMul * netScale * echoDmgMul * cov.dmgMul);
     const foe: any = {
       uid: state.nextUid++, def,
       x, y, px: x, py: y,
-      hp: Math.round(def.hp * hpMul * netScale * echoHpMul),
-      maxHp: Math.round(def.hp * hpMul * netScale * echoHpMul),
+      hp: Math.round(def.hp * hpMul * netScale * echoHpMul * cov.hpMul),
+      maxHp: Math.round(def.hp * hpMul * netScale * echoHpMul * cov.hpMul),
       dmg: scaledDmg, baseDmg: scaledDmg,
       atkT: 0, telegraphT: 0, animT: Math.random(),
     };
@@ -547,6 +556,7 @@ export class HordeSystem {
     const dmgMul = Math.pow(CFG.horde.dmgGrowth, n - 1);
     const netScale = (this.ctx.net?.getGameValue?.('enemyScale') ?? 1.0)
       * (this.ctx.net?.getGameValue?.('veilPressure') ?? 1.0);
+    const cov = activeCovenant(state.covenant);
 
     let woke = 0;
     for (let i = 0; i < count && this.foes.length < CFG.horde.maxAlive; i++) {
@@ -559,8 +569,8 @@ export class HordeSystem {
         placed = world.canStand(fx, fy, 5);
       }
       if (!placed) continue; // hostile geography — that one stays buried
-      const dmg = Math.round(def.dmg * dmgMul * netScale);
-      const hp = Math.max(1, Math.round(def.hp * hpMul * netScale));
+      const dmg = Math.round(def.dmg * dmgMul * netScale * cov.dmgMul);
+      const hp = Math.max(1, Math.round(def.hp * hpMul * netScale * cov.hpMul));
       const foe: any = {
         uid: state.nextUid++, def,
         x: fx, y: fy, px: fx, py: fy,

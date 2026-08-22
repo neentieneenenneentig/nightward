@@ -1407,6 +1407,22 @@ export class NetworkSystem {
     };
   }
 
+  /** N4.5: which DoH resolver has answered fastest this run, and how fast.
+   *
+   *  The Sounding's resolver race reads this rather than racing a fresh query:
+   *  the statistics already exist, and a sounding spends enough of the player's
+   *  budget without doubling as a DNS benchmark. Best-per-resolver is the
+   *  number, averaged when a resolver has no single best yet. */
+  fastestResolver(): { label: string; ms: number } | null {
+    let best: { label: string; ms: number } | null = null;
+    for (const [label, s] of this.resolverStats) {
+      const ms = s.best !== Infinity ? s.best : (s.n > 0 ? s.total / s.n : 0);
+      if (!(ms > 0)) continue;
+      if (!best || ms < best.ms) best = { label, ms: Math.round(ms * 10) / 10 };
+    }
+    return best;
+  }
+
   /**
    * Build a pseudo-traceroute chain from Performance API timings + Cloudflare trace.
    * While true ICMP traceroute is impossible in browser JS, we can reconstruct the

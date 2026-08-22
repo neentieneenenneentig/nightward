@@ -112,6 +112,8 @@ export interface LensCtx {
   /** N4.3: the OmenSystem. Read-only here — a tab that could raise an omen
    *  would eventually raise one by accident. */
   omens: any;
+  /** N4.5: the SoundingSystem. Read-only here — the pact and the bytes spent. */
+  sounding: any;
   inspectFor(key: string): NetInspect | null;
 }
 

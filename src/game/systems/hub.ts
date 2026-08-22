@@ -81,13 +81,15 @@ export class HubSystem {
    *  perfectly ordinary base layout and "whichever is closer" is the only
    *  answer that does not need a rule. */
   near(): { kind: HubKind; def: BuildingDef; b: any } | null {
-    if (!CFG.a6.enabled) return null;
     const { x, y } = this.state.player;
     const reach = CFG.a6.reachTiles * TILE;
     let best: any = null, bestD = Infinity;
     for (const b of this.state.buildings) {
       const def = BUILDINGS.find((d) => d.id === b.type);
       if (!def?.hub) continue;
+      // Each counter answers to its own flag. The Sounding Stone is N4.5's row
+      // and must not be gated off by A6's revert — and vice versa.
+      if (def.hub === 'sounding' ? !CFG.n45.enabled : !CFG.a6.enabled) continue;
       const d = Math.hypot((b.tx + 0.5) * TILE - x, (b.ty + 0.5) * TILE - y);
       if (d <= reach && d < bestD) { best = { kind: def.hub, def, b }; bestD = d; }
     }
@@ -182,6 +184,7 @@ export class HubSystem {
       band: seal.band as any,
       fortune: fortuneFrom(this.ctx.net),
       clock: this.state.clock,
+      covenant: this.state.covenant,
     });
     invAdd(this.state, id, 1);
 

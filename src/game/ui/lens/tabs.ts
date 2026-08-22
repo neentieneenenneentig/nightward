@@ -383,7 +383,7 @@ const vessel: LensTab = {
 const threads: LensTab = {
   id: 'threads',
   title: 'THREADS',
-  render({ net, log, chronicle, omens }) {
+  render({ net, log, chronicle, omens, sounding }) {
     const ctx = { snap: net.snap, distinctRegionsProbed: net.distinctRegionsProbed ?? 0 };
     // N4.3: OMENS goes FIRST. The Decoder Ring below it is a 25-row reference
     // table of this connection's steady state — useful, static, and the thing a
@@ -422,6 +422,18 @@ const threads: LensTab = {
     out += section('THE DECODER RING', body
       + note('Each row is a live measurement being turned into a game number. The clamp bands are in '
         + 'data/network.ts and are editable at runtime through window.NW.'));
+
+    // N4.5/A7 — THE PACT. The covenant and the bytes it has spent, shown in the
+    // one place that already renders readings being turned into game numbers.
+    const pact = sounding?.pact?.();
+    if (pact) {
+      out += section('THE PACT',
+        row('Pact', `${escapeHtml(pact.name)} · ${escapeHtml(pact.budgetLabel)}`, { quality: 'derived', color: pact.color })
+        + row('Budget', `${((sounding.spent ?? 0) / 1e6).toFixed(1)} of ${pact.budgetMB} MB`, { quality: 'measured' })
+        + row('Soundings', `${sounding.count ?? 0}`, { quality: 'measured' })
+        + note('The pact is the difficulty tier: its multipliers are read into the night wave, the loot '
+          + 'floor and the Legacy score. The budget is what you consented to spend on soundings.'));
+    }
 
     // Read the PERMANENT record, not the drain queue: main() calls takeEvents()
     // once a second to turn steps into Feed lines and omens.
