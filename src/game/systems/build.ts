@@ -187,7 +187,13 @@ export class BuildSystem {
     // A1: 'Rooted'. Scaled once at placement, exactly like the Loom multiplier
     // above it — a building keeps the ceiling it was raised with, so swapping
     // gear later cannot retroactively weaken a wall you already paid for.
-    const bHp = Math.round(m.def.hp * hpMul * gearMod(state, 'buildHp'));
+    // N4.7b: 'The Warded Gate'. The NAT class the UDP walk measured, folded in
+    // at placement for exactly the reason the two multipliers above it are —
+    // a wall keeps the ceiling it was raised with. Carrying a laptop from a
+    // symmetric-NAT home network onto an open cafe wifi must not silently
+    // weaken the walls that are already standing.
+    const gate = this.ctx.net?.getGameValue?.('wardedGate') ?? 1;
+    const bHp = Math.round(m.def.hp * hpMul * gearMod(state, 'buildHp') * gate);
     const b = { uid: state.nextUid++, type: m.def.id, tx: m.tx, ty: m.ty, hp: bHp, maxHp: bHp };
     state.buildings.push(b);
     world.reindexBuildings();

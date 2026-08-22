@@ -64,6 +64,15 @@ export class AbilitySystem {
   /** echoId → clock time the active comes off cooldown. Keyed by ECHO, not by
    *  slot: re-socketing a spent echo into a different slot must not refresh it. */
   private readyAt: Record<string, number> = {};
+  /** echoId → the cooldown duration this cast was actually charged, seconds.
+   *
+   *  Recorded rather than recomputed because N4.7b's Swift Road scales the
+   *  cooldown at the moment of the cast, and the ring in `view()` divides the
+   *  remaining time by the full duration. Dividing by the AUTHORED duration
+   *  after charging a scaled one draws a ring that empties at the wrong rate
+   *  and never reaches zero — the exact class of bug where the number is right
+   *  and the thing the player looks at is wrong. */
+  private chargedCd: Record<string, number> = {};
   private lockUntil = 0;
   private lastFizzleToast = -1e9;
 
@@ -170,7 +179,14 @@ export class AbilitySystem {
     }
 
     state.player.resolve = Math.max(0, state.player.resolve - cost);
-    this.readyAt[def.id] = state.clock + def.active.cooldown;
+    // N4.7b: 'The Swift Road'. The UDP path out of this machine is a different
+    // road from the TCP one every other reading in the game rides, and how fast
+    // it answers decides how soon an echo comes back. Applied at the cast, not
+    // at the tick, so a network that changes mid-cooldown cannot lengthen a
+    // wait the player already committed to.
+    const cd = def.active.cooldown * (this.ctx.net?.getGameValue?.('swiftRoad') ?? 1);
+    this.chargedCd[def.id] = cd;
+    this.readyAt[def.id] = state.clock + cd;
     this.lockUntil = state.clock + CFG.abilities.globalLockSec;
     // Casting is an ACTION. Without this the idle multiplier (×2 resolve decay
     // after 30s) keeps running while you fight with abilities alone, which would
@@ -210,11 +226,14 @@ export class AbilitySystem {
       }
       const lvl = state.player.echoes?.[def.id] ?? 0;
       const left = Math.max(0, (this.readyAt[def.id] ?? 0) - state.clock);
+      // The duration this echo was last charged, falling back to the authored
+      // one for an echo that has never been cast (where `left` is 0 anyway).
+      const full = this.chargedCd[def.id] ?? def.active.cooldown;
       out.push({
         slot: i, key: String(i + 1), id: def.id,
         name: def.active.name, echoName: def.name, icon: def.icon, color: hex(def.color),
         level: lvl, cost: def.active.cost,
-        cooldownFrac: def.active.cooldown > 0 ? left / def.active.cooldown : 0,
+        cooldownFrac: full > 0 ? left / full : 0,
         cooldownLeft: left,
         ready: left <= 0,
         affordable: state.player.resolve >= def.active.cost,
@@ -238,10 +257,17 @@ export class AbilitySystem {
     }
     const lvl = this.ctx.state.player.echoes?.[def.id] ?? 1;
     const a = activeStatsFor(def, lvl);
+    const road = this.ctx.net?.getGameValue?.('swiftRoad') ?? 1;
     const lines = [
       def.active.desc,
       `${def.name} · level ${lvl}`,
-      `Costs ${def.active.cost} resolve · ${def.active.cooldown}s`,
+      // The EFFECTIVE cooldown, not the authored one. N4.7b's Swift Road moves
+      // it by up to 15% either way, and a tooltip that keeps quoting the table
+      // while the ring runs to a different number is a tooltip the player
+      // learns to stop trusting. Shown with the multiplier beside it wherever
+      // it is not 1.0, so the difference is explained rather than merely felt.
+      `Costs ${def.active.cost} resolve · ${(def.active.cooldown * road).toFixed(1)}s`
+        + (Math.abs(road - 1) > 0.005 ? ` (×${road.toFixed(2)} the swift road)` : ''),
     ];
     if (def.kind === 'pulse' || def.kind === 'nova') {
       lines.push(`${Math.round(a.dmg)} damage in ${a.radiusTiles.toFixed(1)} tiles`);

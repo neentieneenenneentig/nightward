@@ -11,6 +11,7 @@
 import { NET_GAME_MAP } from '../../data/network';
 import { pressureFiction } from '../../systems/vessel';
 import { protoName } from '../../systems/truths';
+import { gateFiction, gateName } from '../../systems/udp';
 import { NET_LOG_LABELS, styleNetworkMsg } from '../ui';
 import { escapeHtml, fmt, note, row, section, sparkline, type LensCtx, type LensTab } from './core';
 
@@ -185,6 +186,64 @@ const paths: LensTab = {
           + 'The fray reading has been treating those two situations as identical.'));
     }
 
+    // N4.7b — THE UDP PATH. The only reading in the game that did not come back
+    // over TCP, and the one section that has to state what it CANNOT see as
+    // prominently as what it can.
+    const u = net.udp;
+    if (u) {
+      const gateCol = { open: '#f08a6a', cone: '#8fb6e8', symmetric: '#7fd6a0',
+        blocked: '#d8c07a', unknown: undefined as any }[u.natClass];
+      out += section('THE UDP PATH',
+        // `inferred` is the honesty tag doing exactly the job it exists for. A
+        // cone read from two matching ports is MEASURED; a cone deduced from the
+        // browser pruning a duplicate candidate is DERIVED. Both are true, they
+        // are not the same grade of fact, and collapsing them would be the
+        // quietest possible lie on this panel.
+        row('The gate', u.done ? escapeHtml(gateName(u.natClass)) : 'walking…',
+            u.natClass !== 'unknown'
+              ? { inspect: 'gate', quality: u.inferred ? 'derived' : 'measured', color: gateCol,
+                  why: u.inferred
+                    ? 'deduced, not compared: ICE prunes a reflexive candidate that duplicates another, so one surviving candidate from two servers means the two servers agreed'
+                    : 'two public STUN servers, one local socket — same public port means one mapping serves every destination, different ports means a fresh mapping per destination' }
+              : { inspect: 'gate', quality: 'unavailable', why: escapeHtml(u.note) })
+        + row('Public ports seen', u.ports.length ? u.ports.join(' · ') : '—',
+            u.ports.length ? { quality: 'measured' }
+              : { quality: 'unavailable', why: 'no server-reflexive candidate came back' })
+        + row('Servers answering', `${u.serversAnswered} of ${u.serversTried}`
+              + (u.inferred ? ' <span style="color:#5a5a6e;">(one pruned as a duplicate)</span>' : ''),
+            { quality: 'measured',
+              why: u.inferred
+                ? 'both servers answered; the browser surfaced one candidate because the two were identical'
+                : 'distinct STUN servers whose reflexive candidate survived ICE pruning' })
+        + row('Gathering', u.complete ? 'finished on its own' : (u.done ? 'cut off at the timeout' : '—'),
+            { quality: 'reported',
+              why: 'a gather that timed out cannot tell a pruned duplicate from a server that went quiet, so it never infers a gate' })
+        + row('Address over UDP', u.srflxIp ? escapeHtml(u.srflxIp) : '—',
+            u.srflxIp ? { quality: 'measured',
+                          color: s.udpIpMismatch ? '#f08a6a' : undefined,
+                          why: s.udpIpMismatch
+                            ? 'this does NOT match the address the HTTP trace reported — something is rewriting one protocol family and not the other'
+                            : 'a second, independent witness to the same public address the HTTP trace saw' }
+              : { quality: 'unavailable', why: 'no v4 reflexive candidate' })
+        + row('IPv6', u.done ? (u.hasV6 ? 'working · ' + escapeHtml(u.srflxIp6) : 'no v6 candidate came back') : '—',
+            u.done ? { inspect: 'identity-ipv6', quality: 'measured',
+                       color: u.hasV6 ? '#7fd6a0' : undefined,
+                       why: 'a v6 packet left this machine and came back — which is a different and much better question than whether some remote HOST has an AAAA record' }
+              : { quality: 'unavailable', why: 'the walk has not finished' })
+        + row('The other road', u.stunMs ? fmt(u.stunMs, 0, 'ms') : '—',
+            u.stunMs ? { inspect: 'stun', quality: 'derived',
+                         why: 'offer to first reflexive candidate. Contains one real UDP round trip PLUS browser bookkeeping — this is a gathering time, not a ping' }
+              : { quality: 'unavailable', why: 'no reflexive candidate was timed' })
+        + row('Hidden by mDNS', `${u.mdnsHidden} of ${u.candidates} candidates`,
+            { quality: 'reported',
+              why: 'the browser replaced this machine’s LAN addresses with random *.local names. It does that unless a page has camera or microphone permission, and this game will never ask for either' })
+        + (u.done ? note(escapeHtml(gateFiction(u.natClass)) + ' — ' + escapeHtml(u.note)) : '')
+        + note('Two STUN binding requests, about 200 bytes, sent once per run. No media, no data '
+          + 'channel that ever opens, no permission prompt, and nothing about you is transmitted — '
+          + 'a binding request asks a server what address it sees and the server answers. This is '
+          + 'the ONLY measurement in the game that did not ride TCP.'));
+    }
+
     const probes = s.endpointProbes ?? [];
     const seen = new Set<string>();
     let shallow = '';
@@ -257,7 +316,7 @@ const identity: LensTab = {
         + row('Confidence', `${(mask.confidence * 100).toFixed(0)}% \u00b7 ${escapeHtml(mask.band)}`,
             { quality: 'derived', color: bandCol })
         + note(escapeHtml(mask.verdict))
-        + note('Four independent signals, each individually weak. Any one of them has an innocent '
+        + note('Six independent signals, each individually weak. Any one of them has an innocent '
           + 'explanation; three agreeing is a strong case, and a strong case is still not proof. '
           + 'A signal whose inputs are unknown is SKIPPED rather than counted as a miss \u2014 "we could '
           + 'not check" is not evidence either way. Nothing here is transmitted anywhere.'));

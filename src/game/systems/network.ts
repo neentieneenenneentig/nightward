@@ -17,6 +17,7 @@ import {
 import { biomeForConnection, biomeForProfile, BIOMES, type BiomeDef } from '../data/biomes';
 import { DeepWire } from './deepwire';
 import { Vessel } from './vessel';
+import { neutralUdp, STUN_SERVERS, walkUdpPath, type UdpReading } from './udp';
 import { maskEvidence, protocolReality, straightPath } from './truths';
 import { Sound } from '../../engine/audio';
 
@@ -86,6 +87,12 @@ export class NetworkSystem {
    *  read the FULL reading — the snapshot carries only the four scalars the
    *  mapping tables need. */
   readonly vessel = new Vessel();
+
+  /** N4.7b — the UDP path, walked once per run. Not a system with a tick: two
+   *  STUN binding requests, one reading, and then it is a value the Lens and
+   *  two mapping rows read forever. */
+  udp: UdpReading = neutralUdp();
+  private udpWalked = false;
 
   private gate = new NetGate();
   private baseHref = (() => {
@@ -260,7 +267,12 @@ export class NetworkSystem {
       console.log('[NIGHTWARD] Network probing DISABLED (?nonet / __NW_NO_NET). All Wire metrics use neutral fallbacks.');
       return;
     }
-    const contacted = [...DOH_RESOLVERS.map(r => r.url), 'https://cloudflare.com/cdn-cgi/trace', this.baseHref];
+    // N4.7b: the STUN servers belong in this list. They are contacted over UDP
+    // rather than HTTPS, which makes them easier to forget and exactly as
+    // real — a disclosure that enumerates only the endpoints you happened to
+    // reach with `fetch` is a disclosure with a hole in it.
+    const contacted = [...DOH_RESOLVERS.map(r => r.url), 'https://cloudflare.com/cdn-cgi/trace',
+      ...STUN_SERVERS, this.baseHref];
     const resolved = allBeacons().map(b => b.host).sort();
     console.log(
       '[NIGHTWARD] Endpoints this game CONTACTS: ' + contacted.join(', ')
@@ -548,6 +560,7 @@ export class NetworkSystem {
       // N4.7: 0 is "no reading", not "infinitely efficient". Every consumer
       // checks for it before dividing or transforming.
       pathEfficiency: 0,
+      natClass: 'unknown', udpV6: false, stunMs: 0, udpIpMismatch: false,
     };
   }
 
@@ -613,6 +626,34 @@ export class NetworkSystem {
       // named itself after the first trace landed.
       this.snap.pathEfficiency = this.straightPath().efficiency;
     } catch { /* a vessel that will not answer is a vessel at neutral */ }
+    this.walkUdpOnce();
+  }
+
+  /** N4.7b — walk the UDP path, exactly once.
+   *
+   *  Hung off the sensor poll rather than off boot, for two reasons. It costs
+   *  two STUN binding requests and boot is already the busiest moment in the
+   *  run; and `publicIp` is gated behind the first explore action (F8), so a
+   *  walk at boot would have nothing to compare its reflexive address against
+   *  and the mismatch signal would be permanently false.
+   *
+   *  `udpWalked` is set BEFORE the await, not after. Set after, a poll landing
+   *  inside the five-second gather window would start a second one — and two
+   *  concurrent RTCPeerConnections gathering against the same servers is both
+   *  double the traffic and a race over which reading wins. */
+  private walkUdpOnce() {
+    if (this.udpWalked || this.gate.off) return;
+    this.udpWalked = true;
+    walkUdpPath().then((r) => {
+      this.udp = r;
+      this.snap.natClass = r.natClass;
+      this.snap.udpV6 = r.hasV6;
+      this.snap.stunMs = Math.round(r.stunMs);
+      // Both sides must have answered for a disagreement to mean anything.
+      // Missing data is not evidence, and this field feeds an accusation.
+      const http = String(this.snap.publicIp ?? '');
+      this.snap.udpIpMismatch = !!(r.srflxIp && http && !http.includes(':') && r.srflxIp !== http);
+    }).catch(() => { /* walkUdpPath never rejects; this is belt and braces */ });
   }
 
   /** The engine's AudioContext, handed in by main() so the vessel can read the

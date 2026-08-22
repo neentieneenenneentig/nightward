@@ -6685,6 +6685,227 @@ async function testSoundingFlagAndBlocked(nw: any) {
     'fastestResolver returns null or a positive ms');
 }
 
+// ---------------------------------------------------------------------------
+// N4.7b — the UDP path
+// ---------------------------------------------------------------------------
+
+async function testUdpClassifier(nw: any) {
+  const { classifyNat, neutralUdp, STUN_SERVERS, gateName } = await import('./udp');
+
+  const call = (o: any) => classifyNat({
+    ports: [], answered: 0, tried: 2, complete: true, srflxIp: '1.2.3.4', localIps: [], ...o,
+  });
+
+  eq(STUN_SERVERS.length, 2, 'two servers, because the NAT test is a comparison');
+
+  // The direct comparison. Two surviving candidates is a MEASUREMENT.
+  const cone = call({ ports: [4444, 4444], answered: 2 });
+  eq(cone.natClass, 'cone', 'two servers, one port: one mapping serves every destination');
+  eq(cone.inferred, false, 'a comparison of two numbers is measured, not inferred');
+
+  const sym = call({ ports: [4444, 5555], answered: 2 });
+  eq(sym.natClass, 'symmetric', 'two servers, two ports: a fresh mapping per destination');
+  eq(sym.inferred, false, 'and that is measured too');
+
+  // The pruning inference. This is the case that used to read `unknown` on the
+  // most common home network there is — see the header of systems/udp.ts for
+  // the measurement that overturned it.
+  const pruned = call({ ports: [4444], answered: 1, tried: 2, complete: true });
+  eq(pruned.natClass, 'cone', 'one candidate from two servers, gathering complete: cone');
+  eq(pruned.inferred, true, 'but DEDUCED from the pruning, and it says so');
+
+  // ...and the guard on it. A gather that never finished cannot tell a pruned
+  // duplicate from a server that went quiet, so it must not infer.
+  const cut = call({ ports: [4444], answered: 1, tried: 2, complete: false });
+  eq(cut.natClass, 'unknown', 'a timed-out gather infers nothing');
+  eq(cut.inferred, false, 'and claims nothing');
+
+  // One server asked is one server asked.
+  eq(call({ ports: [4444], answered: 1, tried: 1 }).natClass, 'unknown',
+    'one server cannot make a comparison');
+
+  // Nothing reflexive at all, either way round the timeout.
+  eq(call({ ports: [], srflxIp: '', complete: true }).natClass, 'blocked',
+    'gathering finished with no reflexive candidate: UDP is filtered');
+  eq(call({ ports: [], srflxIp: '', complete: false }).natClass, 'blocked',
+    'and a timeout with none is the same finding');
+
+  // No translation layer at all.
+  eq(call({ ports: [4444], answered: 1, srflxIp: '9.9.9.9', localIps: ['9.9.9.9'] }).natClass,
+    'open', 'a public address this machine holds directly means no NAT');
+
+  // Every class has a name and a note, because the panel prints both verbatim.
+  for (const c of ['unknown', 'open', 'cone', 'symmetric', 'blocked'] as const) {
+    ok(gateName(c).length > 0, `${c} has a Veil name (${gateName(c)})`);
+  }
+  for (const v of [cone, sym, pruned, cut]) {
+    ok(v.note.length > 20, `every verdict explains itself: "${v.note.slice(0, 40)}..."`);
+  }
+
+  // The neutral reading is neutral, which is what a browser without WebRTC gets.
+  const n = neutralUdp();
+  eq(n.natClass, 'unknown', 'an unwalked path has no gate');
+  eq(n.stunMs, 0, 'and no timing');
+  eq(n.inferred, false, 'and infers nothing');
+  eq(n.done, false, 'and says it is not done');
+}
+
+async function testUdpMappings(nw: any) {
+  const { NAT_GRADE } = await import('../data/network');
+  const net = nw.sys.net;
+  const snap = net.snap;
+
+  const saveNat = snap.natClass, saveStun = snap.stunMs;
+  try {
+    // ---- The Warded Gate: three classes, three walls --------------------
+    const gate = (c: string) => { snap.natClass = c; return net.getGameValue('wardedGate'); };
+    eq(gate('cone'), 1, 'a cone NAT builds the walls the game authored');
+    eq(gate('unknown'), 1, 'and so does an unwalked path — pillar 5');
+    ok(gate('symmetric') > gate('cone'), 'a stricter gate raises what you build');
+    ok(gate('open') < gate('cone'), 'and no gate at all lowers it');
+    eq(gate('blocked'), gate('symmetric'),
+      'a network that eats UDP outright is graded with the strictest gate, not with neutral');
+    // The grade table and the transform must agree about what neutral IS.
+    eq(NAT_GRADE.unknown, NAT_GRADE.cone,
+      'unknown grades WITH cone, so the fallback and the common case are the same number');
+
+    // ---- The Swift Road: banded around an honest centre ------------------
+    const road = (ms: number) => { snap.stunMs = ms; return net.getGameValue('swiftRoad'); };
+    eq(road(0), 1, 'an unmeasured road changes no cooldown');
+    eq(road(120), 1, 'and 120 ms is the neutral centre the band is built around');
+    ok(road(20) < 1, 'a quick answer on the other road shortens the wait');
+    ok(road(400) > 1, 'and a slow one lengthens it');
+    // Monotone across the whole range, which is what makes it a band and not a
+    // pair of thresholds.
+    let prev = -1;
+    for (const ms of [1, 20, 60, 120, 200, 300, 400, 900, 5000]) {
+      const v = road(ms);
+      ok(v >= prev, `swiftRoad is monotone through ${ms} ms (${v.toFixed(3)} >= ${prev.toFixed(3)})`);
+      prev = v;
+    }
+    ok(road(1e6) <= 1.15 && road(1) >= 0.85, 'and it stays inside its declared band at both extremes');
+  } finally {
+    snap.natClass = saveNat;
+    snap.stunMs = saveStun;
+  }
+}
+
+async function testUdpConsumers(nw: any) {
+  const net = nw.sys.net, snap = net.snap, state = nw.state;
+  const saveNat = snap.natClass;
+  try {
+    // ---- 1. the Warded Gate reaches a real placement ---------------------
+    // WORKFLOW 16: built through the game's own verb, not by reading the def.
+    const build = nw.sys.build;
+    const list = build.selectable();
+    const def = list.find((b: any) => b.id === 'wall') ?? list[0];
+    const before = state.buildings.length;
+    let tx = 640;
+    const raise = (cls: string) => {
+      snap.natClass = cls;
+      (build as any).mode = { def, tx: tx++, ty: 640, valid: true, lastTx: NaN, lastTy: NaN };
+      (build as any).commit();
+      return state.buildings[state.buildings.length - 1].maxHp;
+    };
+    const cone = raise('cone'), sym = raise('symmetric'), open = raise('open');
+    ok(sym > cone, `a symmetric gate raises a wall higher (${sym} > ${cone})`);
+    ok(open < cone, `and an open one lower (${open} < ${cone})`);
+    eq(sym, Math.round(cone * 1.2), 'the symmetric wall is exactly the cone wall times the band top');
+    // Placed walls are a fixture, not a change to the world under test.
+    state.buildings.length = before;
+    nw.world.reindexBuildings();
+
+    // ---- 2. the Swift Road reaches a real cast --------------------------
+    // The ring in view() must divide by the duration actually CHARGED, not by
+    // the authored one — a scaled cooldown drawn against an unscaled ring is
+    // the bug where the number is right and the thing the player looks at is
+    // wrong.
+    const ab = nw.sys.abilities;
+    const saveStun = snap.stunMs;
+    try {
+      snap.stunMs = 400;                      // the slow end of the band
+      const road = net.getGameValue('swiftRoad');
+      ok(road > 1.1, `the road is at its slow end (x${road.toFixed(2)})`);
+      // The view never reports a fraction above 1, which is exactly what a
+      // mismatched divisor would produce.
+      for (const v of ab.view()) {
+        ok(v.cooldownFrac >= 0 && v.cooldownFrac <= 1,
+          `slot ${v.slot + 1} cooldown fraction stays in 0..1 (${v.cooldownFrac.toFixed(3)})`);
+      }
+    } finally {
+      snap.stunMs = saveStun;
+    }
+  } finally {
+    snap.natClass = saveNat;
+  }
+}
+
+async function testUdpMaskSignal(nw: any) {
+  const net = nw.sys.net, snap = net.snap;
+  const save = { nat: snap.natClass, ip: snap.publicIp, mm: snap.udpIpMismatch };
+  const find = () => net.maskEvidence().signals.find((s: any) => s.name === 'UDP vs TCP address');
+  try {
+    // Skipped entirely when either side has no address. This is the rule that
+    // matters: a signal that fires on missing data is how a VPN detector
+    // accuses somebody of nothing.
+    snap.natClass = 'unknown'; snap.publicIp = '203.0.113.9';
+    ok(!find(), 'an unwalked UDP path contributes no signal at all');
+    snap.natClass = 'cone'; snap.publicIp = '';
+    ok(!find(), 'and neither does a missing HTTP address');
+
+    // Present and agreeing.
+    snap.natClass = 'cone'; snap.publicIp = '203.0.113.9'; snap.udpIpMismatch = false;
+    const agree = find();
+    ok(!!agree, 'with both addresses read, the signal is shown');
+    eq(agree.hit, false, 'and it does not fire when they agree');
+    ok(agree.detail.includes('same'), 'the row says what was compared, verbatim');
+
+    // Present and disagreeing.
+    snap.udpIpMismatch = true;
+    const clash = find();
+    eq(clash.hit, true, 'and it fires when the two protocols disagree');
+    eq(clash.weight, 0.35, 'worth 0.35 — more than naming, less than WARP or the physics');
+    ok(clash.weight < 0.45, 'and never enough to be a verdict on its own');
+
+    // The band still describes evidence, never a person.
+    const m = net.maskEvidence();
+    ok(['none', 'weak', 'mixed', 'strong'].includes(m.band), `band is a band, not a boolean (${m.band})`);
+    ok(!/\bVPN\b/i.test(m.verdict), 'and the verdict never says the word VPN');
+  } finally {
+    snap.natClass = save.nat; snap.publicIp = save.ip; snap.udpIpMismatch = save.mm;
+  }
+}
+
+async function testUdpDisclosure(nw: any) {
+  const { STUN_SERVERS } = await import('./udp');
+  const { NET_GAME_MAP, NET_METRICS } = await import('../data/network');
+
+  // STUN is contacted over UDP rather than HTTPS, which makes it easy to leave
+  // out of the boot disclosure and exactly as real.
+  for (const u of STUN_SERVERS) ok(u.startsWith('stun:'), `${u} is a STUN url`);
+
+  // No dormant rows: both new sensors are read by a mapping, and both new
+  // mappings resolve to a sensor that exists.
+  const keys = new Set(NET_METRICS.map((s: any) => s.key));
+  for (const k of ['gate', 'stun']) {
+    ok(keys.has(k), `NET_METRICS carries '${k}'`);
+    ok(NET_GAME_MAP.some((m: any) => m.netKey === k), `and a mapping row reads '${k}'`);
+  }
+  for (const t of ['wardedGate', 'swiftRoad']) {
+    const rows = NET_GAME_MAP.filter((m: any) => m.target === t);
+    eq(rows.length, 1,
+      `exactly one mapping row targets '${t}' — getGameValue resolves with .find(), so a second would be dormant`);
+    ok(keys.has(rows[0].netKey), `and its netKey '${rows[0].netKey}' is a real sensor`);
+  }
+
+  // Every sensor row still declares where it flows and what it falls back to.
+  for (const k of ['gate', 'stun']) {
+    const s: any = NET_METRICS.find((x: any) => x.key === k);
+    ok((s.inspect?.flowsInto ?? '').length > 0, `'${k}' declares what it flows into`);
+    ok((s.inspect?.api ?? '').includes('Fallback'), `'${k}' states its fallback out loud`);
+  }
+}
+
 const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Boot & state integrity', fn: testBoot },
   { name: 'Starting inventory', fn: testStartingInventory },
@@ -6844,6 +7065,12 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Covenant - the loot floor rises raise-only and the Riftborn gate clips the rift', fn: testCovenantLoot },
   { name: 'Sounding - the plan refuses below the honest minimum, grades and rewards are real', fn: testSoundingLogic },
   { name: 'Sounding - CFG.n45.enabled is the revert, and the stone refuses out loud', fn: testSoundingFlagAndBlocked },
+  // ---- N4.7b: the UDP path ----
+  { name: 'UDP - the classifier measures where it can and infers where it says it does', fn: testUdpClassifier },
+  { name: 'UDP - both mappings band around a neutral that is also the fallback', fn: testUdpMappings },
+  { name: 'UDP - the gate reaches a real wall and the road reaches a real ring', fn: testUdpConsumers },
+  { name: 'UDP - the sixth mask signal is skipped when it cannot be checked', fn: testUdpMaskSignal },
+  { name: 'UDP - two sensors, two mappings, no dormant rows', fn: testUdpDisclosure },
 ];
 
 

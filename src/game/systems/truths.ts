@@ -17,7 +17,7 @@
 //      a real network-engineering metric that almost no consumer tool surfaces,
 //      and it is the only reading in the game whose floor is a law of physics.
 //
-//   2. **The Masking.** VPN / proxy evidence, honestly hedged. Four independent
+//   2. **The Masking.** VPN / proxy evidence, honestly hedged. Six independent
 //      signals, each individually weak, presented as EVIDENCE WITH CONFIDENCE
 //      and never as a verdict. This distinction is the whole design: three
 //      agreeing signals is a strong case, and a strong case is still not proof.
@@ -202,7 +202,7 @@ const HOSTING_WORDS = [
   'leaseweb', 'contabo', 'choopa', 'amazonaws', 'azure', 'googleusercontent',
 ];
 
-/** Four independent signals, cross-checked. None is a verdict on its own.
+/** Six independent signals, cross-checked. None is a verdict on its own.
  *
  *  `ptr` is the reverse-DNS name of the public IP, which N4.0 already resolves.
  *  `timeZone` and `languages` come from the vessel. Everything else is on the
@@ -302,6 +302,34 @@ export function maskEvidence(
         ? `${path.reachKm.toLocaleString()} km to ${path.colo}, past a ${path.horizonKm.toLocaleString()} km horizon`
         : `${path.reachKm.toLocaleString()} km to ${path.colo}, inside a ${path.horizonKm.toLocaleString()} km horizon`,
       weight: 0.40,
+    });
+  }
+
+  // 6. THE TWO ROADS. N4.7b, and the fourth signal the plan's own list asked
+  //    for: the public address STUN saw over UDP against the one the HTTP
+  //    trace saw over TCP.
+  //
+  //    Worth 0.35 — more than the naming and language checks, less than WARP
+  //    and less than the physics. When it fires it means something is rewriting
+  //    one protocol family and not the other, which is the signature of a split
+  //    tunnel or a TCP-only proxy and has very few innocent explanations. It is
+  //    not weighted higher because it has SOME: a carrier-grade NAT can hand
+  //    the same subscriber different public addresses for UDP and TCP flows,
+  //    and multi-WAN routers with per-protocol policy routing do it on purpose.
+  //
+  //    Skipped entirely rather than counted as a miss when either side has no
+  //    address. `udpIpMismatch` is already false in that case, but a false
+  //    row would still PRINT as "these agreed" in the panel, and telling a
+  //    player two things agreed when neither was read is the same lie in the
+  //    other direction.
+  if (snap?.natClass && snap.natClass !== 'unknown' && snap?.publicIp) {
+    signals.push({
+      name: 'UDP vs TCP address',
+      hit: !!snap.udpIpMismatch,
+      detail: snap.udpIpMismatch
+        ? 'the two protocols came back from different public addresses'
+        : 'both protocols came back from the same public address',
+      weight: 0.35,
     });
   }
 
