@@ -6751,7 +6751,7 @@ async function testUdpClassifier(nw: any) {
 }
 
 async function testUdpMappings(nw: any) {
-  const { NAT_GRADE } = await import('../data/network');
+  const { NAT_GRADE, COLD_STUN_MS } = await import('../data/network');
   const net = nw.sys.net;
   const snap = net.snap;
 
@@ -6775,15 +6775,27 @@ async function testUdpMappings(nw: any) {
     eq(road(120), 1, 'and 120 ms is the neutral centre the band is built around');
     ok(road(20) < 1, 'a quick answer on the other road shortens the wait');
     ok(road(400) > 1, 'and a slow one lengthens it');
-    // Monotone across the whole range, which is what makes it a band and not a
-    // pair of thresholds.
+    // Monotone across everything it TRUSTS, which is what makes it a band and
+    // not a pair of thresholds. The cold cutoff is deliberately outside this
+    // sweep — it is a different rule, asserted on its own below.
     let prev = -1;
-    for (const ms of [1, 20, 60, 120, 200, 300, 400, 900, 5000]) {
+    for (const ms of [1, 20, 60, 120, 200, 300, 400, 500, COLD_STUN_MS]) {
       const v = road(ms);
       ok(v >= prev, `swiftRoad is monotone through ${ms} ms (${v.toFixed(3)} >= ${prev.toFixed(3)})`);
       prev = v;
     }
-    ok(road(1e6) <= 1.15 && road(1) >= 0.85, 'and it stays inside its declared band at both extremes');
+    ok(road(COLD_STUN_MS) <= 1.15 && road(1) >= 0.85,
+      'and it stays inside its declared band at both trusted extremes');
+
+    // The cold-stack guard. Measured: warm in-page gathers cluster at 159-179 ms
+    // and the first gather after a page load took 1215 ms. The walk happens ONCE
+    // per run, so a cold sample left unguarded pins an entire run's cooldowns at
+    // the worst end of the band — and pillar 5 says a reading we do not trust
+    // maps to the neutral value, never to a penalty.
+    ok(COLD_STUN_MS > 400, `the cold cutoff sits above the band's slow end (${COLD_STUN_MS} ms)`);
+    eq(road(COLD_STUN_MS + 1), 1, 'a reading past the cold cutoff is discarded, not punished');
+    eq(road(1215), 1, 'the actual measured cold sample reads neutral');
+    ok(road(COLD_STUN_MS) > 1, 'while the last trusted reading below it still counts against you');
   } finally {
     snap.natClass = saveNat;
     snap.stunMs = saveStun;

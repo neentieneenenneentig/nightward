@@ -8,7 +8,7 @@
 // Every row carries an honesty tag. Where a reading is unavailable, the row
 // still renders and says WHY — a missing row teaches nothing, and "unavailable"
 // with no reason is indistinguishable from a bug.
-import { NET_GAME_MAP } from '../../data/network';
+import { COLD_STUN_MS, NET_GAME_MAP } from '../../data/network';
 import { pressureFiction } from '../../systems/vessel';
 import { protoName } from '../../systems/truths';
 import { gateFiction, gateName } from '../../systems/udp';
@@ -232,7 +232,10 @@ const paths: LensTab = {
               : { quality: 'unavailable', why: 'the walk has not finished' })
         + row('The other road', u.stunMs ? fmt(u.stunMs, 0, 'ms') : '—',
             u.stunMs ? { inspect: 'stun', quality: 'derived',
-                         why: 'offer to first reflexive candidate. Contains one real UDP round trip PLUS browser bookkeeping — this is a gathering time, not a ping' }
+                         color: u.stunMs > COLD_STUN_MS ? '#d8c07a' : undefined,
+                         why: u.stunMs > COLD_STUN_MS
+                           ? 'past the cold-stack cutoff, so this reading is DISCARDED rather than counted against you — the first ICE gather after a page loads measures a stack starting up, not a network'
+                           : 'offer to first reflexive candidate. Contains one real UDP round trip PLUS browser bookkeeping — about 150 ms of it is ICE startup and a callback queued behind the render loop, measured. This is a gathering time, not a ping' }
               : { quality: 'unavailable', why: 'no reflexive candidate was timed' })
         + row('Hidden by mDNS', `${u.mdnsHidden} of ${u.candidates} candidates`,
             { quality: 'reported',

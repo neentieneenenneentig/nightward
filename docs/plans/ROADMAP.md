@@ -119,6 +119,26 @@ regression signal, not the total.)
 > grouping by a constant is harmless — but the comment now says so, because code that looks
 > like it is doing work and is not is worse than code that does nothing.
 >
+> ### And then the same discipline turned on the row itself
+>
+> The Swift Road shipped saying "how fast the OTHER road answers", and that overclaimed. Six
+> bare ICE gathers run *inside the running game page*, against the same two servers:
+>
+> `1215, 161, 159, 170, 178, 179 ms` — and this milestone's own walk reads **164 ms**, right in
+> that band, which is how we know the implementation measures what a bare gather measures.
+>
+> The identical gather on an idle `about:blank` page: **11 ms and 35 ms**. So roughly 150 ms of
+> every in-game reading is ICE agent startup plus a callback queued behind the render loop, and
+> only the remainder is the wire. It is a **machine-and-network** number, and the fiction now
+> says "this vessel walking the road" rather than "the road".
+>
+> The outlier is the part that mattered. **That first 1215 ms sample is a cold ICE stack, not a
+> slow network** — and the walk happens *once per run*, so a single cold sample would have
+> pinned an entire run's ability cooldowns at the worst end of the band, invisibly, on any
+> player whose first sensor poll caught a cold stack. `COLD_STUN_MS = 600` discards a reading
+> that high rather than punishing it, which is pillar 5 applied to a reading rather than to a
+> missing API: **a number we do not trust maps to the neutral value, never to a penalty.**
+>
 > ### Two smaller corrections it forced
 >
 > **A trait promised in a doc string is the dormant row wearing a different hat.**

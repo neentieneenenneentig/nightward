@@ -785,7 +785,7 @@ export const NET_METRICS: NetMapping[] = [
     key: 'stun', label: 'The Other Road',
     compute: (s) => s.stunMs,
     fallback: 0, unit: 'ms', intervalMs: 0,
-    inspect: { api: 'Time from the WebRTC offer to the first server-reflexive ICE candidate. Contains one genuine UDP round trip plus browser bookkeeping — it is a gathering time, NOT a ping, and is never presented as one. Fallback: 0 (unmeasured).', action: 'measured once during the UDP walk', flowsInto: 'The Swift Road — a quick answer on the other road shortens your echoes' },
+    inspect: { api: 'Time from the WebRTC offer to the first server-reflexive ICE candidate. Contains one genuine UDP round trip plus browser bookkeeping — it is a gathering time, NOT a ping, and is never presented as one. Fallback: 0 (unmeasured). Measured: about 150 ms of an in-game reading is ICE startup plus a callback queued behind the render loop, so this is a machine-AND-network number; anything past 600 ms is a cold stack and is discarded rather than counted.', action: 'measured once during the UDP walk, on the sensor poll rather than at boot so the stack is warm', flowsInto: 'The Swift Road — a quick answer on the other road shortens your echoes' },
   },
   {
     key: 'audioRate', label: 'The Sounding Board',
@@ -800,6 +800,12 @@ export const NET_METRICS: NetMapping[] = [
 export const NAT_GRADE: Record<string, number> = {
   open: 0, cone: 1, unknown: 1, symmetric: 2, blocked: 2,
 };
+
+/** Above this, a `stunMs` reading is a cold ICE stack rather than a slow wire,
+ *  and the Swift Road returns neutral instead of its worst value. Measured:
+ *  warm in-page gathers cluster at 159-179 ms; the first gather after a page
+ *  loads took 1215 ms. See the Swift Road row for the full numbers. */
+export const COLD_STUN_MS = 600;
 
 /** Game system mappings — resonance values transformed into gameplay effects. */
 export const NET_GAME_MAP: NetGameMapping[] = [
@@ -1289,24 +1295,46 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   {
     label: 'Swift Road',
     netKey: 'stun',
-    // N4.7b. How fast the OTHER road answers decides how soon your echoes do.
+    // N4.7b. How fast this vessel can walk the OTHER road decides how soon your
+    // echoes come back.
     //
-    // Every latency row in this game so far has measured TCP. This one measures
-    // the UDP path, which leaves the same machine and takes a different route
-    // through the same network, and the two genuinely diverge — a link with
-    // aggressive TCP middleboxes can be quick on UDP, and a network shaping UDP
-    // can be the reverse. An ability cooldown is the right consumer because it
-    // is the one number in the game that is already about waiting for something
-    // to come back.
+    // Every latency row in this game measures TCP. This one measures the UDP
+    // path, which leaves the same machine and takes a different route through
+    // the same network. An ability cooldown is the right consumer because it is
+    // the one number in the game already about waiting for something to return.
     //
-    // Neutral at 120 ms rather than at 0, and that is not a fudge: the reading
-    // is a GATHERING time, not a ping (see systems/udp.ts) — it carries ICE
-    // setup on top of the round trip, so a fast link lands near 40 ms and not
-    // near 5. Banding it around the honest centre of what this measurement
-    // actually produces is the difference between a live knob and one pinned to
-    // its floor. 0 is the unmeasured sentinel and returns exactly 1.0.
+    // ---- what this actually measures, measured -------------------------------
+    //
+    // The row said "how fast the other road answers" when it shipped, and that
+    // overclaimed. Bare ICE gathers run INSIDE the running game page, six of
+    // them, against the same two servers:
+    //
+    //     1215, 161, 159, 170, 178, 179 ms      (game's own walk: 164 ms)
+    //
+    // and the same gather on an idle about:blank page: 11 and 35 ms. So roughly
+    // 150 ms of every reading is the page — ICE agent startup and a callback
+    // waiting its turn behind a render loop — and only the remainder is the
+    // wire. It is a MACHINE-AND-NETWORK reading, and the fiction says "this
+    // vessel walking the road" rather than "the road" for that reason.
+    //
+    // That is not a defect to apologise for; it is the same shape as every
+    // browser-side latency number in this project. But it decides two things:
+    //
+    // 1. **Neutral sits at 120 ms**, which is inside the band real in-page
+    //    readings occupy. Banding around 0 would pin every player at the floor
+    //    and the knob would never move.
+    // 2. **A reading past `COLD_STUN_MS` is discarded, not punished.** That
+    //    1215 ms first sample is a cold ICE stack, not a slow network — and a
+    //    single cold sample is enough to pin an entire run's cooldowns at the
+    //    worst end of the band, because the walk happens once. Pillar 5 says a
+    //    reading we do not trust maps to the NEUTRAL value, never to a penalty.
+    //    600 ms is well above anything a warm gather has produced and well
+    //    below the cold one.
+    //
+    // 0 is the unmeasured sentinel and returns exactly 1.0, same as ever.
     transform: (ms: number) => {
-      if (!(ms > 0)) return 1;                                  // unwalked: neutral, always
+      if (!(ms > 0)) return 1;                    // unwalked: neutral, always
+      if (ms > COLD_STUN_MS) return 1;            // cold stack, not a slow wire
       if (ms <= 120) return Math.max(0.85, 1 - ((120 - ms) / 120) * 0.15);
       return Math.min(1.15, 1 + ((ms - 120) / 280) * 0.15);
     },

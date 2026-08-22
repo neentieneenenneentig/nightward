@@ -65,6 +65,25 @@
 // labelled `stunMs` and described as "time to first reflexive candidate"
 // everywhere it is shown. It is never called a ping.
 //
+// How much bookkeeping? Measured, rather than guessed at. Six bare gathers run
+// inside the running game page against these same two servers:
+//
+//     1215, 161, 159, 170, 178, 179 ms       (this file's own walk: 164 ms)
+//
+// and the identical gather on an idle about:blank page: 11 ms and 35 ms. So
+// about 150 ms of every in-game reading is ICE agent startup plus a callback
+// queued behind a render loop, and only the remainder is the wire. Two things
+// follow, and both are acted on rather than merely noted:
+//
+//   * The reading is MACHINE-AND-NETWORK, so the game value it drives is named
+//     for a vessel walking a road, not for the road.
+//   * **The first gather after a page loads is cold** — that 1215 ms is a
+//     stack starting up, not a slow network. The walk below happens once per
+//     run, so one cold sample would pin a run-long game value at its worst
+//     end. `COLD_STUN_MS` in data/network.ts discards a reading that high
+//     instead of punishing it, and the walk rides the sensor poll rather than
+//     boot so it lands on a warm stack in the first place.
+//
 // **3. One server answering proves nothing about the NAT.** The symmetric test
 // is a COMPARISON. If only one of the two servers replies — blocked, rate
 // limited, unreachable on this network — the honest answer is `unknown`, not a
