@@ -1,10 +1,21 @@
 // Raw CDP driver — Node 24's built-in WebSocket, no npm deps.
 // Usage: node scripts/run-gauntlet.mjs
 import { spawn } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 const CDP_PORT = 9223;
 const GAME_URL = 'http://localhost:5199/?gl&seed=1234';
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+
+// A throwaway profile, always. Without --user-data-dir Chrome reuses the
+// DEFAULT profile directory, and if the user already has Chrome open that
+// launch is handed to the running instance instead of starting a new one:
+// the flags are ignored, the debugging port never opens, and the run either
+// hangs or -- worse -- quietly drives the user's own browser. Own profile,
+// own process, removed on the way out.
+const PROFILE = fs.mkdtempSync(path.join(os.tmpdir(), 'nw-gauntlet-'));
 
 // ---- helpers ----
 
@@ -58,6 +69,9 @@ console.log('Launching headless Chrome...');
 const chrome = spawn(CHROME, [
   `--headless=new`,
   `--remote-debugging-port=${CDP_PORT}`,
+  `--user-data-dir=${PROFILE}`,
+  '--no-first-run',
+  '--no-default-browser-check',
   '--no-sandbox',
   '--disable-gpu',
   '--disable-software-rasterizer',
@@ -178,5 +192,6 @@ try {
   exitCode = 1;
 } finally {
   chrome.kill();
+  try { fs.rmSync(PROFILE, { recursive: true, force: true }); } catch {}
   process.exit(exitCode);
 }

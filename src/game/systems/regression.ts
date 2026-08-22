@@ -897,6 +897,17 @@ async function testMobBirthStats(nw: any) {
   const origProfile = net.computeRealmProfile;
   net.computeRealmProfile = () => ({ median: 180, variance: 0 });
 
+  // The birth path also folds in the live net scale (enemyScale × veilPressure)
+  // and the night-growth exponent. veilPressure is the live JS heap (or a
+  // PressureObserver) in the previous milestone, so a GC that runs between
+  // fixtures pushes the hp/dmg product above the bounds below. The fixture must
+  // own every input the birth path reads — pin both to their neutral day-1 value.
+  const origGetGameValue = net.getGameValue?.bind(net);
+  net.getGameValue = (target: string) =>
+    (target === 'enemyScale' || target === 'veilPressure') ? 1 : (origGetGameValue?.(target) ?? 1);
+  const savedClock = state.clock;
+  state.clock = 1;   // day 1 dawn — hpGrowth^0 = 1, so the bounds below hold
+
   // ---- Cold fixture: paid DNS+TLS route → Shelled, Pale prefix ----
   const beforeCold = sys.hordes.foes.length;
   net.lastEcho = {
@@ -978,6 +989,8 @@ async function testMobBirthStats(nw: any) {
   sys.hordes.toSpawn = 0;
   net.lastEcho = null;
   net.computeRealmProfile = origProfile;
+  net.getGameValue = origGetGameValue;
+  state.clock = savedClock;
 }
 
 async function testDamageRollBounds(nw: any) {
@@ -5847,17 +5860,20 @@ async function testHubRowsAndHatch(nw: any) {
 
   // ---- 1. the rows themselves ------------------------------------------
   const hubs = BUILDINGS.filter((b: any) => b.hub);
-  eq(hubs.length, 2, 'two hub counters exist in the building table');
+  eq(hubs.length, 3, 'three hub counters exist: the two A6 counters and the Sounding Stone');
   for (const h of hubs) {
     ok(h.unique, `${h.name} is unique — a second one would add nothing but territory`);
     ok(h.cost.length > 0 && h.territory > 0,
       `${h.name} costs materials to raise and territory to keep (${h.territory})`);
     eq(HUB_BUILDINGS[h.hub!]?.id, h.id, `HUB_BUILDINGS resolves '${h.hub}' to ${h.id}`);
   }
-  // The two rows must be LAST, because that is what makes the escape hatch a
-  // restoration rather than a hole in the middle of the carousel.
-  const tail = BUILDINGS.slice(-2).map((b: any) => b.id).sort().join(',');
-  eq(tail, 'forge_warden,reliquary', 'both hub rows are the last entries in BUILDINGS');
+  // The hub rows must be LAST, because that is what makes each escape hatch a
+  // restoration rather than a hole in the middle of the carousel. A6's two
+  // counters sit together, and N4.5's Sounding Stone is the very last row.
+  eq(BUILDINGS[BUILDINGS.length - 1].id, 'sounding_stone', 'the Sounding Stone is the last row');
+  eq(BUILDINGS.slice(-hubs.length).map((b: any) => b.id).sort().join(','),
+    hubs.map((b: any) => b.id).sort().join(','),
+    'the hub rows are the last entries in BUILDINGS');
 
   // ---- 2. the escape hatch, measured ------------------------------------
   const sel = () => (nw.sys.build as any).selectable().map((b: any) => b.id);
@@ -5875,6 +5891,19 @@ async function testHubRowsAndHatch(nw: any) {
     eq(nw.sys.hub.near(), null, 'and a Reliquary already standing stops answering');
   } finally {
     CFG.a6.enabled = savedFlag;
+  }
+
+  // N4.5's own hatch: the Sounding Stone answers to ITS flag, not A6's. Same
+  // shape as the A6 hatch above — capture the carousel, flip the flag, and the
+  // ONLY change may be the stone's row leaving.
+  const withStone = sel();
+  const savedN45 = CFG.n45.enabled;
+  try {
+    CFG.n45.enabled = false;
+    eq(sel().join('|'), withStone.filter((i: string) => i !== 'sounding_stone').join('|'),
+      'CFG.n45.enabled = false removes exactly the Sounding Stone and reorders nothing else');
+  } finally {
+    CFG.n45.enabled = savedN45;
   }
 
   // ---- 3. the price tables are arithmetic, not literals ------------------
@@ -6471,6 +6500,191 @@ async function testChronicleExport(nw: any) {
   ok(json.length > 50, `the payload serialises (${json.length} bytes)`);
 }
 
+// ---------------------------------------------------------------------------
+// N4.5/A7 — the Sounding and the Covenants
+// ---------------------------------------------------------------------------
+
+async function testCovenantData(nw: any) {
+  const {
+    COVENANTS, DEFAULT_COVENANT, canSwear, covenantIndex, covenantDef, legacyWeight,
+  } = await import('../data/covenants');
+  const { RARITY_ORDER } = await import('../data/rarity');
+
+  eq(DEFAULT_COVENANT, 'quiet', 'the default pact is the one that spends nothing');
+  eq(COVENANTS.length, 5, 'five tiers');
+
+  // The panel's one promise: every tier's megabyte cost is stated in the panel.
+  for (const c of COVENANTS) {
+    ok(c.name.length > 0 && c.budgetLabel.length > 0 && c.cost.length > 0,
+      `${c.id} states its name, its budget label and its cost`);
+    ok(Number.isFinite(c.budgetMB) && c.budgetMB >= 0, `${c.id} carries a real budget`);
+    ok(c.hpMul >= 1 && c.dmgMul >= 1, `${c.id} multiplies difficulty up, never down`);
+    ok(RARITY_ORDER.includes(c.rarityFloor), `${c.id} floor is a real rung`);
+  }
+
+  // quiet is byte-for-byte the game that shipped before the covenants existed.
+  const q = covenantDef('quiet');
+  eq(q.hpMul, 1, 'quiet hp');
+  eq(q.dmgMul, 1, 'quiet dmg');
+  eq(q.budgetMB, 0, 'quiet budget');
+  eq(q.legacyMul, 1, 'quiet legacy');
+
+  // Raise-only, and that is the whole anti-exploit rule.
+  ok(canSwear('quiet', 'deep'), 'a deeper pact may be sworn');
+  ok(!canSwear('deep', 'quiet'), 'a pact cannot be renounced');
+  ok(!canSwear('abyssal', 'abyssal'), 'a pact cannot be re-sworn at its own depth');
+  ok(covenantIndex('abyssal') > covenantIndex('quiet'), 'the tiers are ordered');
+
+  // Legacy weighting: nights are scored at the price actually paid for them.
+  eq(legacyWeight({}, 'abyssal'), covenantDef('abyssal').legacyMul,
+    'a run with no nights falls back to the held tier');
+  const mixed = legacyWeight({ quiet: 9, abyssal: 1 }, 'abyssal');
+  const expected = (9 * 1 + 1 * 2.4) / 10;
+  ok(Math.abs(mixed - expected) < 1e-9,
+    `nine quiet nights plus one abyssal weigh to ${mixed.toFixed(3)} (expected ${expected.toFixed(3)})`);
+  ok(mixed < covenantDef('abyssal').legacyMul,
+    'a last-minute abyssal oath cannot reprice nine quiet nights');
+}
+
+async function testCovenantDifficulty(nw: any) {
+  const { CFG } = await import('../data/config');
+  const { activeCovenant } = await import('../data/covenants');
+  const hordes = nw.sys.hordes;
+  const state = nw.state;
+
+  const oldA2 = CFG.a2.enabled;
+  const oldCov = state.covenant;
+  CFG.a2.enabled = false;   // no elite roll may touch the born stats we measure
+  try {
+    eq(activeCovenant('quiet').hpMul, 1, 'quiet hp is the old game');
+    const cov = activeCovenant('abyssal');
+    eq(cov.hpMul, 1.9, 'abyssal hp multiplier');
+    eq(cov.dmgMul, 1.7, 'abyssal dmg multiplier');
+
+    // wake() must multiply the covenant ON TOP of the existing scaling product.
+    state.covenant = 'abyssal';
+    const n = Math.max(1, nw.ctx.nightIndex());
+    const hpMul = Math.pow(CFG.horde.hpGrowth, n - 1);
+    const dmgMul = Math.pow(CFG.horde.dmgGrowth, n - 1);
+    const netScale = (nw.sys.net?.getGameValue?.('enemyScale') ?? 1)
+      * (nw.sys.net?.getGameValue?.('veilPressure') ?? 1);
+
+    const before = hordes.foes.length;
+    let woke = hordes.wake(state.player.x, state.player.y, 1, 1);
+    if (!woke) woke = hordes.wake(state.player.x, state.player.y - 96, 1, 3);
+    ok(woke > 0, 'a wake spawns a foe to measure');
+    const f = hordes.foes[hordes.foes.length - 1];
+    eq(f.maxHp, Math.max(1, Math.round(f.def.hp * hpMul * netScale * cov.hpMul)),
+      'the covenant hpMul reaches wake()');
+    eq(f.baseDmg, Math.round(f.def.dmg * dmgMul * netScale * cov.dmgMul),
+      'the covenant dmgMul reaches wake()');
+    hordes.foes.length = before;
+
+    // onDawn credits the pact that was actually held for that night.
+    state.nightsAtCovenant = {};
+    state.covenant = 'deep';
+    hordes.onDawn(true);
+    eq(state.nightsAtCovenant['deep'], 1, 'dawn credits the held pact');
+  } finally {
+    CFG.a2.enabled = oldA2;
+    state.covenant = oldCov;
+  }
+}
+
+async function testCovenantLoot(nw: any) {
+  const { covenantBand, rollRarity } = await import('./loot');
+  const { LOOT_BANDS, rarityIndex } = await import('../data/rarity');
+
+  // Raise-only: a band whose own floor sits above the pact's is never lowered.
+  eq(covenantBand(LOOT_BANDS.lord, 'drowning').floor, 'hallowed',
+    'a lord\'s guaranteed Hallowed survives a deep pact');
+  eq(covenantBand(LOOT_BANDS.common, 'deep').floor, 'touched',
+    'the deep pact lifts the common floor to touched');
+  eq(covenantBand(LOOT_BANDS.common, 'drowning').floor, 'woven',
+    'the drowning pact lifts the common floor to woven');
+
+  // Riftborn gate: the rift band's ceiling is clipped when the pact cannot find one.
+  eq(covenantBand(LOOT_BANDS.rift, 'quiet').ceiling, 'sovereign',
+    'a quiet pact has nothing riftborn to find');
+  eq(covenantBand(LOOT_BANDS.rift, 'abyssal').ceiling, 'riftborn',
+    'an abyssal pact keeps the riftborn ceiling');
+  eq(LOOT_BANDS.rift.ceiling, 'riftborn', 'the raw table is untouched — the gate is an overlay');
+
+  // The adjusted floor actually reaches the draw, not just the returned object.
+  const drown = covenantBand(LOOT_BANDS.common, 'drowning');
+  for (let i = 0; i < 200; i++) {
+    const r = rollRarity(drown, 1);
+    ok(rarityIndex(r) >= rarityIndex('woven'),
+      `a drowning common draw never lands below woven (got ${r})`);
+  }
+}
+
+async function testSoundingLogic(nw: any) {
+  const {
+    planSounding, gradeBloat, soundingReward, emptySounding, MIN_DOWN, MAX_DOWN,
+  } = await import('./sounding');
+  const { hasEffect } = await import('./effects');
+
+  eq(planSounding(MIN_DOWN - 1), null, 'below the honest minimum there is no sounding');
+  const plan = planSounding(20_000_000);
+  ok(plan !== null, 'a healthy budget plans a sounding');
+  ok(plan!.downBytes >= MIN_DOWN && plan!.downBytes <= MAX_DOWN,
+    `download ${plan!.downBytes} stays inside the honest band`);
+  eq(plan!.upBytes, Math.floor(plan!.downBytes * 0.1), 'upload is a tenth of download');
+
+  eq(gradeBloat(3), 'A', '3ms of added latency is an A');
+  eq(gradeBloat(40), 'C', '40ms is a C');
+  eq(gradeBloat(250), 'F', '250ms is an F');
+
+  const dead = soundingReward(emptySounding());
+  eq(dead.gold, 0, 'a dead reading pays no gold');
+  eq(dead.boon, null, 'a dead reading grants no boon');
+
+  const good = soundingReward({
+    ...emptySounding(), live: true, downMbps: 100, upMbps: 20, bloatGrade: 'A', resolverMs: 20,
+  });
+  ok(good.gold > 0, 'a live reading pays gold');
+  ok(good.boon !== null, 'an A-grade reading grants the clarity boon');
+  ok(good.boon!.effects.every((e) => hasEffect(e)),
+    'the clarity boon names only registered, consumed effect hooks');
+}
+
+async function testSoundingFlagAndBlocked(nw: any) {
+  const { CFG } = await import('../data/config');
+  const { activeCovenant } = await import('../data/covenants');
+  const { covenantBand } = await import('./loot');
+  const { LOOT_BANDS } = await import('../data/rarity');
+  const sounding = nw.sys.sounding;
+  const state = nw.state;
+
+  const old = CFG.n45.enabled;
+  const oldCov = state.covenant;
+  try {
+    // The one flag is the one revert: off means byte-for-byte the pre-N4.5 game.
+    CFG.n45.enabled = false;
+    eq(activeCovenant('abyssal').id, 'quiet', 'with the flag off every pact reads quiet');
+    eq(covenantBand(LOOT_BANDS.rift, 'abyssal').ceiling, 'riftborn',
+      'with the flag off the pact changes no band');
+    eq(sounding.budgetLeft(), 0, 'with the flag off the budget is zero');
+    ok(sounding.blocked() !== null, 'with the flag off the stone refuses');
+
+    // With the flag on and the quiet pact held, the stone explains itself out loud.
+    CFG.n45.enabled = true;
+    state.covenant = 'quiet';
+    ok((sounding.blocked() ?? '').includes('Quiet Pact'),
+      'the quiet pact is refused with a sentence, not a greyed button');
+    eq(sounding.budgetLeft(), 0, 'the quiet pact has no budget');
+  } finally {
+    CFG.n45.enabled = old;
+    state.covenant = oldCov;
+  }
+
+  // The resolver race is honest when nothing has resolved yet.
+  const r = nw.sys.net?.fastestResolver?.();
+  ok(r === null || (typeof r.ms === 'number' && r.ms > 0),
+    'fastestResolver returns null or a positive ms');
+}
+
 const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Boot & state integrity', fn: testBoot },
   { name: 'Starting inventory', fn: testStartingInventory },
@@ -6624,6 +6838,12 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Hub - the counter answers at a measured distance, and E opens it', fn: testHubReach },
   { name: 'Hub - the Reliquary charges exactly, bands honestly, never reaches the rift', fn: testReliquary },
   { name: 'Hub - the Forge-Warden reworks one line, and the curse survives it', fn: testForgeWarden },
+  // ---- N4.5/A7: The Sounding & the Covenants ----
+  { name: 'Covenant - five tiers, quiet is the old game, raise-only, nights-weighted legacy', fn: testCovenantData },
+  { name: 'Covenant - hp/dmg reach the night wave and dawn credits the held pact', fn: testCovenantDifficulty },
+  { name: 'Covenant - the loot floor rises raise-only and the Riftborn gate clips the rift', fn: testCovenantLoot },
+  { name: 'Sounding - the plan refuses below the honest minimum, grades and rewards are real', fn: testSoundingLogic },
+  { name: 'Sounding - CFG.n45.enabled is the revert, and the stone refuses out loud', fn: testSoundingFlagAndBlocked },
 ];
 
 
