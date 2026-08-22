@@ -34,6 +34,10 @@ export interface BuildingDef {
   stunSec?: number;
   // X1: buildings that extend the waystone chain (Signal Beacon), with this anchor range
   anchorRange?: number;
+  /** A6 + N4.5: standing next to this opens a hub panel instead of gathering.
+   *  The column is what makes the interaction data-driven — systems/hub.ts
+   *  scans for `hub`, never for hard-coded ids, so a third counter is a row. */
+  hub?: 'reliquary' | 'forge' | 'sounding';
   art: 'hall' | 'hut' | 'wall' | 'tower' | 'campfire' | 'trap' | 'shrine';
 }
 
@@ -326,4 +330,49 @@ export const BUILDINGS: BuildingDef[] = [
     towerRole: 'poison', poisonFx: { dpsFrac: 0.2, durSec: 3, maxStacks: 1, spreadOnDeath: true },
     art: 'tower',
   },
+
+  // ---- A6: the hub -------------------------------------------------------
+  //
+  // The LAST two rows in the table, and BuildSystem.selectable() drops them
+  // when CFG.a6.enabled is false — so the escape hatch restores the pre-A6
+  // build carousel in its original order rather than merely hiding two
+  // buttons somewhere in the middle of it.
+  //
+  // Both are `unique`. A second Reliquary would add nothing but territory,
+  // and territory is the one thing these two already cost you: the night
+  // scales on it, so a hub is paid for twice — once in materials, and again
+  // every night it stands.
+  {
+    id: 'reliquary', name: 'The Reliquary',
+    desc: 'Sealed relics, sold by weight of gold. You buy the shape and the odds — never the roll.',
+    hp: 240, cost: [s('silver_bar', 3), s('stone', 12), s('moonbell', 4)],
+    pop: 0, territory: 5, unique: true, hub: 'reliquary', art: 'shrine',
+  },
+  {
+    id: 'forge_warden', name: 'The Forge-Warden',
+    desc: 'Reworks a single line on a single piece. The rest of the item is not their business.',
+    hp: 260, cost: [s('iron_bar', 4), s('plank', 10), s('charcoal', 8)],
+    pop: 0, territory: 4, unique: true, hub: 'forge', art: 'hut',
+  },
+
+  // ---- N4.5: the Sounding Stone -------------------------------------------
+  //
+  // The LAST row in the table, dropped by BuildSystem.selectable() when
+  // CFG.n45.enabled is off — the same discipline as the A6 rows above, so the
+  // revert restores the pre-N4.5 carousel in its original order. `unique`:
+  // a second stone would add nothing but territory, and territory is the one
+  // thing it already costs you — the night scales on it.
+  {
+    id: 'sounding_stone', name: 'The Sounding Stone',
+    desc: 'A standing stone that listens to the deep. Each sounding spends part of the data budget your pact consents to.',
+    hp: 200, cost: [s('stone', 8), s('copper_bar', 2), s('moonbell', 2)],
+    pop: 0, territory: 3, unique: true, hub: 'sounding', art: 'shrine',
+  },
 ];
+
+/** A6: the two hub rows, by their `hub` kind. A lookup rather than a scan at
+ *  every call site — and the thing that makes "is this building a hub" one
+ *  question with one answer. */
+export const HUB_BUILDINGS: Record<string, BuildingDef> = Object.fromEntries(
+  BUILDINGS.filter((b) => b.hub).map((b) => [b.hub as string, b]),
+);

@@ -5,7 +5,8 @@
 // roll here can never overwrite a swing's pending multiplier mid-windup.
 import { Graphics } from 'pixi.js';
 import { CFG } from '../data/config';
-import { echoForBoss, echoById, statsFor, type EchoDef, type EchoStats } from '../data/echoes';
+import { activeEffects } from './effects';
+import { echoForBoss, echoById, statsFor, activeStatsFor, type EchoDef, type EchoStats } from '../data/echoes';
 import { ENEMIES } from '../data/enemies';
 import { TILE } from '../world/worldgen';
 import type { Foe } from './hordes';
@@ -31,6 +32,12 @@ export class EchoSystem {
   private orbGfx: Graphics | null = null;
   private orbHitAt = new Map<number, number>(); // foe uid → clock of last orb contact
   private fireCount = 0; // per-session counter for seeded per-fire rng
+  // A3: Threefold Hollow's window. The orbit echo has no fire() to empower --
+  // it is a persistent ring -- so its active is a TIMER the ring reads, which is
+  // why this lives here beside the ring and not in the ability system.
+  private orbEmpowerUntil = 0;
+  private orbEmpowerBonus = 0;
+  private orbEmpowerDmgMul = 1;
 
   constructor(private ctx: any) {}
 
@@ -144,8 +151,16 @@ export class EchoSystem {
       return;
     }
     const def = echoById('null_orb')!;
-    const st = statsFor(def, lvl);
-    this.orbAngle += CFG.echoes.orbitRadPerSec * dt;
+    const base = statsFor(def, lvl);
+    // A3: Threefold Hollow -- while the window holds, the ring gains orbs and bites
+    // deeper. Applied HERE rather than at cast time because the ring is continuous:
+    // an orb that spawned before the cast has to become empowered too, or the
+    // player would watch three orbs appear and only the new ones do damage.
+    const empowered = state.clock < this.orbEmpowerUntil;
+    const st = empowered
+      ? { ...base, orbCount: base.orbCount + this.orbEmpowerBonus, dmg: base.dmg * this.orbEmpowerDmgMul }
+      : base;
+    this.orbAngle += CFG.echoes.orbitRadPerSec * dt * (empowered ? 1.5 : 1);
     const rPx = st.orbRadiusTiles * TILE;
 
     if (!this.orbGfx && this.ctx.player?.cont) {
@@ -158,8 +173,10 @@ export class EchoSystem {
       for (let i = 0; i < st.orbCount; i++) {
         const a = this.orbAngle + (i / st.orbCount) * Math.PI * 2;
         const ox = Math.cos(a) * rPx, oy = Math.sin(a) * rPx * 0.6 - 12;
-        this.orbGfx.circle(ox, oy, 8).stroke({ width: 1.5, color: def.color, alpha: 0.35 });
-        this.orbGfx.circle(ox, oy, 5).fill({ color: def.color, alpha: 0.85 });
+        this.orbGfx.circle(ox, oy, empowered ? 11 : 8)
+          .stroke({ width: empowered ? 2.5 : 1.5, color: def.color, alpha: empowered ? 0.6 : 0.35 });
+        this.orbGfx.circle(ox, oy, empowered ? 7 : 5).fill({ color: def.color, alpha: 0.85 });
+        if (empowered) this.orbGfx.circle(ox, oy, 2.5).fill({ color: 0xffffff, alpha: 0.75 });
       }
     }
 
@@ -268,9 +285,190 @@ export class EchoSystem {
     }
   }
 
+  // ---- A3: the empowered forms ------------------------------------------------
+  //
+  // The ability system owns the bar, the Resolve cost and the cooldown. It does
+  // NOT own what an echo does when it goes off -- that lives here, next to the
+  // autofire it is a louder version of, so both halves obey the one damage law
+  // below and both reach targets through the same targetsWithin()/hitAll() pair.
+  // Two files deciding how much a Rime Nova hurts is how the two forms drift.
+  //
+  // Actives ALWAYS fire. The autofire returns false when nothing is in reach and
+  // keeps its cooldown, which is right for something that fires itself -- but a
+  // button you pressed that silently does nothing is indistinguishable from a
+  // button that is broken. You pressed it, it goes off, it costs. If you emptied
+  // it into the dark, that was your call and the visual says so.
+
+  /** Cast an echo's empowered form. The caller has already charged the Resolve. */
+  castActive(id: string): boolean {
+    const def = echoById(id);
+    if (!def) return false;
+    const lvl = this.ctx.state.player.echoes?.[id] ?? 0;
+    if (lvl <= 0) return false;
+    const a = activeStatsFor(def, lvl);
+    const { state } = this.ctx;
+    // the tell: a white ring under the elemental one, on every active without
+    // exception, so "I pressed something" is legible before the damage lands
+    this.ctx.views?.addPulseRing?.(state.player.x, state.player.y, 22, 0xffffff);
+    switch (def.kind) {
+      case 'pulse':  this.castBurst(def, a); break;
+      case 'trail':  this.castLine(def, a); break;
+      case 'nova':   this.castFreeze(def, a); break;
+      case 'volley': this.castChain(def, a); break;
+      case 'orbit':  this.castOrbWindow(def, a); break;
+    }
+    this.ctx.log?.push('resonance',
+      `active: ${def.active.name} (${def.id} L${lvl}) cast for ${def.active.cost} resolve`, state.clock);
+    return true;
+  }
+
+  /** Bramblebreak -- the ring erupts, and throws back what lives through it. */
+  private castBurst(def: EchoDef, a: ReturnType<typeof activeStatsFor>) {
+    const { state } = this.ctx;
+    const px = state.player.x, py = state.player.y;
+    const r = a.radiusTiles * TILE;
+    const t = this.targetsWithin(px, py, r);
+    const dmg = Math.max(1, Math.round(a.dmg * this.roll(def.id)));
+    this.ctx.views?.addPulseRing?.(px, py, r, def.color);
+    this.ctx.views?.addPulseRing?.(px, py, r * 0.62, def.color);
+    this.hitAll(t, dmg);
+    // knockback: survivors only, and only onto ground they could have walked to.
+    // canStand() is the same test the player's own movement uses -- shoving a foe
+    // into a lake would strand it there forever, because speedAt() on water is 0
+    // and the march step would never get it out.
+    const push = (def.active.knockTiles ?? 0) * TILE;
+    if (push > 0) {
+      for (const f of t.foes) {
+        if (f.hp <= 0) continue;
+        const d = Math.hypot(f.x - px, f.y - py) || 1;
+        const nx = f.x + ((f.x - px) / d) * push;
+        const ny = f.y + ((f.y - py) / d) * push;
+        if (this.ctx.world?.canStand?.(nx, ny) !== false) { f.x = nx; f.y = ny; }
+      }
+    }
+  }
+
+  /** Emberline -- the smoulder leaves your feet and lands where you are looking. */
+  private castLine(def: EchoDef, a: ReturnType<typeof activeStatsFor>) {
+    const { state } = this.ctx;
+    const ang = this.ctx.player?.aimAngle ?? Math.PI / 2;
+    const dx = Math.cos(ang), dy = Math.sin(ang);
+    const tx0 = Math.floor(state.player.x / TILE), ty0 = Math.floor(state.player.y / TILE);
+    const n = Math.max(1, Math.round(def.active.lineTiles ?? 5));
+    const dmg = Math.max(1, Math.round(a.dmg * this.roll(def.id)));
+    const seen = new Set<string>();
+    for (let i = 1; i <= n; i++) {
+      const tx = Math.round(tx0 + dx * i), ty = Math.round(ty0 + dy * i);
+      const key = `${tx},${ty}`;
+      if (seen.has(key)) continue;   // a shallow diagonal rounds two steps onto one tile
+      seen.add(key);
+      const x = (tx + 0.5) * TILE, y = (ty + 0.5) * TILE;
+      this.patches.push({
+        tx, ty, x, y,
+        until: state.clock + a.patchSec,
+        nextTick: state.clock, tickSec: a.patchTickSec,
+        dmg,
+      });
+      this.ctx.views?.addBurnPatch?.(x, y, a.patchSec);
+      this.ctx.particles?.spawn?.('ember', x, y - 4, 3);
+      // same rule the trail has obeyed since T5: the line asks the real fire CA to
+      // catch, and if it does the CA owns it -- including burning you and your base.
+      if (CFG.echoes.cinderIgnitesCA) this.ctx.worldCore?.ignite?.(tx, ty);
+    }
+  }
+
+  /** Hoarfrost -- the cold stops being a slow and becomes a wall. */
+  private castFreeze(def: EchoDef, a: ReturnType<typeof activeStatsFor>) {
+    const { state } = this.ctx;
+    const px = state.player.x, py = state.player.y;
+    const r = a.radiusTiles * TILE;
+    const t = this.targetsWithin(px, py, r);
+    const dmg = Math.max(1, Math.round(a.dmg * this.roll(def.id)));
+    this.ctx.views?.addPulseRing?.(px, py, r, def.color);
+    const freeze = def.active.freezeSec ?? 0;
+    for (const f of t.foes) {
+      const ef = f as any;
+      // _stunnedUntil is the C5 Earthshaker consumer, already read by the march
+      // step. Reusing it is the whole reason a hard freeze is four lines and not
+      // a new debuff with a new consumer nobody wired.
+      ef._stunnedUntil = Math.max(ef._stunnedUntil ?? 0, state.clock + freeze);
+      // and the chill outlasts the freeze, so they thaw INTO a slow rather than
+      // snapping back to full speed the instant the wall drops
+      ef.chillUntil = state.clock + freeze + a.slowSec;
+      ef.chillMult = a.slowMult;
+    }
+    this.hitAll(t, dmg);   // lords take the damage; the cold does not hold them (v1)
+  }
+
+  /** Undertow -- four lashes, further out, and it never lashes nothing. */
+  private castChain(def: EchoDef, a: ReturnType<typeof activeStatsFor>) {
+    const { state } = this.ctx;
+    const px = state.player.x, py = state.player.y;
+    const range = a.rangeTiles * TILE;
+    const n = Math.max(1, Math.round(a.projectiles));
+    const dmg = Math.max(1, Math.round(a.dmg * this.roll(def.id)));
+    const foes = ([...(this.ctx.hordes?.foes ?? [])] as Foe[])
+      .filter((f) => f.hp > 0 && Math.hypot(f.x - px, f.y - py) <= range + f.def.art.size / 2)
+      .sort((x, y) => Math.hypot(x.x - px, x.y - py) - Math.hypot(y.x - px, y.y - py));
+    const bosses = ((this.ctx.worldbosses?.alive?.() ?? []) as WorldBoss[])
+      .filter((b) => b.hp > 0 && Math.hypot(b.x - px, b.y - py) <= range + bossSize(b.defId) / 2)
+      .sort((x, y) => Math.hypot(x.x - px, x.y - py) - Math.hypot(y.x - px, y.y - py));
+    // distinct targets FIRST, then wrap. "Four targets" against a lone charger
+    // still has to be four lashes, or the active gets weaker as the field thins.
+    if (!foes.length && !bosses.length) {
+      // nothing in reach: four lashes into the dark, so a wasted cast looks wasted
+      for (let i = 0; i < n; i++) {
+        const ang = this.ctx.player?.aimAngle ?? 0;
+        const s = ang + (i - (n - 1) / 2) * 0.35;
+        this.ctx.views?.addShot?.(px, py - 10, px + Math.cos(s) * range, py + Math.sin(s) * range);
+      }
+      return;
+    }
+    for (let i = 0; i < n; i++) {
+      if (foes.length) {
+        const f = foes[i % foes.length];
+        if (f.hp <= 0) continue;
+        this.ctx.views?.addShot?.(px, py - 10, f.x, f.y - f.def.art.size / 2);
+        this.ctx.views?.addHitFlash?.(f.x, f.y);
+        this.ctx.hordes.hurt(f, dmg, false, true);
+      } else {
+        const b = bosses[i % bosses.length];
+        if (b.hp <= 0) continue;
+        this.ctx.views?.addShot?.(px, py - 10, b.x, b.y - bossSize(b.defId) / 4);
+        this.ctx.views?.addHitFlash?.(b.x, b.y);
+        this.ctx.worldbosses.hurt(b, dmg, true);
+      }
+    }
+  }
+
+  /** Threefold Hollow -- open the window; updateOrbs() does the rest, every tick. */
+  private castOrbWindow(def: EchoDef, a: ReturnType<typeof activeStatsFor>) {
+    const { state } = this.ctx;
+    this.orbEmpowerUntil = state.clock + (def.active.windowSec ?? 0);
+    this.orbEmpowerBonus = def.active.orbBonus ?? 0;
+    this.orbEmpowerDmgMul = def.active.dmgMul;
+    this.ctx.views?.addPulseRing?.(state.player.x, state.player.y, a.orbRadiusTiles * TILE, def.color);
+  }
+
+  /** A3 test seam: how long Threefold Hollow's window still has to run. */
+  orbEmpowerLeft(): number {
+    return Math.max(0, this.orbEmpowerUntil - (this.ctx.state?.clock ?? 0));
+  }
+
   /** One damage law: the same seeded-rng D5 roll swings use, per fire.
    * `stash: false` — never overwrite a pending swing's stashed multiplier. */
   private roll(label: string, quiet = false): number {
+    // C4: 'resonance_boost' — the Nullmaw relic and the 'of Resonance' suffix.
+    // Applied HERE, in the one place both halves of an echo derive their damage,
+    // so it lifts the autofire and A3's actives together and cannot drift apart
+    // from either. Registered in C4; its handler's comment claimed the network
+    // system consumed it, and the network system had never heard of it.
+    const res = activeEffects(this.ctx.state).has('resonance_boost')
+      ? 1 + CFG.itemEffects.resonancePct : 1;
+    return res * this.rollBase(label, quiet);
+  }
+
+  private rollBase(label: string, quiet = false): number {
     this.fireCount++;
     const swingSeed = (this.ctx.state.seed ?? 1234) ^ (this.fireCount * 0x9e3779b9);
     let s = swingSeed >>> 0;

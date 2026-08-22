@@ -38,7 +38,8 @@ export type ParticleKind =
   | 'rift'       // realm rift (N2)
   | 'death'      // enemy killed
   | 'heal'       // player healed
-  | 'crit';      // critical hit
+  | 'crit'       // critical hit
+  | 'levelup';   // B6: skill level gained — rises off the player
 
 /** Particle definitions — data-driven, tweakable at runtime. */
 export const PARTICLE_DEFS: Record<ParticleKind, ParticleDef> = {
@@ -87,6 +88,14 @@ export const PARTICLE_DEFS: Record<ParticleKind, ParticleDef> = {
     color: 0xFFD700, alpha: [1.0, 0], scale: [1.5, 0.3],
     gravity: 40, spread: Math.PI,
   },
+  // B6: negative gravity is the whole trick — motes that RISE read as an
+  // upgrade, motes that fall read as debris. Long-lived and slow so the burst
+  // hangs on the character rather than snapping past.
+  levelup: {
+    lifetime: [0.7, 1.2], speed: [25, 70], direction: [-Math.PI / 2, -Math.PI / 2],
+    color: 0xFFE08A, alpha: [1.0, 0], scale: [1.1, 0.2],
+    gravity: -40, spread: Math.PI / 2.2,
+  },
 };
 
 // ---- particle instance ----
@@ -113,7 +122,10 @@ export class ParticleSystem {
     this.particles = [];
     this.container = new Container();
     this.container.label = 'particles';
-    this.container.zIndex = 50; // above entities, below UI
+    // Inside stage.world, added after `entities`, so it draws above every foe,
+    // building and drop. The zIndex only matters if the parent sorts; keeping
+    // it high means either ordering rule puts particles on top.
+    this.container.zIndex = 1e9;
     parent.addChild(this.container);
 
     // Pre-allocate particles

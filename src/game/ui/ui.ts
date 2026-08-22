@@ -2,19 +2,26 @@
 // every frame with a cheap read of game state; panels rebuild only while open.
 // All gameplay actions are delegated back to the game via `hooks`.
 import { CFG } from '../data/config';
-import { ITEMS } from '../data/items';
+import { itemDef, itemName } from '../data/items';
+import { affixLines, escapeHtml, rarityColor, rarityDef, rarityOf } from './rarity';
+import { bindItemTooltip, bindHtmlTooltip, hideItemTooltip } from './tooltip';
 import { SKILLS } from '../data/skills';
 import { RECIPES } from '../data/recipes';
 import { BUILDINGS } from '../data/buildings';
+import { HUB_SLOTS } from '../data/hub';
+import type { OfferView, ReforgeView } from '../systems/hub';
+import type { AffixSlot } from '../data/affixes';
 import { ECHOES } from '../data/echoes';
+import type { SlotView } from '../systems/abilities';
 import { iconUrl } from '../../engine/procgen/icons';
 import {
   invCount, invHasAll, skillLevel, xpProgress, slotOf,
   soulStat, bestTool, type EquipSlot,
   equippedWeaponDmg, armorDef,
-  population, territoryScore, soulXpProgress,
+  population, territoryScore, soulXpProgress, playerMaxHp,
 } from '../rules';
 import type { SoulSlot } from '../data/soulgear';
+import { nodesByBranch, nodeById, type LoomBranch, type LoomNode } from '../data/loom';
 import { SoulFeedSystem, totalSoulXp, itemSoulAffinity, type FeedResult } from '../systems/soulfeed';
 import { phase, phaseRemaining } from '../systems/daynight';
 import type { GameState } from '../state';
@@ -22,6 +29,8 @@ import type { LogEntry } from '../systems/log';
 import { injectStyles } from './styles';
 import { Toasts } from './toast';
 import { loadLeaderboard, formatAge } from '../systems/scoreboard';
+import { COVENANTS, canSwear } from '../data/covenants';
+import type { SoundingResult } from '../systems/sounding';
 
 export interface UIHooks {
   interact(): void;
@@ -34,25 +43,121 @@ export interface UIHooks {
   useItem(id: string): void;
   equip(id: string): void;
   toggleMute(): boolean;
+  // A3: the ability bar. The UI owns none of the rules — it draws a view model
+  // and forwards two verbs, so a socket can never disagree with the system about
+  // whether something is on cooldown.
+  abilityView(): SlotView[];
+  /** Returns whether the cast happened, so a refused press can be SEEN. A button
+   *  that swallows a keystroke silently is one the player stops trusting. */
+  castAbility(slot: number): { ok: boolean };
+  swapAbility(slot: number): void;
+  abilityTip(slot: number): { title: string; lines: string[] } | null;
   newWorld(): void;
   isPlacing(): boolean;
   gatherView(): { label: string; frac: number } | null;
+  /** N4.3 + A8: every temporary world state currently acting on the player —
+   *  Omens from the wire, Boons from a Wardstone. They share a chip row because
+   *  they share the only property the player needs at a glance: something that
+   *  is not normally true is true right now, and it ends. Both have to be
+   *  visible without opening a panel — a hidden multiplier is indistinguishable
+   *  from the game being broken.
+   *
+   *  `kind` is here rather than a composed title string because the two end
+   *  differently and saying so is the point: an Omen lifts when the reading
+   *  recovers OR on its safety valve, a Boon only ever runs out. */
+  worldStateView(): {
+    name: string; good: boolean; secs: number; blurb: string;
+    kind: 'omen' | 'boon'; color?: string;
+  }[];
   /** L1: current age/lifespan-remaining reading — drives the HUD chip+bar. */
   lifespanView(): { age: number; frac: number; minutesRemaining: number; warning: boolean; critical: boolean };
   logEntries(): LogEntry[];
   /** W7: feed an item to a soul-gear slot. Returns FeedResult or null if invalid. */
   feedSoul(itemId: string, count: number, targetSlot: SoulSlot): FeedResult | null;
+  /** B3.b: spend a Loom point on a node. Returns true if it was allocated.
+   *  Before this existed, LoomSystem.allocate() had no production caller at all —
+   *  the tree was unreachable and every point earned was unspendable. */
+  allocateLoom(nodeId: string): boolean;
+  /** A6: the hub counter the player is standing at, or null. Drives the
+   *  interact button's live state as well as which panel `interact()` opens —
+   *  one question asked in one place, so the prompt can never promise a
+   *  Reliquary the keypress does not open. */
+  hubView(): { kind: 'reliquary' | 'forge' | 'sounding'; name: string } | null;
+  /** A6: everything the Reliquary will sell in one slot. */
+  hubOffers(slot: AffixSlot): OfferView[];
+  /** A6: break a seal. Returns the refusal so the panel can SAY it — the
+   *  ability bar's lesson (a button that swallows a press is one the player
+   *  stops trusting), applied to a button that costs four figures. */
+  hubBuy(slot: AffixSlot, sealId: string): { ok: boolean; id?: string; why?: string };
+  /** A6: every carried piece the Forge-Warden will touch, with its price. */
+  hubBench(): ReforgeView[];
+  /** A6: rework one line on one piece. */
+  hubReforge(uid: string, index: number): { ok: boolean; why?: string };
+  /** N4.5: the Sounding Stone panel's view model. Null when the flag is off. */
+  soundingView(): SoundingPanelView | null;
+  /** N4.5: fire a sounding. The system answers for itself when it cannot. */
+  runSounding(): void;
+  /** N4.5/A7: swear a deeper pact. Returns the refusal so the panel can SAY it. */
+  swearCovenant(id: string): { ok: boolean; why?: string };
+  /** B3.b: what the Loom panel needs to draw itself. */
+  loomView(): {
+    points: number;
+    allocated: Record<string, number>;
+    canAllocate(nodeId: string): boolean;
+  };
 }
 
-type Panel = 'bag' | 'craft' | 'skills' | 'log' | 'leaderboard' | null;
+type Panel = 'bag' | 'craft' | 'skills' | 'loom' | 'log' | 'leaderboard' | 'reliquary' | 'forge' | 'sounding' | 'covenant' | null;
 
-const icon = (id: string) => iconUrl(id, ITEMS[id].icon as any);
+/** N4.5: the view model the Sounding Stone panel draws. */
+export interface SoundingPanelView {
+  pactName: string;
+  budgetLabel: string;
+  budgetMB: number;
+  spentMB: number;
+  leftMB: number;
+  busy: boolean;
+  count: number;
+  cooldownSec: number;
+  blocked: string | null;
+  last: SoundingResult;
+}
+
+const icon = (id: string) => iconUrl(id, itemDef(id).icon as any);
+
+/** B3.b: a Loom node's per-rank effects, in words. The node rows carry raw keys
+ *  (`meleeDmgPct: 4`); this is the only place they are turned into something a
+ *  player reads, so the label table lives here rather than in the data. */
+const LOOM_EFFECT_LABEL: Record<string, string> = {
+  meleeDmgPct: 'melee damage', swingSpeedPct: 'swing speed', arcWidthPct: 'swing arc',
+  dmgRollFloor: 'damage floor', gatherSpeedPct: 'gather speed',
+  doubleYieldChance: 'double-yield chance', craftCostReduction: 'craft cost',
+  moveSpeedPct: 'move speed', armorPct: 'armour', regenPct: 'daylight regen',
+  buildingHpPct: 'building HP', towerDmgPct: 'tower damage',
+  towerRange: 'tower range', territoryIncomePct: 'tribute',
+};
+function effectSummary(n: LoomNode): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(n.effects)) {
+    const label = LOOM_EFFECT_LABEL[k] ?? k;
+    // craftCostReduction is the one key whose "+" means "less" — say so.
+    if (k === 'craftCostReduction') parts.push(`&minus;${v}% ${label}`);
+    else if (k === 'towerRange') parts.push(`+${v} tile ${label}`);
+    else if (k === 'dmgRollFloor') parts.push(`+${(v * 100).toFixed(0)}% ${label}`);
+    else parts.push(`+${v}% ${label}`);
+  }
+  return parts.join(' &middot; ') + ' <i>per rank</i>';
+}
 
 export class UI {
   private root: HTMLElement;
   private toasts: Toasts;
   private panel: Panel = null;
   private craftTab = 'crafting';
+  /** A6: which shape the Reliquary is currently quoting. Remembered across
+   *  openings — a player shopping for a blade is usually still shopping for a
+   *  blade the second time they walk up. */
+  private hubSlot: AffixSlot = 'weapon';
 
   // cached dynamic nodes
   private hpFill!: HTMLElement;
@@ -66,6 +171,10 @@ export class UI {
   private domainEl!: HTMLElement;
   private muteEl!: HTMLElement;
   private echoEl!: HTMLElement;
+  private omenEl!: HTMLElement;
+  private boonEl!: HTMLElement;
+  private worldStateCache = '';
+  private boonStateCache = '';
   private echoChipsCache = '';
   private vigorText!: HTMLElement;
   private resolveText!: HTMLElement;
@@ -75,6 +184,16 @@ export class UI {
   private interactBtn!: HTMLElement;
   private panelHost!: HTMLElement;
   private buildBar!: HTMLElement;
+  // A4: the orbs
+  private hpOrb!: HTMLElement;
+  private hpLiq!: HTMLElement;
+  private hpNum!: HTMLElement;
+  private vigRing!: HTMLElement;
+  private abilCells: HTMLElement[] = [];
+  private abilState: string[] = [];   // per-socket cache; the sweep runs every frame
+  private resOrb!: HTMLElement;
+  private resLiq!: HTMLElement;
+  private resNum!: HTMLElement;
 
   constructor(private state: GameState, private hooks: UIHooks) {
     injectStyles();
@@ -85,12 +204,13 @@ export class UI {
     this.buildGather();
     this.buildBuildBar();
     this.buildActions();
+    this.buildOrbs();
     this.panelHost = document.createElement('div');
     this.root.appendChild(this.panelHost);
     window.addEventListener('keydown', (e) => this.onKey(e));
   }
 
-  toast(msg: string, kind: 'info' | 'good' | 'bad' = 'info') { this.toasts.push(msg, kind); }
+  toast(msg: string, kind: 'info' | 'good' | 'bad' = 'info', color?: string) { this.toasts.push(msg, kind, color); }
 
   /** Schedule a panel body rebuild on the next refresh(). Call after state changes
    *  (craft, equip, use, gather) while a panel is open. */
@@ -123,10 +243,13 @@ export class UI {
       <div class="nw-badge nw-clock" id="nw-clock"></div>
       <div class="nw-badge" id="nw-nights" title="damage · defense · population · territory"></div>
       <div class="nw-badge" id="nw-echoes" style="display:none" title="echoes of the slain"></div>
+      <div class="nw-badge" id="nw-omens" style="display:none" title="what the world is doing that it does not normally do — omens, read off the wire"></div>
+      <div class="nw-badge nw-boons" id="nw-boons" style="display:none" title="what is true of YOU that is not normally true — a boon carried from a Wardstone, or an affliction something put in you"></div>
       <div class="nw-badge nw-domain" id="nw-domain" title="the realm you stand in"></div>
       <div class="nw-spacer"></div>
       <div class="nw-badge nw-btn" id="nw-mute" style="pointer-events:auto" title="sound on/off">&#128266;</div>
       <div class="nw-badge nw-btn" id="nw-lb" style="pointer-events:auto" title="leaderboard (;)">&#127942;</div>
+      <div class="nw-badge nw-btn" id="nw-cov" style="pointer-events:auto" title="covenant — the data budget and the difficulty, one pact (p)">&#128737;</div>
       <div class="nw-badge nw-btn" id="nw-newworld" style="pointer-events:auto" title="new world">&#10227;</div>`;
     this.root.appendChild(top);
     this.hpFill = top.querySelector('#nw-hp')!;
@@ -138,12 +261,15 @@ export class UI {
     this.clock = top.querySelector('#nw-clock')!;
     this.nights = top.querySelector('#nw-nights')!;
     this.echoEl = top.querySelector('#nw-echoes')!;
+    this.omenEl = top.querySelector('#nw-omens')!;
+    this.boonEl = top.querySelector('#nw-boons')!;
     this.vigorText = top.querySelector('#nw-vigor-text')!;
     this.resolveText = top.querySelector('#nw-resolve-text')!;
     this.domainEl = top.querySelector('#nw-domain')!;
     this.muteEl = top.querySelector('#nw-mute')!;
     top.querySelector('#nw-newworld')!.addEventListener('click', () => this.hooks.newWorld());
     top.querySelector('#nw-lb')!.addEventListener('click', () => this.toggle('leaderboard'));
+    top.querySelector('#nw-cov')!.addEventListener('click', () => this.toggle('covenant'));
     this.muteEl.addEventListener('click', () => {
       const on = this.hooks.toggleMute();
       this.muteEl.innerHTML = on ? '&#128266;' : '&#128263;';
@@ -191,15 +317,70 @@ export class UI {
       d.name + (d.unique ? '' : ` — ${sel.afford} affordable`);
     const cost = d.cost.map((s: any) => {
       const ok = invCount(this.state, s.id) >= s.n;
-      return `<span class="${ok ? 'have' : 'lack'}">${s.n} ${ITEMS[s.id].name}</span>`;
+      return `<span class="${ok ? 'have' : 'lack'}">${s.n} ${itemName(s.id)}</span>`;
     }).join(' &middot; ');
     const tower = d.tower ? ` &middot; ${d.tower.dmg} dmg / ${d.tower.rangeTiles}t` : '';
     this.buildBar.querySelector('.cost')!.innerHTML = cost + tower;
     this.buildBar.classList.add('on');
   }
 
+  /** A3: four sockets for the empowered echoes, keys 1-4.
+   *
+   *  Rendered as the first child of `.nw-actions` with `flex-basis: 100%`, so it
+   *  takes its own line ABOVE the verb buttons and inherits the whole responsive
+   *  wrap/scale story the action bar already solved. An absolutely-positioned
+   *  second bar would have needed its own bottom-offset arithmetic and would have
+   *  drifted the first time the action row wrapped on a narrow window.
+   *
+   *  Sockets are `tabindex=0` because the bar has to be reachable without a mouse
+   *  -- keys 1-4 are the primary path, and the tooltip binds `focus` as well as
+   *  `mouseenter` so the keyboard path can read what it is about to press. */
+  private buildAbilities(bar: HTMLElement) {
+    const row = el('div', 'nw-abilrow');
+    for (let i = 0; i < 4; i++) {
+      const c = el('div', 'nw-abil');
+      c.dataset.slot = String(i);
+      c.tabIndex = 0;
+      c.setAttribute('role', 'button');
+      c.innerHTML = '<span class="ab-icon"></span><span class="ab-sweep"></span>'
+        + '<span class="ab-lv"></span><span class="ab-cost"></span>'
+        + `<span class="k">${i + 1}</span>`;
+      c.addEventListener('click', () => this.pressAbility(i));
+      // right-click rebinds. Suppressing the browser menu on a 44px socket is
+      // safe; suppressing it on the whole HUD would not be.
+      c.addEventListener('contextmenu', (e) => { e.preventDefault(); this.hooks.swapAbility(i); });
+      bindHtmlTooltip(c, () => this.abilityTipHtml(i));
+      row.appendChild(c);
+      this.abilCells.push(c);
+    }
+    bar.appendChild(row);
+  }
+
+  /** Fire a socket and answer for it either way: the cooldown sweep already says
+   *  "not yet", but "not enough resolve" and "nothing bound here" have no standing
+   *  visual, and both are common. */
+  private pressAbility(slot: number) {
+    const c = this.abilCells[slot];
+    const r = this.hooks.castAbility(slot);
+    if (r?.ok || !c) return;
+    c.classList.remove('deny');
+    void c.offsetWidth;          // restart the animation on a rapid second press
+    c.classList.add('deny');
+    setTimeout(() => c.classList.remove('deny'), 320);
+  }
+
+  private abilityTipHtml(slot: number): string {
+    const t = this.hooks.abilityTip(slot);
+    if (!t) return '';
+    const v = this.hooks.abilityView()[slot];
+    const color = v?.id ? v.color : '#8d8577';
+    return `<div class="nw-tip-name" style="color:${color}">${t.title}</div>`
+      + `<div class="nw-tip-body">${t.lines.map((l) => `<div class="nw-tip-line">${l}</div>`).join('')}</div>`;
+  }
+
   private buildActions() {
     const bar = el('div', 'nw-actions');
+    this.buildAbilities(bar);
     const btn = (id: string, icon: string, label: string, key: string, cls = '') => {
       const b = el('div', 'nw-btn ' + cls);
       b.id = id;
@@ -281,6 +462,17 @@ export class UI {
       return;
     }
     if (e.repeat) return;
+    // A3: the bar. Read from e.code, not e.key -- Shift+1 is '!' on a US layout
+    // and something else again on most others, so the shift-to-rebind chord would
+    // have been unreachable for anyone not typing US English.
+    const digit = /^Digit([1-4])$/.exec(e.code ?? '');
+    if (digit) {
+      e.preventDefault();
+      const slot = +digit[1] - 1;
+      if (e.shiftKey) this.hooks.swapAbility(slot);
+      else this.pressAbility(slot);
+      return;
+    }
     const kl = k.toLowerCase();
     if (kl === 'e') this.hooks.interact();
     else if (kl === ' ') this.hooks.attack();
@@ -289,7 +481,9 @@ export class UI {
     else if (kl === 'i') this.toggle('bag');
     else if (kl === 'c') this.toggle('craft');
     else if (kl === 'k') this.toggle('skills');
+    else if (kl === 'm') this.toggle('loom');
     else if (kl === 'l') this.toggle('log');
+    else if (kl === 'p') this.toggle('covenant');
     else if (k === ';') this.toggle('leaderboard');
   }
 
@@ -333,10 +527,11 @@ export class UI {
   /** Just hide the panel — does NOT touch build mode (used when entering placement). */
   private hidePanel() { this.panel = null; this.panelHost.innerHTML = ''; }
   /** Dismiss the panel AND cancel any in-progress build (Esc / ✕ / scrim). */
-  close() { this.hidePanel(); this.hooks.enterBuild(''); }
+  close() { hideItemTooltip(); this.hidePanel(); this.hooks.enterBuild(''); }
   isOpen() { return this.panel !== null; }
 
   private renderPanel() {
+    hideItemTooltip();   // A4: a rebuild orphans the cell the tooltip was anchored to
     this.panelHost.innerHTML = '';
     if (!this.panel) return;
     const scrim = el('div', 'nw-scrim');
@@ -347,7 +542,7 @@ export class UI {
     this.panelHost.appendChild(scrim);
 
     const head = el('div', 'nw-phead');
-    const titles: Record<string, string> = { bag: 'BAG', craft: 'CRAFTING', skills: 'SKILLS', log: 'LOG', leaderboard: 'LEADERBOARD' };
+    const titles: Record<string, string> = { bag: 'BAG', craft: 'CRAFTING', skills: 'SKILLS', loom: 'THE LOOM', log: 'LOG', leaderboard: 'LEADERBOARD', reliquary: 'THE RELIQUARY', forge: 'THE FORGE-WARDEN', sounding: 'THE SOUNDING STONE', covenant: 'THE COVENANT' };
     head.innerHTML = `<h2>${titles[this.panel]}</h2>`;
     if (this.panel === 'craft') head.appendChild(this.craftTabs());
     const x = el('div', 'nw-x'); x.innerHTML = '&times;';
@@ -366,7 +561,7 @@ export class UI {
     // auto-focus first action item (craft button, bag cell, etc.)
     requestAnimationFrame(() => {
       const first = panel.querySelector<HTMLElement>(
-        '.nw-make:not([disabled]), .nw-cell, .nw-slot',
+        '.nw-loomnode.can, .nw-make:not([disabled]), .nw-cell, .nw-slot',
       );
       if (first) first.focus();
     });
@@ -393,8 +588,220 @@ export class UI {
     if (this.panel === 'bag') this.fillBag(body);
     else if (this.panel === 'craft') this.fillCraft(body);
     else if (this.panel === 'skills') this.fillSkills(body);
+    else if (this.panel === 'loom') this.fillLoom(body);
     else if (this.panel === 'log') this.fillLog(body);
     else if (this.panel === 'leaderboard') this.fillLeaderboard(body);
+    else if (this.panel === 'reliquary') this.fillReliquary(body);
+    else if (this.panel === 'forge') this.fillForge(body);
+    else if (this.panel === 'sounding') this.fillSounding(body);
+    else if (this.panel === 'covenant') this.fillCovenant(body);
+  }
+
+  // ---------------------------------------------------------- A6: the hub ----
+
+  /** The purse line both hub panels open with. Gold is the only currency the
+   *  HUD does not show a bar for, so a shop that did not state it would make
+   *  every price unreadable. */
+  private purseLine(need: number): HTMLElement {
+    const gold = this.state.player.gold;
+    const row = el('div', 'nw-hub-purse');
+    row.innerHTML = `<span>Your purse</span><b class="${gold < need ? 'lack' : ''}">${gold} gold</b>`;
+    return row;
+  }
+
+  private fillReliquary(body: HTMLElement) {
+    const offers = this.hooks.hubOffers(this.hubSlot);
+    const note = el('div', 'nw-note');
+    note.innerHTML = `A sealed relic is bought <b>unopened</b>. You choose the shape and the
+      seal &mdash; what is inside is the seal's business. Nothing here reaches the rift.`;
+    body.appendChild(note);
+    body.appendChild(this.purseLine(offers.length ? offers[0].gold : 0));
+
+    const chips = el('div', 'nw-hub-slots');
+    for (const s of HUB_SLOTS) {
+      const chip = el('div', 'nw-hub-slot' + (s.slot === this.hubSlot ? ' on' : ''));
+      chip.textContent = `${s.glyph} ${s.label}`;
+      chip.tabIndex = 0; chip.setAttribute('role', 'tab');
+      chip.setAttribute('aria-selected', String(s.slot === this.hubSlot));
+      const pick = () => { this.hubSlot = s.slot; this.renderPanel(); };
+      chip.addEventListener('click', pick);
+      chip.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      chips.appendChild(chip);
+    }
+    body.appendChild(chips);
+
+    for (const o of offers) {
+      const row = el('div', 'nw-row nw-seal');
+      // The stock is shown because "you buy the shape and the odds" is only
+      // honest if the shape is visible. A seal that quietly excludes half the
+      // ladder while the panel says nothing is a shop lying by omission.
+      //
+      // 2026-08-22: the WHOLE ladder is drawn, with the bases this seal cannot
+      // reach greyed. Rendering only the reachable half was honest and useless
+      // — four icons tells you nothing without the denominator, and the thing a
+      // seal's price actually buys is the part that used to be invisible. Greyed
+      // out, the three rows become a comparison: you can see the Lesser Seal's
+      // shelf run the length of the ladder and the Lord's Seal start two thirds
+      // up it, which is the entire argument for the extra 1,160 gold.
+      const stock = o.shelf.map((e) =>
+        `<img class="${e.reachable ? '' : 'off'}" src="${icon(e.id)}" alt=""`
+        + ` title="${escapeHtml(itemName(e.id))}${e.reachable ? '' : ' — beyond this seal'}">`).join('');
+      row.innerHTML = `
+        <div class="info">
+          <div class="name">${o.seal.name} &middot; <span class="band">${o.floor} &rarr; ${o.ceiling}</span></div>
+          <div class="sub">${o.seal.blurb}</div>
+          <div class="nw-hub-stock">${stock}</div>
+        </div>
+        <span class="price${o.affordable ? '' : ' lack'}">${o.gold}g</span>`;
+      const btn = el('button', 'nw-make' + (o.affordable ? '' : ' short')) as HTMLButtonElement;
+      btn.textContent = 'Break seal';
+      btn.disabled = !o.affordable;
+      btn.addEventListener('click', () => {
+        const r = this.hooks.hubBuy(this.hubSlot, o.seal.id);
+        if (!r.ok && r.why) this.toast(r.why, 'bad');
+        this.renderPanel();
+      });
+      row.appendChild(btn);
+      body.appendChild(row);
+    }
+  }
+
+  private fillForge(body: HTMLElement) {
+    const bench = this.hooks.hubBench();
+    const note = el('div', 'nw-note');
+    note.innerHTML = `The Forge-Warden reworks <b>one line</b> on one piece, and the new line
+      can be worse than the old one. Each rework on the same piece costs more than the last.`;
+    body.appendChild(note);
+    body.appendChild(this.purseLine(bench.length ? Math.min(...bench.map((b) => b.gold)) : 0));
+
+    if (!bench.length) {
+      const empty = el('div', 'nw-empty');
+      empty.textContent = 'Nothing you carry has a line worth reworking. Plain gear has none.';
+      body.appendChild(empty);
+      return;
+    }
+
+    for (const v of bench) {
+      const lines = affixLines(v.uid);
+      const card = el('div', 'nw-bench');
+      const mats = v.mats.map((m) => {
+        const have = invCount(this.state, m.id) >= m.n;
+        return `<span class="${have ? 'have' : 'lack'}">${m.n}&times; ${itemName(m.id)}</span>`;
+      }).join(' &middot; ');
+      const hd = el('div', 'nw-bench-hd');
+      hd.innerHTML = `
+        <img src="${icon(v.uid)}" alt="">
+        <div class="nm"><span style="color:${v.color}">${escapeHtml(v.name)}</span>
+          <div class="nw-bench-worn">${v.worn ? '<b>worn</b> &middot; ' : ''}${v.rarity}${v.prior ? ` &middot; reworked ${v.prior}&times;` : ''} &middot; ${mats}</div></div>
+        <span class="cost${v.affordable ? '' : ' lack'}">${v.gold}g</span>`;
+      card.appendChild(hd);
+
+      for (const a of v.affixes) {
+        const btn = el('button', 'nw-affix' + (a.cursed ? ' cursed' : '')) as HTMLButtonElement;
+        btn.innerHTML = `<span class="txt">${escapeHtml(lines[a.index]?.text ?? a.label)}</span>`
+          + `<span class="rew">${a.cursed ? 'recast the curse' : 'rework'}</span>`;
+        btn.disabled = !v.affordable;
+        btn.addEventListener('click', () => {
+          const r = this.hooks.hubReforge(v.uid, a.index);
+          if (!r.ok && r.why) this.toast(r.why, 'bad');
+          this.renderPanel();
+        });
+        card.appendChild(btn);
+      }
+      body.appendChild(card);
+    }
+  }
+
+  // -------------------------------------------------- N4.5/A7: the stone ----
+
+  private fillSounding(body: HTMLElement) {
+    const v = this.hooks.soundingView();
+    if (!v) {
+      const empty = el('div', 'nw-empty');
+      empty.textContent = 'There is no stone here.';
+      body.appendChild(empty);
+      return;
+    }
+    const note = el('div', 'nw-note');
+    note.innerHTML = `The stone listens to the deep and spends <b>your</b> data to do it. The budget
+      is what your pact consents to, and it is a hard ceiling for the whole run — not a per-sounding rate.`;
+    body.appendChild(note);
+
+    const row = el('div', 'nw-row');
+    row.innerHTML = `<div class="info">
+      <div class="name">${escapeHtml(v.pactName)}</div>
+      <div class="sub">${escapeHtml(v.budgetLabel)} &middot; ${v.spentMB.toFixed(1)} of ${v.budgetMB} MB spent &middot; ${v.leftMB.toFixed(1)} MB left &middot; ${v.count} sounding${v.count === 1 ? '' : 's'}</div>
+    </div>`;
+    body.appendChild(row);
+
+    const reason = v.blocked;
+    const btn = el('button', 'nw-make') as HTMLButtonElement;
+    btn.textContent = v.busy ? 'Listening…' : 'Listen';
+    btn.disabled = !!reason;
+    btn.addEventListener('click', () => this.hooks.runSounding());
+    body.appendChild(btn);
+
+    // The blocked() reason is shown VERBATIM — a stone that is greyed out with
+    // no explanation is the exact failure the Lens spent two milestones
+    // stamping out on the readings side.
+    if (reason) {
+      const why = el('div', 'nw-note');
+      why.textContent = reason;
+      body.appendChild(why);
+    }
+
+    const last = v.last;
+    if (last && last.verdict) {
+      const res = el('div', 'nw-row');
+      res.innerHTML = `<div class="info">
+        <div class="name">Last reading</div>
+        <div class="sub">${escapeHtml(last.verdict)}</div>
+        <div class="sub">${last.live
+          ? `down ${last.downMbps.toFixed(1)} Mbps &middot; up ${last.upMbps.toFixed(1)} Mbps &middot; silt ${last.bloatGrade}`
+            + (last.resolverName ? ` &middot; ${escapeHtml(last.resolverName)} ${last.resolverMs.toFixed(0)}ms` : '')
+          : 'the stone heard nothing'}</div>
+      </div>`;
+      body.appendChild(res);
+    }
+  }
+
+  private fillCovenant(body: HTMLElement) {
+    const current = this.state.covenant ?? 'quiet';
+    const note = el('div', 'nw-note');
+    note.innerHTML = `A covenant is a pact and a data budget — the same row. Deeper pacts make the nights
+      harder and the loot better, and every tier's <b>megabyte cost is stated here</b>, before you swear.
+      A pact can only be sworn deeper, never renounced.`;
+    body.appendChild(note);
+
+    for (const c of COVENANTS) {
+      const sworn = c.id === current;
+      const can = canSwear(current, c.id);
+      const row = el('div', 'nw-row nw-seal' + (sworn ? ' on' : ''));
+      row.innerHTML = `<div class="info">
+        <div class="name" style="color:${c.color}">${escapeHtml(c.name)}${sworn ? ' &middot; sworn' : ''}</div>
+        <div class="sub">${escapeHtml(c.blurb)}</div>
+        <div class="sub"><b>${escapeHtml(c.cost)}</b></div>
+        <div class="sub">${c.budgetMB} MB over a run &middot; ~${c.soundings} soundings &middot; enemies &times;${c.hpMul} hp &middot; &times;${c.dmgMul} dmg &middot; ${escapeHtml(c.rarityFloor)}-or-better loot${c.riftborn ? ' &middot; Riftborn reachable' : ''} &middot; Legacy &times;${c.legacyMul}</div>
+      </div>`;
+      const btn = el('button', 'nw-make') as HTMLButtonElement;
+      if (sworn) {
+        btn.textContent = 'Sworn';
+        btn.disabled = true;
+      } else if (can) {
+        btn.textContent = 'Swear';
+        btn.addEventListener('click', () => {
+          const r = this.hooks.swearCovenant(c.id);
+          if (!r.ok && r.why) this.toast(r.why, 'bad');
+          this.renderPanel();
+        });
+      } else {
+        btn.textContent = 'Unreachable';
+        btn.disabled = true;
+        btn.title = 'A pact can only be sworn deeper';
+      }
+      row.appendChild(btn);
+      body.appendChild(row);
+    }
   }
 
   private fillLog(body: HTMLElement) {
@@ -442,8 +849,8 @@ export class UI {
     const tools = el('div', 'nw-tools');
     tools.innerHTML =
       `<span class="hd">Tools (auto)</span>` +
-      `<span>&#129683; ${axe ? ITEMS[axe.id].name + toolLv('tool_axe') : '—'}</span>` +
-      `<span>&#9935; ${pick ? ITEMS[pick.id].name + toolLv('tool_pick') : '—'}</span>`;
+      `<span>&#129683; ${axe ? itemName(axe.id) + toolLv('tool_axe') : '—'}</span>` +
+      `<span>&#9935; ${pick ? itemName(pick.id) + toolLv('tool_pick') : '—'}</span>`;
     body.appendChild(tools);
 
     // --- the bag itself ---
@@ -455,7 +862,7 @@ export class UI {
     const grid = el('div', 'nw-grid');
     const feedSys = new SoulFeedSystem();
     for (const id of ids) {
-      const def = ITEMS[id];
+      const def = itemDef(id);
       const slot = slotOf(id);
       const worn = !!slot && p.equip?.[slot] === id;
       const usable = !!def.heal;
@@ -464,24 +871,27 @@ export class UI {
         : slot ? '<span class="tag">equip</span>'
         : usable ? '<span class="tag">use</span>'
         : feedable ? '<span class="tag feed">feed</span>' : '';
-      const cell = el('div', 'nw-cell' + (worn ? ' worn' : ''));
+      // A4: the cell carries its tier as a ring, and the REAL tooltip replaces
+      // `cell.title`. A browser title attribute cannot be coloured, cannot show
+      // a green +3.4 against a red −1.2, and takes a second of stillness to
+      // appear — which made every rolled item effectively invisible.
+      const rar = rarityOf(id);
+      const cell = el('div', 'nw-cell' + (worn ? ' worn' : '') + (rar !== 'plain' ? ' rolled' : ''));
       cell.innerHTML = `<img src="${icon(id)}" alt=""><span class="n">${p.inv[id]}</span>${tag}`;
-      cell.title = def.name
-        + (def.weaponDmg ? ` (+${def.weaponDmg} dmg)` : '')
-        + (def.armor ? ` (+${def.armor} armor)` : '')
-        + (def.heal ? ` (heals ${def.heal})` : '')
-        + (feedable ? ` (soul xp: ${totalSoulXp(id)} each)` : '');
+      if (rar !== 'plain') cell.style.setProperty('--rar', rarityColor(id));
+      bindItemTooltip(cell, this.state, id);
+      if (feedable) cell.title = `soul xp: ${totalSoulXp(id)} each`;
       cell.tabIndex = 0; cell.setAttribute('role', 'button');
       if (slot) {
-        cell.setAttribute('aria-label', `${worn ? 'Unequip' : 'Equip'} ${def.name}`);
+        cell.setAttribute('aria-label', `${worn ? 'Unequip' : 'Equip'} ${itemName(id)}`);
         cell.addEventListener('click', () => this.hooks.equip(id));
         cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.hooks.equip(id); } });
       } else if (usable) {
-        cell.setAttribute('aria-label', `Use ${def.name}`);
+        cell.setAttribute('aria-label', `Use ${itemName(id)}`);
         cell.addEventListener('click', () => this.hooks.useItem(id));
         cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.hooks.useItem(id); } });
       } else if (feedable) {
-        cell.setAttribute('aria-label', `Feed ${def.name} to soul gear`);
+        cell.setAttribute('aria-label', `Feed ${itemName(id)} to soul gear`);
         cell.addEventListener('click', () => this.showFeedPicker(id, p.inv[id]));
         cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.showFeedPicker(id, p.inv[id]); } });
       }
@@ -492,7 +902,7 @@ export class UI {
 
   /** W7: show a slot picker popup for soul-feeding an item. */
   private showFeedPicker(itemId: string, available: number) {
-    const def = ITEMS[itemId];
+    const def = itemDef(itemId);
     const feedSys = new SoulFeedSystem();
     const xpEach = totalSoulXp(itemId);
     const affinity = itemSoulAffinity(itemId);
@@ -561,7 +971,7 @@ export class UI {
     const id = slot === 'relic' ? this.state.player.relic : this.state.player.equip?.[slot];
     const cell = el('div', 'nw-slot' + (id ? ' filled' : ''));
     if (id) {
-      const def = ITEMS[id];
+      const def = itemDef(id);
       const isRelic = slot === 'relic';
       const unit = slot === 'weapon' || slot === 'ring' ? 'dmg'
         : slot === 'charm' ? 'hp/s (day)' : 'armor';
@@ -594,14 +1004,14 @@ export class UI {
   private fillCraft(body: HTMLElement) {
     const recipes = RECIPES.filter((r) => r.skill === this.craftTab);
     for (const r of recipes) {
-      const outDef = ITEMS[r.out.id];
+      const outDef = itemDef(r.out.id);
       const lvl = skillLevel(this.state, r.skill);
       const locked = lvl < r.levelReq;
       const has = invHasAll(this.state, r.in);
       const row = el('div', 'nw-row' + (locked ? ' nw-locked' : ''));
       const costs = r.in.map((s) => {
         const have = invCount(this.state, s.id) >= s.n;
-        return `<span class="${have ? 'have' : 'lack'}">${invCount(this.state, s.id)}/${s.n} ${ITEMS[s.id].name}</span>`;
+        return `<span class="${have ? 'have' : 'lack'}">${invCount(this.state, s.id)}/${s.n} ${itemName(s.id)}</span>`;
       }).join(' &middot; ');
       row.innerHTML = `
         <img src="${icon(r.out.id)}" alt="">
@@ -644,15 +1054,184 @@ export class UI {
     }
   }
 
+  /** B3.b — the Loom panel.
+   *
+   *  This did not exist. `LoomSystem.allocate()` shipped with C3 and had zero
+   *  production call sites: no panel, no tab, no key. A player earned points, was
+   *  toasted about them, saw them totalled on the end-of-run scorecard, and could
+   *  never spend one. The whole tree — 40 nodes, 132 ranks, 4 keystones — was
+   *  unreachable by any means. §12 Q3 asked whether the tree was the right size for
+   *  a 15-minute run; the honest answer was that its size did not matter yet.
+   *
+   *  Laid out as the data intends: three branches by `branch`, ordered by the
+   *  `col`/`row` position hints the node rows have always carried and nothing had
+   *  ever read. Keystones sort last within their branch — they are the terminals. */
+  private fillLoom(body: HTMLElement) {
+    const view = this.hooks.loomView();
+
+    const note = el('div', 'nw-note');
+    note.innerHTML = `Nights survived and lords slain weave the <b>Loom</b>. Spend points to
+      thread passives; a <b>keystone</b> warps a rule outright and carries a cost.
+      <b>There is no unweaving</b> — a run is its weave.`;
+    body.appendChild(note);
+
+    const bank = el('div', 'nw-loombank');
+    bank.innerHTML = view.points > 0
+      ? `<b>${view.points}</b> point${view.points === 1 ? '' : 's'} unspent`
+      : `<span class="none">No points to spend — survive a night, or fell a lord.</span>`;
+    body.appendChild(bank);
+
+    const cols = el('div', 'nw-loomcols');
+    const branchLabel: Record<LoomBranch, string> = {
+      war: 'War', field: 'Field', ward: 'Ward',
+    };
+    for (const branch of ['war', 'field', 'ward'] as LoomBranch[]) {
+      const col = el('div', 'nw-loomcol');
+      const head = el('div', 'nw-loomhead');
+      head.textContent = branchLabel[branch];
+      col.appendChild(head);
+
+      const nodes = nodesByBranch(branch).slice().sort((a, b) =>
+        (a.keystone ? 1 : 0) - (b.keystone ? 1 : 0) || a.col - b.col || a.row - b.row);
+
+      for (const n of nodes) {
+        const rank = view.allocated[n.id] ?? 0;
+        const can = view.canAllocate(n.id);
+        const maxed = rank >= n.maxRank;
+        const row = el('div', 'nw-loomnode'
+          + (n.keystone ? ' keystone' : '')
+          + (rank > 0 ? ' taken' : '')
+          + (maxed ? ' maxed' : '')
+          + (can ? ' can' : ''));
+
+        const reqNames = (n.req ?? [])
+          .filter((r) => (view.allocated[r] ?? 0) <= 0)
+          .map((r) => nodeById(r)?.name ?? r);
+        const why = maxed ? 'Fully woven'
+          : reqNames.length ? `Needs ${reqNames.join(', ')}`
+          : view.points <= 0 ? 'No points'
+          : 'Weave it';
+
+        row.innerHTML = `
+          <div class="nm">${n.name}${n.keystone ? '<span class="ks">keystone</span>' : ''}</div>
+          <div class="ef">${n.keystone ? (n.keystoneDesc ?? '') : effectSummary(n)}</div>
+          <div class="ft"><span class="rk">${rank}/${n.maxRank}</span><span class="wy">${why}</span></div>`;
+
+        if (can) {
+          row.tabIndex = 0;
+          row.setAttribute('role', 'button');
+          row.addEventListener('click', () => {
+            if (this.hooks.allocateLoom(n.id)) this.renderPanel();
+          });
+          row.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              if (this.hooks.allocateLoom(n.id)) this.renderPanel();
+            }
+          });
+        }
+        col.appendChild(row);
+      }
+      cols.appendChild(col);
+    }
+    body.appendChild(cols);
+  }
+
+  /** A4 — the orbs.
+   *
+   *  The top bar already shows HP, Vigor and Resolve as numbers, and those stay:
+   *  a number answers "how much", which is what you want when you are reading
+   *  the bar. An orb answers "how bad is this" without moving your eye off the
+   *  middle of the screen, which is where a night fight actually happens. The
+   *  two are complementary, so this adds rather than replaces.
+   *
+   *  Vigor is a RING around the HP orb rather than a third globe. It is a rate,
+   *  not a pool — giving it equal visual weight to the two things that can end
+   *  or cripple a run would say something false about it. */
+  private buildOrbs() {
+    const mk = (cls: string, extra = '') => {
+      const o = el('div', 'nw-orb ' + cls);
+      // The liquid is clipped by an inner `.bowl` rather than by the orb
+      // itself: the Vigor ring sits OUTSIDE the orb's circle, and an
+      // `overflow: hidden` on the orb deleted it entirely. Caught in the first
+      // live capture — the orbs looked right and the ring simply was not there.
+      o.innerHTML = extra + '<div class="bowl"><div class="liq"></div></div>'
+        + '<div class="gloss"></div><div class="num"></div>';
+      this.root.appendChild(o);
+      return o;
+    };
+    this.hpOrb = mk('hp', '<div class="vig"></div>');
+    this.hpLiq = this.hpOrb.querySelector('.liq')!;
+    this.hpNum = this.hpOrb.querySelector('.num')!;
+    this.vigRing = this.hpOrb.querySelector('.vig')!;
+    this.resOrb = mk('res');
+    this.resLiq = this.resOrb.querySelector('.liq')!;
+    this.resNum = this.resOrb.querySelector('.num')!;
+  }
+
+  /** scaleY on a bottom-anchored fill, not a height change: a transform is
+   *  composited and a height is a layout, and this runs every frame. */
+  private syncOrbs() {
+    const p = this.state.player;
+    const hpFrac = Math.max(0, Math.min(1, p.hp / playerMaxHp(this.state)));
+    this.hpLiq.style.transform = `scaleY(${hpFrac.toFixed(3)})`;
+    this.hpNum.textContent = String(Math.ceil(Math.max(0, p.hp)));
+    this.hpOrb.classList.toggle('low', hpFrac > 0 && hpFrac < 0.25);
+
+    const vig = Math.max(0, Math.min(100, p.vigor ?? 100));
+    this.vigRing.style.setProperty('--vig', vig.toFixed(0) + '%');
+
+    const res = Math.max(0, Math.min(100, p.resolve ?? 100));
+    this.resLiq.style.transform = `scaleY(${(res / 100).toFixed(3)})`;
+    this.resNum.textContent = String(Math.round(res));
+    this.resOrb.classList.toggle('low', res > 0 && res < 25);
+  }
+
+  /** A3: the sockets, every frame.
+   *
+   *  The cooldown sweep is a CSS conic-gradient driven by one custom property, so
+   *  the per-frame write is a single `setProperty` on a compositor-friendly
+   *  background and never touches layout. Everything ELSE about a socket (which
+   *  echo, what level, affordable or not) changes rarely, so it is diffed against
+   *  a cached signature string and only written when it actually differs --
+   *  otherwise four innerHTML writes per frame would sit in the hot path for the
+   *  entire run to redraw text that has not changed since the last lord died. */
+  private syncAbilities() {
+    const view = this.hooks.abilityView();
+    for (let i = 0; i < this.abilCells.length; i++) {
+      const c = this.abilCells[i];
+      const v: SlotView | undefined = view[i];
+      if (!v) { c.style.display = 'none'; continue; }
+      c.style.display = '';
+      // the sweep: 0 when ready, 1 the instant it was cast
+      c.style.setProperty('--cd', v.cooldownFrac.toFixed(3));
+      const sig = `${v.id ?? ''}|${v.level}|${v.cost}|${v.affordable ? 1 : 0}|${v.ready ? 1 : 0}`;
+      if (sig === this.abilState[i]) continue;
+      this.abilState[i] = sig;
+      c.classList.toggle('empty', !v.id);
+      c.classList.toggle('poor', !!v.id && !v.affordable);
+      c.classList.toggle('ready', !!v.id && v.ready && v.affordable);
+      c.style.setProperty('--ab', v.color);
+      (c.querySelector('.ab-icon') as HTMLElement).textContent = v.icon;
+      (c.querySelector('.ab-lv') as HTMLElement).textContent = v.level > 1 ? String(v.level) : '';
+      (c.querySelector('.ab-cost') as HTMLElement).textContent = v.id ? String(v.cost) : '';
+      c.setAttribute('aria-label', v.id
+        ? `${v.name} — the ${v.echoName} echo, ${v.cost} resolve`
+        : `Ability slot ${i + 1}, empty`);
+    }
+  }
+
   // --------------------------------------------------------------- refresh ----
 
   /** Called every frame. Cheap top-bar text updates + gather progress.
    *  Panel body is NOT rebuilt — it's only rebuilt on open() or tab change. */
   refresh() {
     const p = this.state.player;
-    this.hpFill.style.width = (100 * Math.max(0, p.hp) / CFG.player.maxHp).toFixed(1) + '%';
+    this.hpFill.style.width = (100 * Math.max(0, p.hp) / playerMaxHp(this.state)).toFixed(1) + '%';
     this.hpText.textContent = Math.ceil(Math.max(0, p.hp)) + '';
     this.goldText.textContent = p.gold + '';
+    this.syncOrbs();
+    this.syncAbilities();
 
     // L1: age/lifespan chip + bar — the hard run-length clock
     const lv = this.hooks.lifespanView();
@@ -696,6 +1275,45 @@ export class UI {
       this.echoEl.innerHTML = chips;
     }
 
+    // N4.3 + A8: omen and boon chips. For an omen the countdown is the
+    // safety-valve expiry and not a promise — a Famine can lift the moment
+    // throughput recovers, which is the point. For a boon it is the whole
+    // truth. Saying the wrong one of those would make the HUD lie about the
+    // only number on it the player is actually watching.
+    //
+    // **Two rows, not one (2026-08-22).** These shared `#nw-omens` until a
+    // count made the problem obvious: `CFG.omens.maxActive` is 3 and
+    // `CFG.a8.maxBoons` is 3, so the single row could carry SIX chips joined by
+    // middots — a sentence-long strip of coloured text to be parsed mid-fight.
+    // The split is not really about the count though. An omen is something
+    // happening to the world and a boon is something true about you; they are
+    // answers to different questions, and a player glancing down is only ever
+    // asking one of them. Sharing a row meant neither could be found without
+    // reading both.
+    const chipHtml = (o: any) =>
+      `<span title="${o.blurb} — ${o.kind === 'omen'
+        ? `lifts when the reading recovers, or in ${o.secs}s`
+        : `fades in ${o.secs}s`}"`
+      + ` style="color:${o.color ?? (o.good ? '#8fd98f' : '#f08a6a')};">${o.name} ${o.secs}s</span>`;
+
+    const world = this.hooks.worldStateView();
+    // Partitioned on `kind`, which main() already stamps on every row. Deriving
+    // it here from `color` or `good` instead would be a second source of truth
+    // for the same fact, and the two would disagree the first time a benign
+    // omen was authored.
+    const omenChips = world.filter((o: any) => o.kind === 'omen').map(chipHtml).join(' &middot; ');
+    const boonChips = world.filter((o: any) => o.kind !== 'omen').map(chipHtml).join(' &middot; ');
+    if (omenChips !== this.worldStateCache) {
+      this.worldStateCache = omenChips;
+      this.omenEl.style.display = omenChips ? '' : 'none';
+      this.omenEl.innerHTML = omenChips;
+    }
+    if (boonChips !== this.boonStateCache) {
+      this.boonStateCache = boonChips;
+      this.boonEl.style.display = boonChips ? '' : 'none';
+      this.boonEl.innerHTML = boonChips;
+    }
+
     // gather progress ring
     const gv = this.hooks.gatherView();
     if (gv) {
@@ -710,15 +1328,31 @@ export class UI {
     const interactable = gv || this.interactTarget();
     this.interactBtn.classList.toggle('disabled', !interactable && !gv);
 
-    // Panel body is rebuilt only when dirty (state changed) or on open/tab change.
-    if (this.panel && this._dirty) {
+    // Panel body is rebuilt only when dirty (state changed) or on open/tab
+    // change. The Sounding Stone is the exception: its cooldown and budget are
+    // live numbers, so it rebuilds while open.
+    if (this.panel && (this._dirty || this.panel === 'sounding')) {
       this._dirty = false;
       const body = document.getElementById('nw-pbody');
       if (body) { body.innerHTML = ''; this.fillBody(body); }
     }
   }
 
-  private interactTarget() { return this.hooks.gatherView() != null; }
+  /** A6: the interact button lights for a hub counter as well as a node, and
+   *  says which. Without this the one HUD affordance the player has for "there
+   *  is something here" would go dark standing in front of the two most
+   *  expensive buildings in the game. */
+  private interactTarget() {
+    const hub = this.hooks.hubView();
+    const label = hub ? hub.name : 'Interact';
+    if (this.interactBtn.title !== label) {
+      this.interactBtn.title = label;
+      this.interactBtn.setAttribute('aria-label', hub ? `Open ${label}` : 'Interact');
+      const l = this.interactBtn.querySelector('.nw-btn-label');
+      if (l) l.textContent = label;
+    }
+    return hub ? true : this.hooks.gatherView() != null;
+  }
 
   /** W6/L1: Leaderboard panel — current run stats + historical "perfect run" board. */
   private fillLeaderboard(body: HTMLElement) {
@@ -769,7 +1403,11 @@ export class UI {
           <span class="nw-lb-score">${e.legacyScore}</span>
           <span class="nw-lb-age" title="died of ${e.causeOfDeath === 'old_age' ? 'natural causes' : e.causeOfDeath === 'hall_fallen' ? 'the hall falling' : 'unknown causes'}">${causeIcon} age ${e.age}</span>
           <span class="nw-lb-detail">${e.nightsSurvived}n &middot; ${e.enemiesKilled}k &middot; ${e.bossesSlain}b &middot; ${e.goldHoarded}g</span>
-          <span class="nw-lb-realm">${e.dominantRealm}${e.legit ? '' : ' &middot; <i>god mode</i>'}</span>`;
+          <span class="nw-lb-realm">${e.dominantRealm}${e.legit ? '' : ' &middot; <i>god mode</i>'}</span>`
+          + (e.trophy
+            ? `<span class="nw-lb-trophy" style="color:${rarityDef(e.trophy.rarity as any).color}"
+                 title="best find of that run">&#9670; ${escapeHtml(e.trophy.name)}</span>`
+            : '');
         list.appendChild(row);
       }
       histSec.appendChild(list);
@@ -791,6 +1429,10 @@ export class UI {
           <div><span style="color:var(--metal-hi)">Age at death:</span> ${card.age}</div>
           <div><span style="color:var(--metal-hi)">Nights survived:</span> ${card.nightsSurvived}</div>
           <div><span style="color:var(--metal-hi)">Enemies killed:</span> ${card.enemiesKilled} (${card.bossesSlain} bosses)</div>
+          ${(card.elitesFelled || card.championsFelled)
+            ? `<div><span style="color:var(--metal-hi)">Elites felled:</span> ${card.elitesFelled ?? 0}`
+              + `${card.championsFelled ? `, <span style="color:#b56ce0">${card.championsFelled} champion${card.championsFelled === 1 ? '' : 's'}</span>` : ''}</div>`
+            : ''}
           <div><span style="color:var(--metal-hi)">Buildings:</span> ${card.buildingsBuilt}</div>
           <div><span style="color:var(--metal-hi)">Gold hoarded:</span> ${card.goldHoarded}</div>
           <div><span style="color:var(--metal-hi)">Dominant realm:</span> ${card.dominantRealm}</div>

@@ -1,15 +1,18 @@
 // Bakes every visual variant once at boot from the data tables, then hands
 // out deterministic picks per tile. All art is seeded procgen — zero assets.
 import { hash2, mulberry32 } from '../../engine/rng';
-import { ramp } from '../../engine/procgen/palette';
+import { ramp, scale } from '../../engine/procgen/palette';
 import {
   makeTileVariants, makeTreeVariants, makeRockVariants, makeHerbVariants,
-  makeBushVariants, makeStump, makeBuilding, makeBlobFrames, makeWall, Pix,
+  makeBushVariants, makeStump, makeBuilding, makeBlobFrames, makeWall, makeSpireVariants, Pix,
+  makeCairnVariants, makeWardstoneVariants,
 } from '../../engine/procgen/sprites';
-import { MATERIALS } from '../data/materials';
+import { M, MATERIALS } from '../data/materials';
 import { FEATURES } from '../data/features';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
+import { GOLD_ICON, GOLD_ID, itemDef } from '../data/items';
+import { makeIcon } from '../../engine/procgen/icons';
 import { TILE } from './worldgen';
 
 const TRUNK = ramp('#382a20', '#52402f');
@@ -44,6 +47,8 @@ export class WorldArt {
   private foamSeed: number;
   private foamFrames: HTMLCanvasElement[];
   private megaCache = new Map<string, HTMLCanvasElement>();
+  private spires: HTMLCanvasElement[][];   // [0] rock, [1] snow
+  private itemIcons = new Map<string, HTMLCanvasElement>();   // B5: ground-drop sprites, per item id
 
   constructor(seed: number) {
     this.wallSeed = seed ^ hashId('wall-variant');
@@ -60,10 +65,27 @@ export class WorldArt {
         a.kind === 'tree' ? makeTreeVariants({ canopy: a.ramp, trunk: TRUNK }, seed, 10)
         : a.kind === 'rock' ? makeRockVariants(a.ramp, a.accent, seed ^ hashId(f.id), 8)
         : a.kind === 'herb' ? makeHerbVariants(a.ramp, a.accent, seed ^ hashId(f.id), 6)
+        // A8: fewer variants than a tree gets, on purpose. There is at most one
+        // Cairn in a run and a handful of Wardstones — variety is what stops a
+        // FOREST reading as wallpaper, and a thing you see once does not have
+        // that problem.
+        : a.kind === 'cairn' ? makeCairnVariants(a.ramp, a.accent, seed ^ hashId(f.id), 4)
+        : a.kind === 'wardstone' ? makeWardstoneVariants(a.ramp, a.accent, seed ^ hashId(f.id), 4)
         : makeBushVariants(a.ramp, a.accent, seed ^ hashId(f.id), 6),
       );
     }
     this.stump = makeStump(TRUNK, seed);
+    // G5: spires are ALWAYS cut from rock, on snow too — a snow-coloured spire
+    // on a snowfield is an outline with nothing inside it. Bare crag punching
+    // up through the snowpack is both readable and what a peak actually does.
+    // The body is the mountain ramp SHADED DOWN. At full brightness a spire is
+    // the same value as the rock it stands on and reads as an empty outline;
+    // dark crag against light peak is what makes it a silhouette at all.
+    const crag = MATERIALS[M.MOUNTAIN].art.ramp.map((c) => scale(c, 0.66));
+    this.spires = [
+      makeSpireVariants(crag, seed ^ hashId('spire'), 7),
+      makeSpireVariants(crag, seed ^ hashId('spire-snow'), 7, MATERIALS[M.SNOW].art.ramp),
+    ];
 
     for (const b of BUILDINGS) this.buildings.set(b.id, makeBuilding(b.art, seed ^ hashId(b.id)));
     for (const e of ENEMIES) this.enemies.set(e.id, makeBlobFrames(e.art, seed ^ hashId(e.id)));
@@ -72,6 +94,30 @@ export class WorldArt {
   tile(biome: number, tx: number, ty: number): HTMLCanvasElement {
     const v = this.tiles[biome];
     return v[(hash2(tx, ty, 0x7a11e ^ biome) * v.length) | 0];
+  }
+
+  /** G5: one of the rock spires that stand on mountain and snow. */
+  spire(snow: boolean, tx: number, ty: number): HTMLCanvasElement {
+    const v = this.spires[snow ? 1 : 0];
+    return v[(hash2(tx, ty, 0x5919) * v.length) | 0];
+  }
+
+  /** B5: the 16×16 item icon, as a world sprite. At a 32 px tile that is exactly
+   *  half a tile — the right size for an object lying on the ground, and zero new
+   *  art. Cached per ITEM ID, never per drop: a night wave can have 200 drops on
+   *  the floor sharing a dozen distinct textures. */
+  itemIcon(id: string): HTMLCanvasElement {
+    let c = this.itemIcons.get(id);
+    if (!c) {
+      // GOLD_ID is a pseudo-item with no ITEMS row on purpose (see items.ts), so
+      // itemDef() returns undefined for it and the fallback below would silently
+      // draw a boss hoard as a grey pebble. Named explicitly rather than left to
+      // the fallback: an unknown id SHOULD look wrong, and this one is known.
+      const spec = id === GOLD_ID ? GOLD_ICON : itemDef(id)?.icon;
+      c = makeIcon(spec ?? { kind: 'stone', color: [140, 140, 150] });
+      this.itemIcons.set(id, c);
+    }
+    return c;
   }
 
   feature(id: string, tx: number, ty: number): HTMLCanvasElement {

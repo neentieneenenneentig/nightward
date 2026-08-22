@@ -17,6 +17,10 @@ export const ramp = (...cols: string[]): RGB[] => cols.map(hex);
 const clamp = (n: number) => Math.max(0, Math.min(255, n));
 export const lighten = (c: RGB, n: number): RGB => [clamp(c[0] + n), clamp(c[1] + n), clamp(c[2] + n)];
 export const darken = (c: RGB, n: number): RGB => lighten(c, -n);
+/** Proportional shade. Use this, not darken(), whenever the SAME amount of
+ *  shadow has to work across materials of wildly different lightness — an
+ *  additive −30 is a cliff face on slate and a no-op on snow. */
+export const scale = (c: RGB, f: number): RGB => [clamp(c[0] * f), clamp(c[1] * f), clamp(c[2] * f)];
 
 // Pools the character generator draws from — every seed rolls a different hero.
 export const PLAYER_POOL = {

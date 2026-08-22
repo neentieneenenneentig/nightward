@@ -4,7 +4,8 @@
 import { fbm } from '../../engine/noise';
 import { hash2 } from '../../engine/rng';
 import { M, MATERIALS } from '../data/materials';
-import { FEATURES, type FeatureDef } from '../data/features';
+import { A8_FEATURES, FEATURES, type FeatureDef } from '../data/features';
+import { CFG } from '../data/config';
 import { lordAt } from './domains';
 
 export const TILE = 32; // world pixels per tile
@@ -43,10 +44,15 @@ export class WorldGen {
   constructor(readonly seed: number) {
     // one cumulative feature table per material id; new materials (9–15) have no
     // feature densities, so their rows are simply empty.
+    // A8: with the flag off, the Cairn and Wardstone rows never enter the
+    // table. Both are appended LAST in FEATURES and `cum` is a running sum, so
+    // every other feature's window is bit-identical to its pre-A8 self — the
+    // revert restores the old world rather than a similar one.
+    const rowsFor = CFG.a8.enabled ? FEATURES : FEATURES.filter((f) => !A8_FEATURES.has(f.id));
     this.featTable = MATERIALS.map((m) => {
       let cum = 0;
       const rows: { def: FeatureDef; cum: number }[] = [];
-      for (const f of FEATURES) {
+      for (const f of rowsFor) {
         const d = f.density[m.name];
         if (d) {
           cum += d;

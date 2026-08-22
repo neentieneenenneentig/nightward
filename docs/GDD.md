@@ -147,11 +147,11 @@ real fire (fuel/burn/wet fields, wind-driven spread, glow overlay), and everythi
 the JS/wasm boundary as batched, zero-copy typed-array uploads — never per-tile calls.
 
 ### 4.2 The Wire: your connection is the physics
-Live browser network metrics don't just flavor the game — they parameterize it. **19
-tracked metrics** (RTT, downlink, jitter, an internally-computed "echo jitter," connection
+Live browser network metrics don't just flavor the game — they parameterize it. **Two dozen
+tracked metrics** (RTT, throughput, jitter, an internally-computed "echo jitter," connection
 effective-type/type, online state, time-of-day, CPU cores, device memory, endpoint
 latency, page DNS/TLS/TTFB timing, battery level/charging, locale, timezone, JS heap used)
-feed **22 game-facing mappings**: sim speed, gold rate, enemy scale, day-phase pacing,
+feed **game-facing mappings**: sim speed, gold rate, enemy scale, day-phase pacing,
 realm selection, damage roll, move speed, gather speed, xp rate, every vigor/resolve
 decay-and-restore rate, resource yield, and regen rate. Every mapping is a data row
 (`src/game/data/network.ts`), transform function included, editable live via
@@ -162,6 +162,52 @@ wider band (roughly 0.3–1.5×) because that reads as *the world responding to 
 
 Every metric has a neutral fallback default so unsupported browsers (Firefox, Safari lack
 `navigator.connection` entirely) still play a complete, balanced game.
+
+**The Deep Wire (N4.1).** Until 2026-08-19 every one of those numbers was an *inference*.
+`connection.rtt` is quantised to 25 ms buckets, `connection.downlink` is capped at 10 Mbps
+and absent outside Chromium, and packet loss was believed unreadable from a browser at all.
+It is not: a Cloudflare edge that terminates our TCP connection returns its own kernel
+socket statistics in a `Server-Timing: cfL4` header — `min_rtt`, `rtt_var`, `lost`,
+`retrans`, `delivery_rate`, `cwnd`, in microseconds, for our own socket. Measured live, the
+browser's own estimate was off by roughly 40× (reported 100 ms / 1.6 Mbps against a real
+2.5 ms / 13.9 Mbps). The deep readings drive **Pulse** (sim speed), **Flow** (gold rate,
+gather speed), **Fray** (horde aggression), **Silt** (movement drag) and **Aperture**
+(carrying capacity), and each falls back to the browser estimate when the edge is
+unreachable — a filtered network plays a balanced game, never an accidentally easy one.
+
+**Scrying (N4.4): how far you can see is how fast you resolve.** Every beacon the game
+discovers is resolved through DoH rather than fetched, and each of those resolutions is timed.
+The **median** — not the mean, so one slow answer cannot permanently dim the world — sets the
+radius of the corner radar: a sharp resolver folds more map into the same disc, a crawling one
+narrows it, across a 0.75×–1.5× band. It is the only mapping in the game whose effect is
+*spatial*, which is why the radar is the honest target for it: a measurement about how far the
+network reaches should change how far the player can see. The reading is passive — no new
+request, no new host — and holds its neutral value until three resolutions have landed, because
+one cold-cache lookup measures a cache miss and not a network. The same answers reveal whether
+the connection carries **IPv6**, without the host being contacted at all.
+
+**Omens (N4.3): the level and the step are different things.** The mappings above describe
+your connection's *steady state* — a permanently lossy link plays a permanently harder
+game. An **Omen** is the moment it *changes*. A session-long time series (the Chronicle)
+compares a short window against a longer baseline that excludes it, in standard deviations
+rather than percent, so a link that always wobbles does not cry wolf and a steady one
+reports a small step. A step that clears its threshold raises a named, temporary world
+state with a real multiplier, a toast, a HUD chip and a countdown:
+
+| the wire | Omen | the world |
+|---|---|---|
+| packet loss steps up | **Surge** | the horde presses (×1.25) and the screen frays |
+| throughput collapses | **Famine** | the land gives less (×0.65), tribute included |
+| throughput surges | **Bounty** | the land gives freely (×1.30) |
+| latency shortens | **Quickening** | the world quickens (move ×1.10) |
+| buffers fill | **Miring** | the ground thickens (move ×0.88) |
+| latency lengthens hard | **Rift** | the realm tears (see 4.4) |
+
+Omens deliberately go **both ways**: a mapping that can only punish teaches a player to
+resent their own connection. And a bad omen **lifts when the reading recovers**, measured
+against the baseline it fell from — the player's route out of a Famine is their network
+coming back, and they can watch it happen in the Lens. The duration cap is a safety valve
+for a permanently degraded link, not the primary exit.
 
 ### 4.3 Domains & lords
 The world is divided into 40×40-tile regions, each deterministically assigned one of five
@@ -186,16 +232,29 @@ derived from your beacon-echo latency **profile** (median + variance across prob
 endpoints), not raw `connection.type` — desktop browsers hide that field entirely, so
 deriving realm from it would leave desktop players permanently stuck on one realm. A large
 profile shift is a **rift**: a screen flash, a toast, and (mechanically) a fresh realm
-assignment. Identity data (IP, ISP, city, ASN) is never probed automatically — it fires
+assignment. A hard latency step-change also tears one (see 4.2) — until N4.3 the rift's
+only trigger was a `connection.type` transition, which desktop browsers never report, so on
+desktop the whole mechanic was unreachable. A rift is never *claimed* unless the realm
+actually changed; the panel does not lie about its own events. Identity data (IP, ISP, city, ASN) is never probed automatically — it fires
 only after the player's first `explore` action ("scrying reveals who you are"), and the
 Lens UI accurately reflects "unrevealed" until then.
 
-The **Lens** (`O` key) is the truth panel: eight sections — Connection, Realm Profile,
-Routes, Identity, Vessel (hardware), Threads (every live game-mapping row, with `dormant`
-rows dimmed if a system hasn't wired them yet), Feed (recent truth-kind log entries), and
-an **inspect mode** — hover or tap any row to see its SOURCE (which browser API), ACTION
-(what triggers it), and FLOWS INTO (what game values it feeds). This is deliberately
-"teach the player real network monitoring while they play," not just flavor.
+The **Lens** (`O` key) is the truth panel. It is a **right-edge drawer**, not a modal: the
+game keeps rendering and stays playable beside it, because the whole premise is that these
+numbers are driving the world in front of you and you could not watch the world react while
+the panel sat on top of it. Five tabs — PULSE, PATHS, IDENTITY, VESSEL, THREADS — over a
+persistent Chronicle strip of session-long sparklines, plus an **inspect mode**: hover or
+tap any row for its SOURCE (which browser API), ACTION (what triggers it), and FLOWS INTO
+(what game values it feeds). THREADS leads with active Omens, then the full game-mapping
+decoder ring, then detected changes, then the Feed.
+
+Every reading carries an **honesty tag** — `measured`, `reported`, `derived` or
+`unavailable` — because the difference between a kernel's `min_rtt` and a browser's
+25 ms-bucketed guess is the difference between this panel being an instrument and being
+decoration. An `unavailable` row still renders and says *why*: a missing row teaches
+nothing, and "unavailable" with no reason is indistinguishable from a bug. The whole series
+store exports to JSON, provenance included. This is deliberately "teach the player real
+network monitoring while they play," not just flavor.
 
 ---
 
@@ -279,6 +338,45 @@ slots, 23 raw materials/resources, 2 healing consumables, and 5 unique boss reli
 The metal progression is **copper → iron → silver → star**, unlocked by smithing level;
 the four elemental weapons sit alongside iron/silver as a sidegrade, not a strict upgrade.
 
+**Rarity & rolled affixes (A1).** Those 67 rows are *bases*, not items. Any piece of gear
+that drops or is forged rolls on a six-rung ladder — **Plain · Touched · Woven · Hallowed ·
+Sovereign · Riftborn** — and everything above Plain carries 1–5 rolled affixes, so two Iron
+Blades are genuinely different blades. Affixes are a prefix and a suffix in Diablo grammar
+(*"Keen Iron Blade of the Ember"*): prefixes write to the stat columns an item already has
+plus six named multipliers (move speed, swing speed, hunger, dread, building health, soul
+xp), and suffixes are the fifteen item-effect hooks from §9.4.
+
+A **Plain** roll returns the authored item unchanged — the ladder stays invisible until
+something actually rolls, and ordinary materials never roll at all, so the bag still stacks.
+
+Two rules here are ours rather than the genre's:
+
+- **The ladder is climbable inside one run.** Pillar 8 caps a run at ~15 minutes, and
+  Diablo-style drop rates in that window would ship four tiers no player ever sees. Weights
+  are tuned to a measured target: a competent run ends holding **2–4 Woven and about one
+  Hallowed**, and a slain lord is a **~24% shot at a Sovereign**. There is no persistence
+  (pillar 3) — what survives the run is a **trophy line on the scorecard** naming your best
+  find, which is the carve-out pillar 3 already allows.
+- **Riftborn always costs something.** One of its five affixes is a curse. A tier that is
+  strictly better than the one beneath it is a number, not a decision.
+
+Where a drop can reach on the ladder is decided by its source: ordinary kills and gathering
+top out at Hallowed, a **domain lord** is the only ordinary route to a Sovereign, a **forge**
+tops out at Touched (crafting has to stay worth doing), and **Riftborn exists only in the 60
+seconds after a rift** — which is what finally makes a rift something to chase. The wire
+tilts the whole ladder through the **Fortune** mapping: a wide, clean path (high cwnd, low
+loss) makes the top rungs reachable, a frayed one drops *more* items of *worse* quality.
+
+**Cairns and the Hoarder (A8).** Two sources sit above the ordinary band, and both cost
+something other than time. A **Cairn** is a stack of pale stones you meet roughly once a
+run: opening one is a five-second dig that yields a guaranteed **Hallowed-or-better** piece
+— and *wakes what was buried under it*, a pack scaled to the current night, which will march
+on your hall if you walk away from it. The **Hoarder** is the other: a rare daytime runner
+that flees on sight, outpaces you by a hair, and is gone for good past twenty-one tiles. Kill
+it and it bursts a **Woven-or-better** hoard; lose it and you watch your Sovereign leave.
+Neither can drop nothing — both tables use a pick-one group, because a guarantee that fires
+four times in five is not a guarantee.
+
 **Soul-feeding**: any feedable material (raw resources, not finished gear) can be consumed
 directly into a soul-gear slot's xp instead of used for crafting. Each material can carry a
 `soulAffinity` toward one specific slot — feeding it there is a 1.5× xp bonus, feeding an
@@ -298,6 +396,23 @@ tar-slow, flame-AoE). Three **utility buildings** — Workshop (craft-speed aura
 tiered T1→T2→T3 in Legion-TD-style upgrade paths (e.g. the base Watchtower forks into an
 Ember/splash line and a Frost/slow line, each culminating in an ultimate — Inferno/Forge or
 Glacier/Hail).
+
+**The Hall is a hub (A6).** Two `unique` counters are raised beside it, and they are the only
+buildings in the game that take **gold** rather than materials — which is also the only thing
+gold is for beyond a death penalty and one horde-thinning button. Walk up to either and the
+interact key opens it instead of gathering.
+
+- **The Reliquary** sells **sealed relics**: you choose the shape (blade, armour, ring,
+  amulet, charm, tool) and the **seal**, and the seal decides both the rarity band and how far
+  down that shape's base ladder it will reach — a Lord's Seal at 1,400 gold cannot hand you
+  the blade you started the run with. What is inside is never bought. The roll is the same one
+  a corpse makes, reading the same **Fortune** off the wire (§4.2), and **no seal reaches
+  Riftborn**: gold buys odds, the rift still has to be walked into.
+- **The Forge-Warden** reworks **one line** on one carried piece for gold plus materials, and
+  the new line can be worse than the old one. Each rework of the same piece costs 1.8× the
+  last, which is what keeps it a repair for a near-miss rather than a machine you feed until
+  every line is perfect. A Riftborn's curse rerolls into *another curse* — you may change
+  which price you pay, never that you pay one.
 
 **Placement is anchor-chained, not just hall-radius.** You may build within
 `CFG.build.maxDistFromHall` (18 tiles) of the Hall *or* of any placed **Waystone** — and
@@ -362,8 +477,22 @@ Points come from **surviving a night** (flat 1/night) and, as of L1, **slaying a
 
 ### 9.4 The Armory (relics & item effects)
 Items can declare data-driven `effects` hooks (thorns_reflect, fire_aura, chill_aura,
-regen_boost, move_burst_on_kill, see_foe_hp, resonance_boost, lifesteal, chain_on_kill,
-dodge, gold_find, xp_boost, night_vision). Five of these are **unique boss relics** — a
+regen_boost, move_burst_on_kill, see_foe_hp, resonance_boost, fire_on_hit, chill_on_hit,
+lifesteal, chain_on_kill, dodge, gold_find, xp_boost, night_vision — fifteen in total).
+Until A1 these were reachable almost exclusively through the five relics below; they are now
+also the **suffix pool for rolled affixes** (§7), which is what made that milestone mostly a
+data edit.
+
+> **Corrected 2026-08-21.** That paragraph was true of the *vocabulary* and false of the
+> *game*. Seven of the fifteen hooks — thorns_reflect, fire_aura, chill_aura, regen_boost,
+> move_burst_on_kill, see_foe_hp, resonance_boost — had a registered handler and **no
+> consumer anywhere**, because `registerEffect()` builds a registry that nothing dispatches
+> from: every live hook is read as `activeEffects(state).has(key)` at the site that cares.
+> The bill was that **all five relics below did nothing at all**, and 350 of the 750 suffix
+> weight in the affix table was placebo. All seven now have a real consumer and a
+> matched-pair test. The registry is documented as a vocabulary, not a dispatch table.
+
+Five of them are **unique boss relics** — a
 guaranteed drop from its lord, occupying its own 6th equip slot (separate from the normal
 weapon/armor/trinket slots):
 
@@ -389,6 +518,24 @@ Survivors flee at dawn.
 ### 10.2 Day prey
 A sparser, roaming population of daytime enemies (never targeting the hall) that exist to
 give you something to hunt for loot between nights, rather than idling until dusk.
+
+**The Hoarder (A8)** is the exception among them, and the only enemy in the bestiary you can
+lose to without taking a point of damage. It never attacks; it runs. At 108 × 1.5 = 162 px/s
+against your 160 it pulls away by about half a tile every eight seconds, so a straight sprint
+loses — narrowly. The counterplay is everything that is not running faster: a chill or a
+tower slow drops it under you, an echo or a bow reaches it without closing, and it has no
+pathfinding, so trees, water and cliffs corner it. Past 21 tiles it is gone, and the Chronicle
+says so.
+
+### 10.2b Wardstones — the world's other verb
+Standing violet monoliths, a handful per run, marked with something still lit. Touching one
+grants a **Boon**: a named, timed blessing drawn by weight from a table of twelve. What makes
+this cheap rather than a whole new system is that a boon is *a timed entry into the item-effect
+vocabulary* — the same fifteen hooks §9.4 lists. An Ember Ward is `fire_aura` for 75 seconds,
+read at the same site the Cindermaw relic is read at, so nothing downstream knows or needs to
+know where the fire came from. Three can be live at once; touching a fourth displaces the
+oldest and names it. A Wardstone drops no loot, because a blessing that also pays in silver
+reads as a node with a bonus rather than as a blessing.
 
 ### 10.3 World bosses (domain lords)
 Each of the 5 lords roams its home domain and only turns hostile toward *you* once
@@ -476,6 +623,23 @@ Panels (Bag, Craft, Skills, Log, Leaderboard) are centered, scrim-backed, viewpo
 overlays — keyboard-navigable (Tab/arrows/Enter/Escape). Building placement is a
 press-to-aim, release-to-place carousel banner (no popup menu; Tab/wheel/arrows cycle
 blueprints), with hold-drag wall painting.
+
+**Orbs, tooltips and the radar (A4).** Two globes flank the action bar — **HP** bottom-left
+with **Vigor** as a ring around it (a rate, not a pool), **Resolve** bottom-right — as pure
+radial gradients and a clipped fill. They *add to* the top-bar numbers rather than replacing
+them: a number answers "how much", an orb answers "how bad is this" without moving your eye
+off the middle of the screen, which is where a night fight happens.
+
+Hovering or focusing any item shows a **comparison tooltip**: the name in its rarity colour,
+each rolled affix in plain language ("*of the Ember — burns what stands near you*"), and a
+green or red delta against whatever occupies that slot right now. This is the loot loop —
+before A4 the game had no tooltips of any kind, and a rolled item would have been a
+differently-coloured name with no way to interrogate it. Ground drops at Woven and above
+throw a rarity-coloured **light beam** with the item's name floating above it, and a
+corner **minimap** shows the Hall (with a rim arrow when it is off the edge), your
+territory, live drops in their tier colours, and everything hunting you. Its *radius* is not
+fixed — **Scrying** (4.2) widens or narrows it with your DNS resolution speed, which is the one
+place in the HUD where the Wire changes what you can physically see.
 
 **The Lens** (`O`) is deliberately visually distinct from the rest of the chrome —
 clinical dark monospace, zero CSS-variable coupling to the main theme — because it's a
@@ -568,7 +732,7 @@ Honest inventory — don't describe these as live if you're extending the game:
 |---|---|
 | Master balance file (every tunable number) | `src/game/data/config.ts` |
 | Game state shape | `src/game/state.ts` |
-| Content tables (items/recipes/buildings/enemies/echoes/loom/materials/skills/domains/network) | `src/game/data/*.ts` |
+| Content tables (items/rarity/affixes/recipes/buildings/enemies/echoes/loom/materials/skills/domains/network) | `src/game/data/*.ts` |
 | Systems (one file per major mechanic) | `src/game/systems/*.ts` |
 | Boot + game loop | `src/main.ts` |
 | UI | `src/game/ui/*.ts` |

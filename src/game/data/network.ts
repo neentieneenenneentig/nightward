@@ -96,6 +96,8 @@ export const WIRE_BUDGET = {
   baselineIntervalSec: 20,
   /** Seconds between Cloudflare trace refreshes (identity + TLS/colo). */
   traceIntervalSec: 300,
+  /** Seconds between deep-wire (cfL4) probes. */
+  deepIntervalSec: 45,
   /** Token bucket: sustained requests per minute across ALL outbound paths. */
   ratePerMin: 20,
   /** Token bucket depth. */
@@ -107,6 +109,70 @@ export const WIRE_BUDGET = {
   /** Echo is "fresh" for resonance purposes within this window (ms). */
   freshMs: 12000,
 };
+
+/** Every scheduled probe re-rolls its next gap through this rather than firing
+ *  on a fixed period. The reason is not politeness, it is measurement validity:
+ *  the day/night cycle is `daySec + nightSec` = 340 s, and the same-origin
+ *  baseline probe fired every 20 s exactly — 340 / 20 = 17, with no remainder.
+ *  It therefore sampled the SAME seventeen phases of the cycle on every single
+ *  day of every single run, forever, and any variation that tracks the cycle
+ *  was structurally invisible to it. The DoH beacons already jittered (N4.0);
+ *  the baseline, the Cloudflare trace and the deep-wire probe did not.
+ *
+ *  It also de-synchronises retries: when a network goes down, every scheduler
+ *  backs off together and would otherwise come back in lockstep. */
+export function jitteredGap(baseSec: number, frac = WIRE_BUDGET.beaconJitter): number {
+  const f = Math.max(0, Math.min(0.9, frac));
+  return baseSec * 1000 * (1 - f + Math.random() * 2 * f);
+}
+
+/** One DoH JSON response, reduced to the fields the game consumes.
+ *
+ *  `data` is UNTRUSTED THIRD-PARTY TEXT turned into game-driving numbers by a
+ *  resolver we do not control. A malformed or rewritten response must never
+ *  produce NaN, must never throw, and must never put an unbounded string into
+ *  a Lens row (which interpolates into innerHTML). The address is truncated to
+ *  64 characters — no valid IPv4 or IPv6 address is longer — and `TTL` is
+ *  accepted only as a finite number. */
+export interface DohAnswer {
+  /** The first answer's payload, '' when none. For A/AAAA that is an address;
+   *  for PTR it is a hostname. The field is one name for "what the answer
+   *  said" because every caller wants exactly that and nothing else. */
+  ip: string;
+  /** The first answer is an AAAA record. */
+  v6: boolean;
+  /** TTL of the first answer, 0 when absent or malformed. */
+  ttl: number;
+  /** DNSSEC-authenticated answer (the `AD` flag). */
+  ad: boolean;
+}
+
+/** The DoH record types this game reads: A, PTR, AAAA.
+ *
+ *  PTR is in this set because `resolvePtr()` reverse-resolves the player's own
+ *  IP to name their ISP, and that is the whole of the Vessel's identity row.
+ *  When this parser was first extracted the type was dropped, the row silently
+ *  went blank forever, and the Gauntlet stayed green — because a parser test
+ *  that only feeds it the types it already handles is a mirror, not a test.
+ *  `testScryingDohParser` now walks this set. */
+export const DOH_READ_TYPES: Record<number, string> = { 1: 'A', 12: 'PTR', 28: 'AAAA' };
+
+export function parseDohAnswer(data: any): DohAnswer {
+  const ad = !!data?.AD;
+  const ans = Array.isArray(data?.Answer) ? data.Answer : [];
+  const addr = ans.find((a: any) => a && DOH_READ_TYPES[a.type] !== undefined);
+  const ip = typeof addr?.data === 'string' ? addr.data.slice(0, 64) : '';
+  const ttl = Number.isFinite(addr?.TTL) ? (addr.TTL as number) : 0;
+  // Typed, not sniffed: an AAAA record IS the v6 answer. The colon check stays
+  // as a fallback for a response whose `type` is missing or rewritten, since
+  // this is third-party text and the field is not ours to trust.
+  return { ip, v6: addr?.type === 28 || ip.includes(':'), ttl, ad };
+}
+
+/** N4.4: how many DoH resolutions must land before the Scrying number leaves
+ *  its neutral value. Three is the smallest count for which a median is a
+ *  median rather than a sample. */
+export const DNS_MIN_SAMPLES = 3;
 
 /** Passive-sample cooldowns (seconds). These gate zero-request browser reads
  *  and the scheduler's action bias — not network traffic. */
@@ -256,6 +322,8 @@ export const LENS_SECTION_INSPECT: Record<string, NetInspect> = {
   'routes-baseline':   { api: 'Same-origin fetch with PerformanceResourceTiming — full DNS/TCP/TLS/TTFB breakdown and nextHopProtocol. The only host we unambiguously may contact.', action: 'wall-clock scheduler (~20s)', flowsInto: 'control sample for every other route' },
   'routes-gate':       { api: 'Internal token bucket: 20 req/min sustained, burst 6, max 2 in flight, 30s per-host spacing, Retry-After honoured. Not a browser API.', action: 'governs every outbound request', flowsInto: 'nothing — it is the brake' },
   'routes-resolver':   { api: 'Per-resolver latency stats accumulated by alternating 1.1.1.1 and 8.8.8.8 across the session.', action: 'updated on every DoH query', flowsInto: 'display only' },
+  'scrying':           { api: 'Median DoH resolution latency (1.1.1.1 / 8.8.8.8) → how far the radar sees. Fast DNS = more map revealed.', action: 'updated on every completed DoH query', flowsInto: 'minimap radar sight radius' },
+  'identity-ipv6':     { api: 'AAAA record via DoH — whether a resolved host has an IPv6 address. Detected from answers, never fetched from the host.', action: 'probed once per discovered host', flowsInto: 'display only (Scrying). The BETTER v6 answer is the UDP walk’s reflexive candidate — an AAAA record says a remote host has a v6 address, which is a question about somewhere else' },
   'feed-entry':        { api: 'Internal log ring-buffer — truth-kind entries from network polling, probes, and transitions.', action: 'generated by NetworkSystem on poll/probe/transition', flowsInto: 'Lens Feed display · debug trace' },
 };
 
@@ -322,6 +390,100 @@ export interface NetworkSnapshot {
   /** Total JS heap size in MB (Chrome-only). */
   jsHeapTotalMB: number;
 
+  // ---- N4.1: the Deep Wire — kernel TCP state from a Cloudflare edge ----
+  // These are MEASURED, not inferred, and the Lens must say so. Each is 0 when
+  // the deep wire is unavailable (blocked probe, no TAO, non-Cloudflare path);
+  // 0 means "unmeasured" and every consumer falls back rather than treating it
+  // as a real reading of zero.
+  /** Packet loss + retransmission severity, 0..1. Previously believed impossible from a browser. */
+  fray: number;
+  /** How far RTT sits above the path's own floor, 0..1 — bufferbloat. */
+  silt: number;
+  /** Congestion window, segments. How much the path will accept in flight. */
+  aperture: number;
+  /** Real achieved throughput (Mbps), uncapped — unlike connection.downlink. */
+  flowMbps: number;
+  /** The path's true latency floor (ms) from the kernel's min_rtt. */
+  pulseMs: number;
+  /** Kernel-measured RTT variance (ms). Real jitter, not a bucket statistic. */
+  fluxMs: number;
+  /** Is any of the above real this session? Drives the Lens honesty tags. */
+  deepLive: boolean;
+
+  // ---- N4.4: Scrying — DNS resolution as a measurement and a skill ----
+  /** Has any resolved host returned an AAAA (IPv6) address this session?
+   *  Detected from DoH answers — the host is never contacted. `false` means
+   *  "not yet seen", never "IPv6 absent": one v6 answer proves the network's
+   *  resolver carries a working v6 answer set. */
+  ipv6Live: boolean;
+  /** Median DoH resolution latency (ms) across every A/AAAA/PTR query this
+   *  session. The "Scrying" number — fast resolution sharpens the radar. */
+  dnsMedianMs: number;
+
+  // ---- N4.6: the Deep Vessel — the machine, not the wire ----------------
+  //
+  // Scalars only. The FULL reading (GPU name, locale set, privacy posture,
+  // device counts) lives on `NetworkSystem.vessel.reading` and is read straight
+  // from there by the Lens, because this file is a pure data leaf with no
+  // imports and importing systems/vessel.ts for a type would make it a
+  // data→systems edge. What is here is exactly what SENSORS and NET_GAME_MAP
+  // need, and nothing else.
+  //
+  // Every one is neutral-when-unmeasured, and for two of them the neutral value
+  // is deliberately NOT zero-means-nothing: `storageFreeFrac` is 1 (a disk we
+  // could not measure is a disk with room), and `cpuPressure` is 0 (a machine
+  // we cannot ask about is a machine under no load). Reading them the other way
+  // would punish every Firefox and Safari player for their browser.
+  /** PressureObserver 'cpu' severity, 0 (nominal/unknown) .. 1 (critical). */
+  cpuPressure: number;
+  /** The raw state word, for the Lens. 'unknown' where unsupported. */
+  cpuPressureState: string;
+  /** Worst long-animation-frame in the last 20 s, ms. 0 = smooth or unmeasured;
+   *  `jankLive` is what tells those two apart. */
+  jankMs: number;
+  jankLive: boolean;
+  /** Free share of the origin's storage quota, 0..1. 1 = unmeasured. */
+  storageFreeFrac: number;
+  /** AudioContext.sampleRate, Hz. 0 = no context yet. */
+  audioSampleRate: number;
+
+  // ---- N4.7: derived truths ----------------------------------------------
+  /** Speed-of-light efficiency: measured RTT over the RTT physics allows for
+   *  the estimated distance to the edge. 1.0 = the packets went straight.
+   *
+   *  0 is the sentinel for "no reading" and is what an unknown colo, an
+   *  untabled timezone or an unmeasured RTT all produce. The mapping below
+   *  checks for it explicitly — a 0 fed to a transform expecting a ratio would
+   *  read as infinitely efficient routing, which is the wrong direction as well
+   *  as the wrong number. */
+  pathEfficiency: number;
+
+  // ---- N4.7b: the UDP path ------------------------------------------------
+  // Everything above rode TCP over HTTPS. These four came back over UDP, from
+  // a STUN binding request that asked no permission and sent ~200 bytes once.
+  //
+  // Neutral-when-unwalked, and for `natClass` the neutral value is the WORD
+  // 'unknown' rather than a number, for the same reason `cpuPressureState`
+  // exists: the grade below is 1 at both 'cone' and 'unknown', so anything that
+  // needs to tell a measured cone from an unwalked path must branch on the word.
+  /** 'unknown' | 'open' | 'cone' | 'symmetric' | 'blocked'. */
+  natClass: string;
+  /** Did an IPv6 reflexive candidate come back? The strongest answer a browser
+   *  can give to "does this machine have working end-to-end v6" — N4.4's AAAA
+   *  lookup answers a question about somewhere ELSE. */
+  udpV6: boolean;
+  /** Time to the first reflexive candidate, ms. 0 = unmeasured. Contains one
+   *  real UDP round trip plus browser bookkeeping — it is NOT a ping, and is
+   *  labelled as a gathering time everywhere it is shown. */
+  stunMs: number;
+  /** Did UDP and TCP disagree about this machine's public address?
+   *
+   *  False when either side has no reading, because "we could not check" must
+   *  never read as "they agreed" OR as "they disagreed" — this field feeds a
+   *  masking signal, and a signal that fires on missing data is how a VPN
+   *  detector accuses somebody of nothing. */
+  udpIpMismatch: boolean;
+
   /** S1: transient — night RTT stability % (computed at dawn). */
   _nightRttStability?: number;
 
@@ -376,6 +538,68 @@ export interface NetMappingContext {
 
 /** Initial metric mappings — raw snapshot → game-readable values. */
 export const NET_METRICS: NetMapping[] = [
+  // ---- N4.1: measured rows. Every one of these carries an honest `inspect`
+  // saying it comes from a kernel rather than an estimate, because the whole
+  // point of the Lens is that it distinguishes the two.
+  {
+    key: 'fray', label: 'Fray',
+    compute: (s) => s.fray,
+    fallback: 0, unit: '', intervalMs: 2000,
+    inspect: { api: 'cfL4 lost + retrans from a Cloudflare edge Server-Timing header — the TCP_INFO the edge kernel keeps for our socket. Genuine packet loss, no local agent.', action: 'one header-only probe every 45s', flowsInto: 'horde aggression · corruption FX' },
+  },
+  {
+    key: 'silt', label: 'Silt',
+    compute: (s) => s.silt,
+    fallback: 0, unit: '', intervalMs: 2000,
+    inspect: { api: 'cfL4 rtt above min_rtt — bufferbloat measured against the OWN floor of this path, so distance is not punished as congestion', action: 'one header-only probe every 45s', flowsInto: 'movement drag · gather speed' },
+  },
+  {
+    key: 'aperture', label: 'Aperture',
+    compute: (s) => s.aperture,
+    fallback: 10, unit: 'seg', intervalMs: 2000,
+    inspect: { api: 'cfL4 cwnd — the congestion window at the edge, in segments', action: 'one header-only probe every 45s', flowsInto: 'carrying capacity' },
+  },
+  {
+    key: 'flowMbps', label: 'Flow (real)',
+    compute: (s) => s.flowMbps,
+    fallback: 0, unit: 'Mbps', intervalMs: 2000,
+    inspect: { api: 'cfL4 delivery_rate — what the socket actually achieved. Uncapped, and works outside Chromium, unlike connection.downlink', action: 'one header-only probe every 45s', flowsInto: 'gold rate (when live)' },
+  },
+  {
+    key: 'pulseMs', label: 'Pulse (real)',
+    compute: (s) => s.pulseMs,
+    fallback: 0, unit: 'ms', intervalMs: 2000,
+    inspect: { api: 'cfL4 min_rtt in microseconds — the physical floor of the path at sub-millisecond precision, not a 25ms bucket', action: 'one header-only probe every 45s', flowsInto: 'sim speed (when live)' },
+  },
+  {
+    key: 'fluxMs', label: 'Flux (real)',
+    compute: (s) => s.fluxMs,
+    fallback: 0, unit: 'ms', intervalMs: 2000,
+    inspect: { api: 'cfL4 rtt_var — variance measured by a kernel. The estimated Flux below is derived from 25ms buckets, so it partly measures the quantiser.', action: 'one header-only probe every 45s', flowsInto: 'enemy wobble (when live)' },
+  },
+  // The three rows the GAME actually consumes. Kept separate from both the
+  // measured and the estimated rows on purpose: the Lens shows `pulseMs` and
+  // `rtt` side by side so a player can see how wrong the 25ms bucket was, while
+  // the sim quietly reads whichever is real. Silently overwriting `rtt` with the
+  // measured value would erase the only evidence the deep wire works at all.
+  {
+    key: 'pulseBest', label: 'Pulse (effective)',
+    compute: (s) => (s.deepLive && s.pulseMs > 0 ? s.pulseMs : s.rtt),
+    fallback: 50, unit: 'ms', intervalMs: 1000,
+    inspect: { api: 'cfL4 min_rtt when the deep wire is live, otherwise navigator.connection.rtt', action: 'always active', flowsInto: 'sim speed' },
+  },
+  {
+    key: 'flowBest', label: 'Flow (effective)',
+    compute: (s) => (s.deepLive && s.flowMbps > 0 ? s.flowMbps : s.downlink),
+    fallback: 10, unit: 'Mbps', intervalMs: 2000,
+    inspect: { api: 'cfL4 delivery_rate when the deep wire is live, otherwise navigator.connection.downlink (capped at 10 Mbps)', action: 'always active', flowsInto: 'gold rate · gather speed' },
+  },
+  {
+    key: 'fluxBest', label: 'Flux (effective)',
+    compute: (s) => (s.deepLive && s.fluxMs > 0 ? s.fluxMs : s.jitter),
+    fallback: 5, unit: 'ms', intervalMs: 1000,
+    inspect: { api: 'cfL4 rtt_var when the deep wire is live, otherwise the derived bucket statistic', action: 'always active', flowsInto: 'enemy wobble' },
+  },
   {
     key: 'rtt', label: 'Pulse',
     compute: (s) => s.rtt,
@@ -467,6 +691,14 @@ export const NET_METRICS: NetMapping[] = [
     inspect: { api: 'PerformanceNavigationTiming.responseStart − requestStart. This origin only.', action: 'boot page load (captured once, static)', flowsInto: 'Vessel identity · ancestral memory stats' },
   },
 
+  // ---- N4.4: Scrying — DNS resolution time, the ROADMAP promise from N1 ----
+  {
+    key: 'dnsMs', label: 'Scrying',
+    compute: (s) => s.dnsMedianMs,
+    fallback: 50, unit: 'ms', intervalMs: 1000,
+    inspect: { api: 'Median DoH resolution latency across every A/AAAA/PTR query this session (1.1.1.1 / 8.8.8.8). Real resolution time, not a fetch of the host.', action: 'updated on every completed DoH query', flowsInto: 'Scrying — the minimap radar sight radius' },
+  },
+
   // ---- X1: New Lens parameters — browser sensors beyond networking --------
   {
     key: 'batteryLevel', label: 'Battery',
@@ -499,15 +731,87 @@ export const NET_METRICS: NetMapping[] = [
     key: 'jsHeapUsed', label: 'JS Heap',
     compute: (s) => s.jsHeapUsedMB,
     fallback: 50, unit: 'MB', intervalMs: 10000,
-    inspect: { api: 'performance.memory.usedJSHeapSize — Chrome-only. Fallback: 50 MB.', action: 'always active (polled at 0.1 Hz)', flowsInto: 'Veil Pressure — difficulty scalar (more memory pressure = harder)' },
+    inspect: { api: 'performance.memory.usedJSHeapSize — Chrome-only. Fallback: 50 MB.', action: 'always active (polled at 0.1 Hz)', flowsInto: 'Veil Pressure — the FALLBACK proxy, used only where PressureObserver is silent' },
+  },
+
+  // ---- N4.6: the Deep Vessel ----------------------------------------------
+  // Local reads. No packets, no prompts, nothing transmitted. Each of the four
+  // below drives a NET_GAME_MAP row; the rest of the vessel reading is Lens
+  // content on its own tab.
+  {
+    key: 'cpuPressure', label: 'Vessel Strain',
+    compute: (s) => s.cpuPressure,
+    fallback: 0, unit: 'frac', intervalMs: 2000,
+    inspect: { api: "PressureObserver('cpu') — a FIRST-PARTY thermal/load state from the OS. Chromium 125+. Fallback: 0 (unstrained).", action: 'callback-driven (the OS pushes; we never poll)', flowsInto: 'Veil Pressure — supersedes the JS-heap proxy wherever it reports' },
+  },
+  {
+    key: 'jank', label: 'Vessel Stutter',
+    compute: (s) => s.jankMs,
+    fallback: 0, unit: 'ms', intervalMs: 1000,
+    inspect: { api: "PerformanceObserver('long-animation-frame') — real main-thread stalls over 50 ms, with attribution. Chromium 123+. Fallback: 0 (smooth).", action: 'callback-driven, 20 s rolling window', flowsInto: 'Mercy — a stuttering machine gets a wider dodge window' },
+  },
+  {
+    key: 'storageFree', label: 'The Hold',
+    compute: (s) => s.storageFreeFrac,
+    fallback: 1, unit: 'frac', intervalMs: 0,
+    inspect: { api: 'navigator.storage.estimate() — quota vs usage for this origin. Everywhere but old Safari. Fallback: 1 (empty).', action: 'boot page load (static)', flowsInto: 'Drop Memory — a full hold makes the ground forget loot sooner' },
+  },
+  {
+    key: 'pathEff', label: 'The Straight Path',
+    compute: (s) => s.pathEfficiency,
+    fallback: 0, unit: 'x', intervalMs: 30000,
+    inspect: { api: 'DERIVED — great-circle distance from the Cloudflare colo (IATA) to a timezone-estimated position, against the kernel min_rtt. The only reading in the game whose floor is a law of physics. Fallback: 0 (no reading).', action: 'recomputed on the sensor poll from readings already taken', flowsInto: 'Homeward — a direct route drops you closer to the hall when you fall' },
+  },
+  // ---- N4.7b: the UDP path ------------------------------------------------
+  {
+    key: 'gate', label: 'The Gate',
+    // The NAT class, graded so a transform can read it as a number: 0 = no
+    // translation at all, 1 = one mapping for every destination, 2 = a fresh
+    // mapping per destination (or a network that eats UDP outright).
+    //
+    // `blocked` grades AT the top rather than at neutral, and that is a
+    // measurement rather than a fallback: a network that filters UDP entirely
+    // is a stricter gate than a symmetric NAT, not a looser one. A privacy
+    // extension that suppresses WebRTC reads identically, and in this game's
+    // fiction those two ARE the same thing — nothing gets through either.
+    //
+    // `unknown` grades at 1, with 'cone', because 1 is the neutral game value
+    // and pillar 5 says an unwalked path must change nothing.
+    compute: (s) => (NAT_GRADE[s.natClass] ?? 1),
+    fallback: 1, unit: 'grade', intervalMs: 0,
+    inspect: { api: 'RTCPeerConnection ICE gathering against two public STUN servers — the public port each one saw. Same port = cone NAT, different ports = symmetric. No media, no permission prompt, ~200 bytes, once per run. Fallback: 1 (cone/neutral).', action: 'walked once, shortly after boot', flowsInto: 'The Warded Gate — a stricter NAT raises what you build' },
+  },
+  {
+    key: 'stun', label: 'The Other Road',
+    compute: (s) => s.stunMs,
+    fallback: 0, unit: 'ms', intervalMs: 0,
+    inspect: { api: 'Time from the WebRTC offer to the first server-reflexive ICE candidate. Contains one genuine UDP round trip plus browser bookkeeping — it is a gathering time, NOT a ping, and is never presented as one. Fallback: 0 (unmeasured). Measured: about 150 ms of an in-game reading is ICE startup plus a callback queued behind the render loop, so this is a machine-AND-network number; anything past 600 ms is a cold stack and is discarded rather than counted.', action: 'measured once during the UDP walk, on the sensor poll rather than at boot so the stack is warm', flowsInto: 'The Swift Road — a quick answer on the other road shortens your echoes' },
+  },
+  {
+    key: 'audioRate', label: 'The Sounding Board',
+    compute: (s) => s.audioSampleRate,
+    fallback: 48000, unit: 'Hz', intervalMs: 0,
+    inspect: { api: 'AudioContext.sampleRate — the hardware pipeline the engine already owns. Everywhere. Fallback: 48000.', action: 'read once, from the live engine context', flowsInto: 'nothing yet — surfaced for the Lens only' },
   },
 ];
+
+/** NAT class → a number a transform can band. See the `gate` sensor for why
+ *  `blocked` sits at the top and `unknown` sits with `cone`. */
+export const NAT_GRADE: Record<string, number> = {
+  open: 0, cone: 1, unknown: 1, symmetric: 2, blocked: 2,
+};
+
+/** Above this, a `stunMs` reading is a cold ICE stack rather than a slow wire,
+ *  and the Swift Road returns neutral instead of its worst value. Measured:
+ *  warm in-page gathers cluster at 159-179 ms; the first gather after a page
+ *  loads took 1215 ms. See the Swift Road row for the full numbers. */
+export const COLD_STUN_MS = 600;
 
 /** Game system mappings — resonance values transformed into gameplay effects. */
 export const NET_GAME_MAP: NetGameMapping[] = [
   {
     label: 'Sim Speed',
-    netKey: 'rtt',
+    netKey: 'pulseBest',   // N4.1: real min_rtt where the deep wire reaches
     // High pulse = slower sim. 50ms = 1×, band clamped to 0.85–1.15× (D4).
     transform: (rtt: number) => Math.max(0.85, Math.min(1.15, 1.0 + (50 - rtt) * 0.003)),
     target: 'simSpeed',
@@ -516,7 +820,7 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   },
   {
     label: 'Gold Rate',
-    netKey: 'downlink',
+    netKey: 'flowBest',    // N4.1: real delivery_rate, uncapped, works outside Chromium
     // D5: wide lightning bands 0.30–1.50. 1 Mbps → 0.58×, 10 Mbps → 1.25×.
     transform: (dl: number) => Math.max(0.30, Math.min(1.50, 0.5 + dl * 0.075)),
     target: 'goldRate',
@@ -559,6 +863,93 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     min: 0.30,
     max: 1.50,
   },
+  // ---- N4.1: modifiers that only exist because the kernel told us ----
+  {
+    label: 'Horde Aggression (Fray)',
+    // Packet loss should be FRIGHTENING. This is the clearest hostile-network
+    // signal there is, and until N4.1 it was believed unreadable from a browser.
+    // Neutral at 1.0 when the deep wire is silent, so a filtered network plays a
+    // balanced game rather than an accidentally easy one.
+    netKey: 'fray',
+    transform: (f: number) => Math.max(1.0, Math.min(1.45, 1 + f * 1.8)),
+    target: 'hordeAggression',
+    min: 1.0,
+    max: 1.45,
+  },
+  {
+    label: 'Drag (Silt)',
+    // Buffers filling up IS the wire silting. Measured against the floor of THIS
+    // path, so a player who simply lives far from an edge is not permanently
+    // slowed for it — only one whose queues are actually backing up.
+    netKey: 'silt',
+    transform: (s: number) => Math.max(0.88, Math.min(1.0, 1 - s * 0.12)),
+    target: 'siltDrag',
+    min: 0.88,
+    max: 1.0,
+  },
+  {
+    // ---- A1: the wire decides what the world is willing to give up ----
+    //
+    // Two measured kernel readings, pulling in opposite directions. A WIDE
+    // path (high cwnd — the network will accept a lot in flight) tilts the
+    // rarity ladder upward; a FRAYED one (real packet loss) tilts it down.
+    //
+    // The compensating half lives in loot.ts as lootQuantityMul(): a frayed
+    // wire buries you in junk instead of handing you nothing, so a bad
+    // connection is a different kind of run rather than a strictly worse one.
+    // That distinction is the difference between a mapping and a punishment,
+    // and it is the same lesson the Omens learned in N4.3.
+    //
+    // Neutral 1.0 whenever the deep wire is silent (pillar 5) — a filtered
+    // network plays a balanced game, never an accidentally poor one.
+    label: 'Fortune (Aperture · Fray)',
+    netKey: 'aperture',
+    transform: (cwnd: number, ctx?: NetMappingContext) => {
+      const s = ctx?.snap;
+      if (!s?.deepLive) return 1.0;
+      const wide = Math.max(0, Math.min(1, (cwnd - 10) / 50));
+      return Math.max(0.75, Math.min(1.35, 1.0 + wide * 0.35 - (s.fray ?? 0) * 3.5));
+    },
+    target: 'fortune',
+    min: 0.75,
+    max: 1.35,
+  },
+  {
+    label: 'Carry (Aperture)',
+    netKey: 'aperture',
+    transform: (c: number) => Math.max(0.85, Math.min(1.25, 0.85 + Math.min(c, 60) / 100)),
+    target: 'aperture',
+    min: 0.85,
+    max: 1.25,
+  },
+  // ---- N4.4: Scrying — fast DNS reveals more of the map ----
+  // The ROADMAP has carried "DNS resolution time → Scrying skill — reveals map
+  // by resolving domains" since N1. This is that promise, delivered passively:
+  // the radar sees further when your resolver is sharp, narrower when it
+  // crawls. Neutral 50 ms sits at exactly 1.0× so an unmeasured run is
+  // untouched — the fallback is the neutral value, per pillar 5.
+  //
+  // **The slope was doubled on 2026-08-22.** The original `1.5 - dns*0.01` put
+  // a typical 10–40 ms resolver at 1.10×–1.40×: always above neutral, never
+  // near the floor, and moving so slowly across a session that the radar
+  // effectively had one size per machine. A mapping whose output does not
+  // change is a constant wearing a measurement's clothes — the dormant-row sin
+  // in its live form. At 0.02 the same 10–40 ms span covers 1.50×–1.20× and a
+  // resolver drifting 10 ms mid-session moves the radar by a visible 0.2×.
+  //
+  // 50 ms → exactly 1.0 is load-bearing and unchanged: `dnsMedianMs` falls back
+  // to 50 before anything is measured, and pillar 5 says the fallback IS the
+  // neutral value. Written as an offset FROM 50 rather than as an intercept so
+  // that the neutral point is visible in the arithmetic and cannot drift out of
+  // it silently the next time the slope is retuned (WORKFLOW 15).
+  {
+    label: 'Scrying (sight)',
+    netKey: 'dnsMs',
+    transform: (dns: number) => Math.max(0.75, Math.min(1.5, 1.0 - (dns - 50) * 0.02)),
+    target: 'scrying',
+    min: 0.75,
+    max: 1.5,
+  },
   // ---- N2a: New modifiers from live vars ----
   {
     label: 'Move Speed',
@@ -571,7 +962,7 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   },
   {
     label: 'Gather Speed',
-    netKey: 'downlink',
+    netKey: 'flowBest',    // N4.1
     // D5: wide lightning bands 0.50–1.50
     transform: (dl: number) => Math.max(0.50, Math.min(1.50, 0.85 + dl * 0.04)),
     target: 'gatherSpeed',
@@ -749,11 +1140,109 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   {
     label: 'Veil Pressure',
     netKey: 'jsHeapUsed',
-    // Memory pressure = the Veil presses harder. 20MB→0.9×, 200MB→1.4×.
-    transform: (mb: number) => Math.max(0.85, Math.min(1.5, 0.85 + mb * 0.003)),
+    // N4.6 UPGRADED THIS ROW rather than adding a second one, because
+    // getGameValue() resolves a target with `.find()` — first match wins — so a
+    // second row aimed at `veilPressure` would have been a dormant row with a
+    // label on it, which is the exact failure this project keeps digging back
+    // out of its own data tables.
+    //
+    // The heap number was always a proxy and a poor one: usedJSHeapSize
+    // measures how much THIS TAB has allocated, which says nothing about
+    // whether the MACHINE is struggling. A tab holding 300 MB on an idle
+    // workstation read identical to one thrashing on a fanless laptop.
+    // PressureObserver is the OS's own answer to the actual question.
+    //
+    // So: where the first-party signal reports, it wins outright. Where it does
+    // not — Firefox, Safari, an expired origin trial — the heap proxy is still
+    // better than nothing and stays. `cpuPressure` is 0 at BOTH 'nominal' and
+    // 'unknown', so the branch is on `cpuPressureState`, never on the number:
+    // a genuinely idle machine must not fall through to the proxy and get
+    // scaled by however much memory Pixi happens to be holding.
+    transform: (mb: number, ctx?: NetMappingContext) => {
+      const snap = ctx?.snap as any;
+      if (snap?.cpuPressureState && snap.cpuPressureState !== 'unknown') {
+        // nominal 1.0 → critical 1.5. Linear, and anchored at exactly 1.0 for
+        // an unbothered machine so the neutral case is the identity.
+        return Math.max(0.85, Math.min(1.5, 1 + (snap.cpuPressure ?? 0) * 0.5));
+      }
+      // Memory pressure = the Veil presses harder. 20MB→0.9×, 200MB→1.4×.
+      return Math.max(0.85, Math.min(1.5, 0.85 + mb * 0.003));
+    },
     target: 'veilPressure',
     min: 0.85,
     max: 1.5,
+  },
+
+  // ---- N4.6: the Deep Vessel's two game inputs ---------------------------
+  {
+    label: 'Mercy',
+    netKey: 'jank',
+    // N4.6. The one mapping in this table that COMPENSATES rather than
+    // parameterises, and it is deliberate.
+    //
+    // `telegraphSlackPx` is the distance at which an enemy's committed swing
+    // still connects — slack is the ENEMY's forgiveness, not yours. A machine
+    // dropping 200 ms frames is a machine where the player's dodge input landed
+    // during a stall they could not see coming, and charging them for the
+    // browser's stutter is the one difficulty source in this game nobody chose.
+    // So real, measured jank SHRINKS the slack: your dodges land.
+    //
+    // Every other row here says "your network shapes your world". This one says
+    // "and it will not be allowed to cheat you", which is the same doctrine
+    // read from the other end. A smooth machine gets 1.0 and nothing changes.
+    transform: (ms: number) => Math.max(0.55, Math.min(1, 1 - Math.max(0, ms - 50) / 500)),
+    target: 'mercy',
+    min: 0.55,
+    max: 1,
+  },
+  {
+    label: 'Homeward',
+    netKey: 'pathEff',
+    // N4.7. Speed-of-light efficiency decides how far a death throws you.
+    //
+    // Death already scatters the player `respawnMinTiles`..`respawnMaxTiles`
+    // from the hall — the fiction is that the thread snapped and the connection
+    // put you down somewhere else. So the natural question the mechanic was
+    // always asking is HOW GOOD that connection is at putting you where it
+    // meant to, and this milestone finally has a number for it: a path whose
+    // packets go straight drops you close, a path that tours the country drops
+    // you a long way out.
+    //
+    // Inside a fifteen-minute run (pillar 8) the walk home is a real cost, so
+    // the band is deliberately narrow: 0.8x to 1.3x of the authored distance,
+    // not a run-ending exile. And 0 — the no-reading sentinel — maps to exactly
+    // 1.0, so a player whose colo is not in the table plays the authored game.
+    transform: (eff: number) => {
+      if (!(eff > 0)) return 1;                    // no reading: neutral, always
+      return Math.max(0.8, Math.min(1.3, 0.62 + eff * 0.28));
+    },
+    target: 'homeward',
+    min: 0.8,
+    max: 1.3,
+  },
+  {
+    label: 'Drop Memory',
+    netKey: 'storageFree',
+    // N4.6. How long the ground remembers what fell on it. A full hold means
+    // the world lets go of loot sooner — the fiction is that the vessel has no
+    // room left to hold the memory, and the mechanic is a real, gentle pressure
+    // to pick things up rather than leave a field of stacks lying around.
+    //
+    // Floors at 0.7 rather than something dramatic because this multiplies a
+    // DESPAWN timer, and a player whose disk is full should get a slightly
+    // brisker floor, not have a Sovereign evaporate while they walk to it.
+    //
+    // CEILINGS at exactly 1.0, and that is pillar 5 rather than timidity. The
+    // fallback for an unreadable quota is `free = 1`, so a transform that paid
+    // a bonus at the top of the range would hand every browser that cannot
+    // answer storage.estimate() a permanent 15% gift — a fallback that is not
+    // the neutral value is a fallback that changes the game, which is the exact
+    // thing this project's fifth pillar forbids. An empty hold is the AUTHORED
+    // despawn time; a full one is brisker.
+    transform: (free: number) => Math.max(0.7, Math.min(1, 0.7 + free * 0.3)),
+    target: 'dropMemory',
+    min: 0.7,
+    max: 1,
   },
   {
     label: 'Battery Scarcity',
@@ -775,5 +1264,82 @@ export const NET_GAME_MAP: NetGameMapping[] = [
     target: 'regenRate',
     min: 1.0,
     max: 1.2,
+  },
+  {
+    label: 'Warded Gate',
+    netKey: 'gate',
+    // N4.7b. The NAT you live behind decides how hard your walls stand.
+    //
+    // The fiction writes itself and it happens to be literally true: a NAT is
+    // the wall between a home network and the internet, and the three classes
+    // are three strengths of wall. An open path has no wall at all and anything
+    // outside can reach anything inside. A cone NAT has one gate with one key.
+    // A symmetric NAT hands every caller a different door and remembers none of
+    // them, which is the strictest thing a consumer network does — and it is
+    // also, not coincidentally, the configuration that breaks peer-to-peer
+    // games. This one repays it.
+    //
+    // Applied ONCE at placement, like the Loom multiplier and A1's 'Rooted'
+    // beside it: a building keeps the ceiling it was raised with. Walking your
+    // laptop onto a different network mid-run must not retroactively weaken a
+    // wall you already paid for.
+    //
+    // Band 0.9..1.2 around a neutral 1.0 at grade 1, which is both `cone` (the
+    // common measured case) and `unknown` (the fallback) — so a browser with
+    // WebRTC removed builds exactly the walls the game authored.
+    transform: (grade: number) => (grade <= 0 ? 0.9 : grade >= 2 ? 1.2 : 1.0),
+    target: 'wardedGate',
+    min: 0.9,
+    max: 1.2,
+  },
+  {
+    label: 'Swift Road',
+    netKey: 'stun',
+    // N4.7b. How fast this vessel can walk the OTHER road decides how soon your
+    // echoes come back.
+    //
+    // Every latency row in this game measures TCP. This one measures the UDP
+    // path, which leaves the same machine and takes a different route through
+    // the same network. An ability cooldown is the right consumer because it is
+    // the one number in the game already about waiting for something to return.
+    //
+    // ---- what this actually measures, measured -------------------------------
+    //
+    // The row said "how fast the other road answers" when it shipped, and that
+    // overclaimed. Bare ICE gathers run INSIDE the running game page, six of
+    // them, against the same two servers:
+    //
+    //     1215, 161, 159, 170, 178, 179 ms      (game's own walk: 164 ms)
+    //
+    // and the same gather on an idle about:blank page: 11 and 35 ms. So roughly
+    // 150 ms of every reading is the page — ICE agent startup and a callback
+    // waiting its turn behind a render loop — and only the remainder is the
+    // wire. It is a MACHINE-AND-NETWORK reading, and the fiction says "this
+    // vessel walking the road" rather than "the road" for that reason.
+    //
+    // That is not a defect to apologise for; it is the same shape as every
+    // browser-side latency number in this project. But it decides two things:
+    //
+    // 1. **Neutral sits at 120 ms**, which is inside the band real in-page
+    //    readings occupy. Banding around 0 would pin every player at the floor
+    //    and the knob would never move.
+    // 2. **A reading past `COLD_STUN_MS` is discarded, not punished.** That
+    //    1215 ms first sample is a cold ICE stack, not a slow network — and a
+    //    single cold sample is enough to pin an entire run's cooldowns at the
+    //    worst end of the band, because the walk happens once. Pillar 5 says a
+    //    reading we do not trust maps to the NEUTRAL value, never to a penalty.
+    //    600 ms is well above anything a warm gather has produced and well
+    //    below the cold one.
+    //
+    // 0 is the unmeasured sentinel and returns exactly 1.0, same as ever.
+    transform: (ms: number) => {
+      if (!(ms > 0)) return 1;                    // unwalked: neutral, always
+      if (ms > COLD_STUN_MS) return 1;            // cold stack, not a slow wire
+      if (ms <= 120) return Math.max(0.85, 1 - ((120 - ms) / 120) * 0.15);
+      return Math.min(1.15, 1 + ((ms - 120) / 280) * 0.15);
+    },
+    target: 'swiftRoad',
+    min: 0.85,
+    max: 1.15,
   },
 ];

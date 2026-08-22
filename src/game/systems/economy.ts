@@ -17,16 +17,20 @@ export class EconomySystem {
     if (pop <= 0) return;
     // N1: network gold rate multiplier (bandwidth → gold)
     const goldMul = this.ctx.net?.getGameValue?.('goldRate') ?? 1.0;
-    // C3: Loom territory income + Night Market keystone
-    const loomMods = this.ctx.loom?.ensureMods?.();
-    const loomGoldMul = loomMods
-      ? (1 + (loomMods.territoryIncomePct ?? 0) / 100) * (loomMods.nightMarket ? 1.4 : 1.0)
-      : 1.0;
-    const gain = Math.round(pop * CFG.economy.goldPerPop * goldMul * loomGoldMul);
+    // C3: Loom territory income + Night Market keystone.
+    // B3.a: the 1.4 used to be a literal here; it is CFG.loom.nightMarketGoldMul now.
+    const loomGoldMul = this.ctx.loom?.getGoldMul?.() ?? 1.0;
+    // N4.3: a Famine reaches the treasury too, not just the ground. A throughput
+    // collapse that thinned every gathered node but left tribute untouched would
+    // read as an inconsistent world. Exactly 1.0 when no omen is up, so the
+    // arithmetic below is bit-identical to before on an ordinary tick.
+    const omenMul = this.ctx.omens?.mul?.('resourceYield') ?? 1.0;
+    const gain = Math.round(pop * CFG.economy.goldPerPop * goldMul * loomGoldMul * omenMul);
     this.ctx.state.player.gold += gain;
     this.ctx.onGold?.();
     const s = this.ctx.net?.snap;
-    this.ctx.log?.push('economy', `Tribute collected: +${gain} gold (pop ${pop} · ${goldMul.toFixed(2)}×)`, this.ctx.state.clock);
+    this.ctx.log?.push('economy', `Tribute collected: +${gain} gold (pop ${pop} · ${goldMul.toFixed(2)}×`
+      + (omenMul !== 1 ? ` · ${omenMul.toFixed(2)}× omen` : '') + ')', this.ctx.state.clock);
 
     // M3.5: Action-gated network probe — gold trade routes through southern exchanges
     // (cooldown-throttled inside probeAction, so calling every tick is fine)

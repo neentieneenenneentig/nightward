@@ -12,9 +12,14 @@ import {
   type NetworkSnapshot, type NetMapping, type NetGameMapping,
   type TraceHop, type BeaconEcho, type BeaconTarget,
   ACTION_ECHO_POOLS, ACTION_COOLDOWNS, allBeacons,
-  DOH_RESOLVERS, WIRE_BUDGET,
+  DOH_RESOLVERS, WIRE_BUDGET, DNS_MIN_SAMPLES, jitteredGap, parseDohAnswer,
 } from '../data/network';
 import { biomeForConnection, biomeForProfile, BIOMES, type BiomeDef } from '../data/biomes';
+import { DeepWire } from './deepwire';
+import { Vessel } from './vessel';
+import { neutralUdp, STUN_SERVERS, walkUdpPath, type UdpReading } from './udp';
+import { maskEvidence, protocolReality, straightPath } from './truths';
+import { Sound } from '../../engine/audio';
 
 function noNet(): boolean {
   try {
@@ -78,6 +83,17 @@ class NetGate {
 }
 
 export class NetworkSystem {
+  /** N4.6: the machine this run is happening inside. Public so the Lens can
+   *  read the FULL reading — the snapshot carries only the four scalars the
+   *  mapping tables need. */
+  readonly vessel = new Vessel();
+
+  /** N4.7b — the UDP path, walked once per run. Not a system with a tick: two
+   *  STUN binding requests, one reading, and then it is a value the Lens and
+   *  two mapping rows read forever. */
+  udp: UdpReading = neutralUdp();
+  private udpWalked = false;
+
   private gate = new NetGate();
   private baseHref = (() => {
     try { return new URL(document.baseURI).href; } catch { return '/'; }
@@ -86,13 +102,24 @@ export class NetworkSystem {
     try { return location.hostname || 'origin'; } catch { return 'origin'; }
   })();
   private lastBeaconMs = 0;
-  private nextBeaconGap = WIRE_BUDGET.beaconIntervalSec * 1000;
+  private nextBeaconGap = jitteredGap(WIRE_BUDGET.beaconIntervalSec);
   private lastBaselineMs = 0;
+  // N4.3: these three were fixed periods. The baseline's 20 s divided the 340 s
+  // day/night cycle exactly 17 times, so it sampled the same seventeen phases of
+  // every day forever. See jitteredGap() in data/network.ts.
+  private nextBaselineGap = jitteredGap(WIRE_BUDGET.baselineIntervalSec);
   private lastTraceMs = 0;
+  private nextTraceGap = jitteredGap(WIRE_BUDGET.traceIntervalSec);
   private actionBias: string[] = [];
   private resolverTurn = 0;
   /** Per-resolver latency samples — the resolver race. */
   resolverStats: Map<string, { n: number; total: number; best: number }> = new Map();
+  /** N4.4: every successful DoH resolution time (A/AAAA/PTR), ring-buffered.
+   *  The median is the "Scrying" number — fast resolution sharpens the radar. */
+  private dnsSamples: number[] = [];
+  /** N4.4: hosts already probed for AAAA. One extra query per host per run,
+   *  so IPv6 detection costs ~13 queries across a full session. */
+  private aaaaChecked: Set<string> = new Set();
   /** Same-origin control probe: full timing, zero third-party exposure. */
   baseline: { ms: number; dns: number; tcp: number; tls: number; ttfb: number; proto: string } | null = null;
   /** TLS version / key exchange / HTTP protocol, from Cloudflare trace. */
@@ -101,7 +128,25 @@ export class NetworkSystem {
   httpProto = '';
   /** Local clock minus server clock (ms). */
   clockSkewMs = 0;
+  /** N4.1: the Deep Wire — kernel TCP state read off a Cloudflare edge, plus a
+   *  passive PerformanceObserver harvesting TAO-enabled waterfalls. Everything
+   *  it produces is MEASURED; everything the rest of this class produces is
+   *  inferred, and the Lens has to be able to tell them apart. */
+  deep = new DeepWire({
+    take: (h, sp) => this.gate.take(h, sp),
+    release: () => this.gate.release(),
+    penalise: (h, r) => this.gate.penalise(h, r),
+    log: (k, m) => this.netLog(k, m),
+  // N4.3: the interval was a default parameter on DeepWire's constructor and
+  // nowhere else, so it was the one probe cadence in the game that could not be
+  // seen from WIRE_BUDGET — which is the table this project reads to answer
+  // "how much traffic do we make".
+  }, WIRE_BUDGET.deepIntervalSec);
   snap: NetworkSnapshot;
+  /** N4.2: the session-long time-series store. Assigned by main() rather than
+   *  constructed here — the Lens, the export and this system all need the same
+   *  instance, and a second one would silently draw an empty history. */
+  chronicle: any = null;
   mappings: Record<string, NetMapping> = {};
   gameMappings: NetGameMapping[] = NET_GAME_MAP;
 
@@ -201,6 +246,10 @@ export class NetworkSystem {
 
   constructor() {
     this.snap = this.freshSnapshot();
+    // N4.1: the passive half costs nothing until a resource loads, so it starts
+    // immediately. The active probe is scheduled by tick() and gated like every
+    // other outbound request.
+    this.deep.start();
     this.lastConnectionType = this.snap.connectionType;
     this.lastKnownType = this.snap.connectionType;
     this.lastOnline = this.snap.online;
@@ -218,7 +267,12 @@ export class NetworkSystem {
       console.log('[NIGHTWARD] Network probing DISABLED (?nonet / __NW_NO_NET). All Wire metrics use neutral fallbacks.');
       return;
     }
-    const contacted = [...DOH_RESOLVERS.map(r => r.url), 'https://cloudflare.com/cdn-cgi/trace', this.baseHref];
+    // N4.7b: the STUN servers belong in this list. They are contacted over UDP
+    // rather than HTTPS, which makes them easier to forget and exactly as
+    // real — a disclosure that enumerates only the endpoints you happened to
+    // reach with `fetch` is a disclosure with a hole in it.
+    const contacted = [...DOH_RESOLVERS.map(r => r.url), 'https://cloudflare.com/cdn-cgi/trace',
+      ...STUN_SERVERS, this.baseHref];
     const resolved = allBeacons().map(b => b.host).sort();
     console.log(
       '[NIGHTWARD] Endpoints this game CONTACTS: ' + contacted.join(', ')
@@ -234,6 +288,8 @@ export class NetworkSystem {
 
   /** Called once per frame (render, not sim) — polls slow metrics on their interval. */
   update(nowMs: number) {
+    this.deep.tick(nowMs);
+    this.readDeepWire();
     this.pollConnection(nowMs);
     this.pollSensors(nowMs);
     this.pollBeacons(nowMs);
@@ -243,6 +299,35 @@ export class NetworkSystem {
     this.detectTransitions(nowMs);
     this.decayStability(nowMs);
     this.pollIpInfo(nowMs);
+  }
+
+  /** N4.1: fold the Deep Wire's measured values into the snapshot.
+   *
+   *  Deliberately does NOT overwrite `rtt`/`downlink`/`jitter`. Those rows keep
+   *  their documented estimated meaning so the Lens can show the measured and
+   *  inferred numbers SIDE BY SIDE — a player on a filtered network still gets
+   *  a working game off the estimates, and a player on a clean path gets to see
+   *  exactly how wrong the estimates were. Silently swapping one for the other
+   *  would destroy the only evidence that the deep wire is working. */
+  private readDeepWire() {
+    const d = this.deep;
+    const live = d.isLive;
+    this.snap.deepLive = live;
+    if (!live) return;
+    this.snap.fray = d.fray;
+    this.snap.silt = d.silt;
+    this.snap.aperture = d.aperture;
+    this.snap.flowMbps = d.flowMbps;
+    this.snap.pulseMs = d.pulseMs;
+    this.snap.fluxMs = d.fluxMs;
+    // Identity as a side effect of measurement — this is what let N4.0 retire
+    // api.ipify.org and ipapi.co without losing anything.
+    const m = d.meta;
+    if (m.ip && this.snap.publicIp === '...') this.snap.publicIp = m.ip;
+    if (m.colo && this.snap.colo === '...') this.snap.colo = m.colo;
+    if (m.country && this.snap.country === '..') this.snap.country = m.country;
+    if (m.city && this.snap.city === '...') this.snap.city = m.city;
+    if (m.asn && this.snap.asn === '...') this.snap.asn = m.asn;
   }
 
   /** Get a mapped game value by key. Systems read this, not the raw snapshot. */
@@ -364,6 +449,35 @@ export class NetworkSystem {
     return this.riftStability / 100;
   }
 
+  /** N4.3: a rift raised by the WIRE rather than by a connection-type change.
+   *
+   *  The rift system has had exactly one trigger since N2 — a `connection.type`
+   *  transition — and desktop browsers do not report `connection.type` at all.
+   *  So on desktop, which is where this game is played, the rift machinery has
+   *  been effectively dead code: built, tested, visually complete, and unable to
+   *  fire. A hard latency step is the trigger it always needed.
+   *
+   *  Returns false when it was refused, which the caller must respect: the 30 s
+   *  cooldown is the same one the transition path honours, and re-selecting the
+   *  biome can legitimately return the realm we are already in — the beacon
+   *  profile that picks the realm is action-gated and may not have moved yet.
+   *  In that case the realm HOLDS and no rift is claimed. Reporting a
+   *  `Vale → Vale` rift would be a lie in the one panel that must not lie. */
+  riftFromWire(reason: string): boolean {
+    if (!this.snap.online) return false;
+    const now = performance.now();
+    if (now - this.lastRiftTime < 30000) return false;
+    const from = this.currentBiome;
+    const to = this.selectBiome();
+    if (to.id === from.id) return false;
+    this.currentBiome = to;
+    this.riftStability = 100;
+    this.lastRiftTime = now;
+    this.netLog('resonance-link', `Rift from the wire: ${reason}`);
+    if (this.riftCallback) this.riftCallback(from, to);
+    return true;
+  }
+
   /** Manually trigger a rift to a specific connection type (for testing). */
   triggerRift(type: string) {
     const from = this.currentBiome;
@@ -410,6 +524,20 @@ export class NetworkSystem {
       colo: '...',
       asn: '...',
       warp: false,
+      // N4.1: 0 is "unmeasured", never a real reading of zero. Every consumer
+      // below checks deepLive before preferring these over the estimates.
+      fray: 0,
+      silt: 0,
+      aperture: 10,
+      flowMbps: 0,
+      pulseMs: 0,
+      fluxMs: 0,
+      deepLive: false,
+      // N4.4: Scrying. ipv6Live is "not yet seen" until a host returns an AAAA
+      // address; dnsMedianMs sits at the neutral 50 ms the mapping table is
+      // authored against, so an unmeasured run reads exactly 1.0× sight.
+      ipv6Live: false,
+      dnsMedianMs: 50,
       traceChain: [],
       endpointProbes: [],
       // X1: new Lens fields (battery/heap refreshed by pollSensors)
@@ -419,6 +547,20 @@ export class NetworkSystem {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       jsHeapUsedMB: (performance as any).memory?.usedJSHeapSize ? (performance as any).memory.usedJSHeapSize / 1e6 : 50,
       jsHeapTotalMB: (performance as any).memory?.totalJSHeapSize ? (performance as any).memory.totalJSHeapSize / 1e6 : 100,
+      // N4.6: the Deep Vessel's scalars, all at their neutral values. A browser
+      // that answers none of them plays exactly the game a browser that answers
+      // all of them plays, which is pillar 5 and is the common case here rather
+      // than the edge case — nearly every API behind these is Chromium-only.
+      cpuPressure: 0,
+      cpuPressureState: 'unknown',
+      jankMs: 0,
+      jankLive: false,
+      storageFreeFrac: 1,
+      audioSampleRate: 0,
+      // N4.7: 0 is "no reading", not "infinitely efficient". Every consumer
+      // checks for it before dividing or transforming.
+      pathEfficiency: 0,
+      natClass: 'unknown', udpV6: false, stunMs: 0, udpIpMismatch: false,
     };
   }
 
@@ -453,7 +595,73 @@ export class NetworkSystem {
       this.snap.jsHeapUsedMB = mem.usedJSHeapSize / 1e6;
       this.snap.jsHeapTotalMB = (mem.totalJSHeapSize ?? mem.usedJSHeapSize) / 1e6;
     }
+    this.pollVessel();
   }
+
+  /** N4.6 — the Deep Vessel.
+   *
+   *  Rides the existing sensor poll rather than owning a timer. The observers
+   *  inside Vessel are callback-driven (the OS pushes CPU pressure; the browser
+   *  pushes long frames), so all this does is roll the jank window forward and
+   *  copy four scalars onto the snapshot for SENSORS and NET_GAME_MAP to read.
+   *
+   *  `start()` is idempotent and re-reads the SYNCHRONOUS half each time, which
+   *  is the point: the display and preference reads are the ones that actually
+   *  change mid-session — a window dragged to a second monitor, a theme
+   *  switched, reduced-motion toggled by someone who just got a headache. */
+  private pollVessel() {
+    try {
+      this.vessel.start(this.audioCtx ?? Sound.context);
+      this.vessel.tick();
+      const r = this.vessel.reading;
+      this.snap.cpuPressure = r.pressureFrac;
+      this.snap.cpuPressureState = r.pressure;
+      this.snap.jankMs = r.jankMs;
+      this.snap.jankLive = r.jankLive;
+      this.snap.storageFreeFrac = r.storageFreeFrac;
+      this.snap.audioSampleRate = r.sampleRate;
+      // N4.7: the straight path rides this poll too. It is pure arithmetic over
+      // readings already taken — no request, no observer — so recomputing it
+      // every ten seconds costs a haversine and picks up a colo that only
+      // named itself after the first trace landed.
+      this.snap.pathEfficiency = this.straightPath().efficiency;
+    } catch { /* a vessel that will not answer is a vessel at neutral */ }
+    this.walkUdpOnce();
+  }
+
+  /** N4.7b — walk the UDP path, exactly once.
+   *
+   *  Hung off the sensor poll rather than off boot, for two reasons. It costs
+   *  two STUN binding requests and boot is already the busiest moment in the
+   *  run; and `publicIp` is gated behind the first explore action (F8), so a
+   *  walk at boot would have nothing to compare its reflexive address against
+   *  and the mismatch signal would be permanently false.
+   *
+   *  `udpWalked` is set BEFORE the await, not after. Set after, a poll landing
+   *  inside the five-second gather window would start a second one — and two
+   *  concurrent RTCPeerConnections gathering against the same servers is both
+   *  double the traffic and a race over which reading wins. */
+  private walkUdpOnce() {
+    if (this.udpWalked || this.gate.off) return;
+    this.udpWalked = true;
+    walkUdpPath().then((r) => {
+      this.udp = r;
+      this.snap.natClass = r.natClass;
+      this.snap.udpV6 = r.hasV6;
+      this.snap.stunMs = Math.round(r.stunMs);
+      // Both sides must have answered for a disagreement to mean anything.
+      // Missing data is not evidence, and this field feeds an accusation.
+      const http = String(this.snap.publicIp ?? '');
+      this.snap.udpIpMismatch = !!(r.srflxIp && http && !http.includes(':') && r.srflxIp !== http);
+    }).catch(() => { /* walkUdpPath never rejects; this is belt and braces */ });
+  }
+
+  /** The engine's AudioContext, handed in by main() so the vessel can read the
+   *  hardware pipeline without constructing a SECOND one. Optional: a run with
+   *  audio disabled reports sampleRate 0, which the Lens prints as
+   *  'unavailable' rather than inventing 48 kHz. */
+  setAudioContext(ctx: any) { this.audioCtx = ctx; }
+  private audioCtx: any = null;
 
   private pollConnection(nowMs: number) {
     if (nowMs - this.lastPollMs < 1000) return;
@@ -499,8 +707,7 @@ export class NetworkSystem {
     if (this.gate.off || !this.snap.online) return;
     if (nowMs - this.lastBeaconMs < this.nextBeaconGap) return;
     this.lastBeaconMs = nowMs;
-    const j = WIRE_BUDGET.beaconJitter;
-    this.nextBeaconGap = WIRE_BUDGET.beaconIntervalSec * 1000 * (1 - j + Math.random() * 2 * j);
+    this.nextBeaconGap = jitteredGap(WIRE_BUDGET.beaconIntervalSec);
     const target = this.pickBeacon();
     if (target) this.resolveBeacon(target);
   }
@@ -538,6 +745,11 @@ export class NetworkSystem {
       detail: r.ip, ip: r.ip, ttl: r.ttl, resolver: r.resolver, ad: r.ad,
     });
     this.discoveredEndpoints.add(t.label);
+    // N4.4: first sighting of a host gets one AAAA query — the IPv6 detection
+    // costs ~13 extra DoH queries across a full session, and answers the
+    // question "does this network's resolver carry v6" without ever fetching
+    // the host itself.
+    if (!this.aaaaChecked.has(t.host)) void this.probeAAAA(t.host);
 
     const samples = this.echoSamples.get(t.host) ?? [];
     const jitterAtBirth = samples.length >= 2
@@ -555,11 +767,15 @@ export class NetworkSystem {
       `${t.label} → ${r.ip} in ${r.ms.toFixed(0)}ms via ${r.resolver} (ttl ${r.ttl}${r.ad ? ' · dnssec' : ''})${wasWarm ? '' : ' — route discovered'}`);
   }
 
-  /** One DoH query. Alternates resolvers so both get raced over a session. */
-  private async resolveHost(host: string, type = 'A'): Promise<{ ms: number; ip: string; ttl: number; ad: boolean; resolver: string } | null> {
+  /** One DoH query. Alternates resolvers so both get raced over a session.
+   *
+   *  `gateKey` lets the paired AAAA probe of the same host take its own spacing
+   *  slot: the host-spacing gate is about not hammering one route, and an
+   *  A+AAAA pair is one logical resolution, not two violations. */
+  private async resolveHost(host: string, type = 'A', gateKey?: string): Promise<{ ms: number; ip: string; ttl: number; ad: boolean; resolver: string; v6: boolean } | null> {
     const res = DOH_RESOLVERS[this.resolverTurn++ % DOH_RESOLVERS.length];
     const rHost = new URL(res.url).hostname;
-    if (!this.gate.take(host, WIRE_BUDGET.hostSpacingSec)) return null;
+    if (!this.gate.take(gateKey ?? host, WIRE_BUDGET.hostSpacingSec)) return null;
     const ctl = new AbortController();
     const tm = setTimeout(() => ctl.abort(), 5000);
     const t0 = performance.now();
@@ -568,25 +784,59 @@ export class NetworkSystem {
         signal: ctl.signal,
         headers: res.accept ? { Accept: res.accept } : undefined,
       });
-      if (!resp.ok) { this.gate.penalise(rHost, resp); return { ms: -1, ip: '', ttl: 0, ad: false, resolver: res.label }; }
+      if (!resp.ok) { this.gate.penalise(rHost, resp); return { ms: -1, ip: '', ttl: 0, ad: false, resolver: res.label, v6: false }; }
       const data = await resp.json();
       const ms = performance.now() - t0;
-      const ans = (data?.Answer ?? []).filter((a: any) => a.type === 1 || a.type === 28 || a.type === 12);
+      this.recordDnsSample(ms);
+      const a = parseDohAnswer(data);
       const st = this.resolverStats.get(res.label) ?? { n: 0, total: 0, best: Infinity };
       st.n++; st.total += ms; st.best = Math.min(st.best, ms);
       this.resolverStats.set(res.label, st);
-      return {
-        ms, resolver: res.label,
-        ip: ans[0]?.data ?? '',
-        ttl: ans[0]?.TTL ?? 0,
-        ad: !!data?.AD,
-      };
+      return { ms, resolver: res.label, ip: a.ip, ttl: a.ttl, ad: a.ad, v6: a.v6 };
     } catch {
       this.gate.penalise(rHost, null);
-      return { ms: -1, ip: '', ttl: 0, ad: false, resolver: res.label };
+      return { ms: -1, ip: '', ttl: 0, ad: false, resolver: res.label, v6: false };
     } finally {
       clearTimeout(tm);
       this.gate.release();
+    }
+  }
+
+  /** N4.4: fold a successful resolution time into the running DNS median.
+   *  The median — not the mean — is the Scrying number, because one slow
+   *  resolver walking the answer set should not permanently dim the radar. */
+  private recordDnsSample(ms: number) {
+    if (!(ms > 0)) return;
+    this.dnsSamples.push(ms);
+    if (this.dnsSamples.length > 40) this.dnsSamples.shift();
+    // A single cold-cache resolution measures one cache miss, not this
+    // network. Publishing it would snap the radar to a clamp on the first
+    // probe and drift it back over the next minute, which a player reads as a
+    // bug rather than as weather. Below the floor the neutral value stands —
+    // the same rule pillar 5 applies to a probe that never answers at all.
+    if (this.dnsSamples.length < DNS_MIN_SAMPLES) return;
+    const sorted = [...this.dnsSamples].sort((a, b) => a - b);
+    const mid = sorted.length >> 1;
+    this.snap.dnsMedianMs = sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+
+  /** N4.4: probe a host for an AAAA record, once per host per run. A single
+   *  IPv6 answer is enough to mark the session's resolver as carrying v6. */
+  private async probeAAAA(host: string) {
+    // Marked before the first await, so two beacons landing in one tick cannot
+    // both fire the query.
+    this.aaaaChecked.add(host);
+    const r = await this.resolveHost(host, 'AAAA', 'aaaa:' + host);
+    // `null` means the rate gate refused — no request left the machine, so we
+    // have not asked yet and must not pretend we have. Unmark, and the next
+    // sighting of this host tries again. A resolver that answered and said
+    // nothing useful (`ms === -1`) HAS been asked, and stays marked: the honest
+    // line is between "never asked" and "asked and got nothing", not between
+    // success and failure.
+    if (!r) { this.aaaaChecked.delete(host); return; }
+    if (r.v6) {
+      this.snap.ipv6Live = true;
+      this.netLog('net-ep', `IPv6: ${host} resolves to ${r.ip}`);
     }
   }
 
@@ -594,8 +844,9 @@ export class NetworkSystem {
    *  the only host we have unambiguous right to talk to. */
   private async pollBaseline(nowMs: number) {
     if (this.gate.off || !this.snap.online) return;
-    if (nowMs - this.lastBaselineMs < WIRE_BUDGET.baselineIntervalSec * 1000) return;
+    if (nowMs - this.lastBaselineMs < this.nextBaselineGap) return;
     this.lastBaselineMs = nowMs;
+    this.nextBaselineGap = jitteredGap(WIRE_BUDGET.baselineIntervalSec);
     const url = `${this.baseHref}${this.baseHref.includes('?') ? '&' : '?'}_nw=baseline&t=${Date.now()}`;
     if (!this.gate.take(this.selfHost, 5)) return;
     const ctl = new AbortController();
@@ -799,8 +1050,9 @@ export class NetworkSystem {
   private pollIpInfo(nowMs: number) {
     // F8 design law: stays dark until the player's first explore action.
     if (!this.identityFetched || this.gate.off) return;
-    if (nowMs - this.lastTraceMs > WIRE_BUDGET.traceIntervalSec * 1000) {
+    if (nowMs - this.lastTraceMs > this.nextTraceGap) {
       this.lastTraceMs = nowMs;
+      this.nextTraceGap = jitteredGap(WIRE_BUDGET.traceIntervalSec);
       this.fetchCloudflareTrace();
     }
   }
@@ -951,12 +1203,6 @@ export class NetworkSystem {
     return { mul: roll, center, half, bestEchoMs };
   }
 
-  /** @deprecated — use rollDamageMul(rng) instead. Kept for compat. */
-  getDamageMul(): number {
-    // Fallback: use Math.random() if no rng provided (non-deterministic, test-only path)
-    return this.rollDamageMul(() => Math.random()).mul;
-  }
-
   /** Get the best (lowest positive) echo RTT from the last 10s of probes. */
   private bestRecentEcho(): number {
     let best = Infinity;
@@ -979,9 +1225,6 @@ export class NetworkSystem {
     if (r) this.lastResonanceLabel = r.label;
     return r;
   }
-
-  /** @deprecated — use getDamageMul() instead. Kept for compat. */
-  getAttackSpeedMul(): number { return 1.0; }
 
   /**
    * Sample passive browser APIs for a non-attack action. ZERO fetch() calls —
@@ -1152,6 +1395,47 @@ export class NetworkSystem {
     }
   }
 
+  // ---- N4.7: derived truths ------------------------------------------------
+  //
+  // Three inferences over readings earlier milestones already paid for. No new
+  // requests, no new observers, no new state — each is a pure function of the
+  // snapshot plus the vessel, computed on demand. They are METHODS rather than
+  // snapshot fields for exactly that reason: a field would have to be kept
+  // fresh by something, and there is nothing to keep fresh.
+
+  /** N4.7 — speed-of-light efficiency, and the physical horizon beside it. */
+  straightPath() {
+    return straightPath(this.snap, this.vessel.reading.timeZone);
+  }
+
+  /** N4.7 — VPN/proxy evidence, hedged. Four independent signals, a confidence
+   *  band, never a verdict about the person. */
+  maskEvidence() {
+    // `snap.isp` is the reverse-DNS PTR of the public IP, which N4.0 resolves
+    // and stores under that name because ISP-ish naming is what it is FOR.
+    return maskEvidence(this.snap, this.vessel.reading.timeZone,
+      this.vessel.reading.languages, this.snap.isp === '...' ? '' : this.snap.isp,
+      // The fifth signal is the straight path's own contradiction check: a
+      // reach past the physical horizon proves the timezone is not where the
+      // machine is. Passed in rather than recomputed so the panel and the
+      // evidence can never disagree about the same arithmetic.
+      this.straightPath());
+  }
+
+  /** N4.7 — which wire protocol each host actually negotiated. Free: the
+   *  browser has been filling these entries in since the page loaded and
+   *  nothing has ever read `nextHopProtocol`. */
+  protocolReality() {
+    let entries: any[] = [];
+    try {
+      entries = [
+        ...performance.getEntriesByType('navigation'),
+        ...performance.getEntriesByType('resource'),
+      ] as any[];
+    } catch { /* a browser without the buffer reports nothing, honestly */ }
+    return protocolReality(entries);
+  }
+
   /** Snapshot of outbound request accounting — the Lens shows this verbatim. */
   wireStats() {
     return {
@@ -1162,6 +1446,22 @@ export class NetworkSystem {
         label, n: s.n, avg: s.total / Math.max(1, s.n), best: s.best === Infinity ? 0 : s.best,
       })),
     };
+  }
+
+  /** N4.5: which DoH resolver has answered fastest this run, and how fast.
+   *
+   *  The Sounding's resolver race reads this rather than racing a fresh query:
+   *  the statistics already exist, and a sounding spends enough of the player's
+   *  budget without doubling as a DNS benchmark. Best-per-resolver is the
+   *  number, averaged when a resolver has no single best yet. */
+  fastestResolver(): { label: string; ms: number } | null {
+    let best: { label: string; ms: number } | null = null;
+    for (const [label, s] of this.resolverStats) {
+      const ms = s.best !== Infinity ? s.best : (s.n > 0 ? s.total / s.n : 0);
+      if (!(ms > 0)) continue;
+      if (!best || ms < best.ms) best = { label, ms: Math.round(ms * 10) / 10 };
+    }
+    return best;
   }
 
   /**

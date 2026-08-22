@@ -12,6 +12,9 @@
 // every run to roughly the same window regardless, so what's left to
 // optimize is what you accomplish inside it — which is the point.
 import { CFG } from '../data/config';
+import { allRolled } from '../data/items';
+import { bestRoll } from './loot';
+import { legacyWeight } from '../data/covenants';
 
 export interface RunScorecard {
   v: 2;
@@ -25,6 +28,18 @@ export interface RunScorecard {
   buildingsBuilt: number;
   enemiesKilled: number;
   bossesSlain: number;
+  /** A2: elites and champions felled. Optional, so every v2 card written before
+   *  A2 stays valid and needs no migration — the same carve-out `trophy` took.
+   *  Separate from `enemiesKilled` rather than folded into it because "I killed
+   *  400 things" and "I killed 400 things, nine of which fought back properly"
+   *  are different runs, and the scorecard is the only place that difference is
+   *  ever recorded. */
+  elitesFelled?: number;
+  championsFelled?: number;
+  /** N4.5/A7: the pact the run ended under. Optional, so every v2 card written
+   *  before the covenants exist stays valid — the same carve-out elitesFelled
+   *  took. */
+  pact?: string;
   goldHoarded: number;
   finalRealm: string;        // realm at time of death
   loomPointsEarned: number;
@@ -32,6 +47,19 @@ export interface RunScorecard {
   causeOfDeath: 'old_age' | 'hall_fallen' | 'unknown'; // L1
   legit: boolean;                                      // L1: false if god mode was ever used this run
   legacyScore: number;                                 // L1: the ranking number — see computeLegacyScore
+  /** A1 §4.2(b): the best thing this run found.
+   *
+   *  Pillar 3 forbids persistence except a finished run's scorecard, and this
+   *  is exactly that carve-out: a name and a tier, never live state, nothing
+   *  carrying into the next run. It exists because a rarity ladder compressed
+   *  into fifteen minutes needs somewhere for the memory to land — the Sovereign
+   *  you found on night four should still be a thing that happened after the
+   *  run that found it is over.
+   *
+   *  Read from the roll REGISTRY rather than the bag: an item you found, wore,
+   *  and lost to a death scatter still happened to you. Optional, so v2 records
+   *  written before A1 stay valid and need no migration. */
+  trophy?: { name: string; rarity: string; affixes: number } | null;
 }
 
 /** Bag of stats computeLegacyScore needs — shared by snapshot(), getLiveStats(), and v1 migration. */
@@ -74,6 +102,8 @@ export class ScoreboardSystem {
   lowestDownlink = Infinity;
   enemiesKilled = 0;
   bossesSlain = 0;
+  elitesFelled = 0;
+  championsFelled = 0;
   buildingsBuilt = 0;
   private realLastMs = 0;
 
@@ -98,10 +128,12 @@ export class ScoreboardSystem {
     if (dl < this.lowestDownlink) this.lowestDownlink = dl;
   }
 
-  /** Call on enemy kill. */
-  onKill(isBoss: boolean) {
+  /** Call on enemy kill. `elite` is the A2 rank, absent on an ordinary foe. */
+  onKill(isBoss: boolean, elite?: 'elite' | 'champion' | null) {
     this.enemiesKilled++;
     if (isBoss) this.bossesSlain++;
+    if (elite === 'champion') this.championsFelled++;
+    else if (elite === 'elite') this.elitesFelled++;
   }
 
   /** Call on building placed. */
@@ -131,7 +163,7 @@ export class ScoreboardSystem {
     const age = Math.floor(state.player?.age ?? CFG.lifespan.startAge);
     const causeOfDeath: RunScorecard['causeOfDeath'] = state.gameOverCause ?? 'unknown';
     const legit = !state.everGod;
-    const legacyScore = computeLegacyScore({
+    const legacyScore = Math.round(computeLegacyScore({
       nightsSurvived: state.nightsSurvived ?? 0,
       enemiesKilled: this.enemiesKilled,
       bossesSlain: this.bossesSlain,
@@ -140,7 +172,7 @@ export class ScoreboardSystem {
       goldHoarded: state.player?.gold ?? 0,
       age,
       causeOfDeath,
-    });
+    }) * legacyWeight(state.nightsAtCovenant ?? {}, state.covenant ?? 'quiet'));
     return {
       v: 2,
       date: new Date().toISOString(),
@@ -153,6 +185,8 @@ export class ScoreboardSystem {
       buildingsBuilt: this.buildingsBuilt,
       enemiesKilled: this.enemiesKilled,
       bossesSlain: this.bossesSlain,
+      elitesFelled: this.elitesFelled,
+      championsFelled: this.championsFelled,
       goldHoarded: state.player?.gold ?? 0,
       finalRealm: this.ctx.net?.currentBiome?.name ?? 'Unknown',
       loomPointsEarned,
@@ -160,6 +194,11 @@ export class ScoreboardSystem {
       causeOfDeath,
       legit,
       legacyScore,
+      pact: state.covenant ?? 'quiet',
+      trophy: (() => {
+        const best = bestRoll(allRolled());
+        return best ? { name: best.name, rarity: best.rarity, affixes: best.affixes.length } : null;
+      })(),
     };
   }
 
@@ -188,7 +227,7 @@ export class ScoreboardSystem {
     const loomPointsEarned = this.loomPointsEarned();
     const age = Math.floor(state.player?.age ?? CFG.lifespan.startAge);
     // The run isn't over — no old-age bonus counted until it actually ends.
-    const legacyScore = computeLegacyScore({
+    const legacyScore = Math.round(computeLegacyScore({
       nightsSurvived: state.nightsSurvived ?? 0,
       enemiesKilled: this.enemiesKilled,
       bossesSlain: this.bossesSlain,
@@ -197,7 +236,7 @@ export class ScoreboardSystem {
       goldHoarded: state.player?.gold ?? 0,
       age,
       causeOfDeath: 'unknown',
-    });
+    }) * legacyWeight(state.nightsAtCovenant ?? {}, state.covenant ?? 'quiet'));
     return {
       connectionAge: Math.round(this.connectionUptime),
       dominantRealm: this.dominantRealm(),

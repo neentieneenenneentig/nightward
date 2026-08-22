@@ -1,7 +1,23 @@
-// C3: The Loom — a per-run passive tree. Points come from nights survived.
-// 3 branches (War / Field / Ward) × ~12 nodes each + 4 keystones.
-// Nodes are data rows; effects are consumed by existing systems via the
-// LoomSystem's modifier map — same pattern as NET_GAME_MAP.
+// C3: The Loom — a per-run passive tree. Points come from nights survived and
+// lords slain. Nodes are data rows; effects are consumed by existing systems via
+// the LoomSystem's modifier map — same pattern as NET_GAME_MAP.
+//
+// B3.b resized this from 40 nodes / 132 ranks to 15 / 47, and moved every keystone
+// to depth 4. The old shape was built for an unbounded run. A run is now 15 minutes
+// — 2.65 day/night cycles — and affords roughly six points, against keystones that
+// sat at depths 5, 8, 9 and 9. Only The Long Thread was reachable, and it repaid
+// its own cost threefold, so the opening was forced and B3's stated goal ("one
+// keystone is a real choice") failed by construction.
+//
+// At depth 4 all four are affordable and none is free: a good run takes one and
+// spends the rest on ranks, a great run can gamble on two. That is the choice the
+// tree is supposed to be asking.
+//
+// Every one of LoomModifiers' 14 stat keys is granted by at least one node here,
+// and every one is consumed by a system (B3.a — before that, six were consumed by
+// nothing and nine of the twelve old Ward nodes did literally nothing). The
+// regression suite pins both halves; see testLoomTreeShape and
+// testLoomPayoffLayerIsReal.
 
 export type LoomBranch = 'war' | 'field' | 'ward';
 
@@ -45,7 +61,7 @@ export interface LoomModifiers {
   glassEcho: boolean;         // damage rolls only use TOP half of D5 band; max HP halved
   deepRoots: boolean;         // buildings +50% HP, towers +1 range; move speed −12%
   nightMarket: boolean;       // gold rate +40%; gold rouses bosses at half threshold
-  longThread: boolean;        // skills cap at 80; +1 loom point per 4 total levels instead of 5
+  longThread: boolean;        // +1 loom point per 10 total skill levels
 }
 
 export const DEFAULT_MODIFIERS: LoomModifiers = {
@@ -72,108 +88,62 @@ export const DEFAULT_MODIFIERS: LoomModifiers = {
 // ---- Node definitions -------------------------------------------------------
 
 export const LOOM_NODES: LoomNode[] = [
-  // ===== WAR branch — melee combat =====
+  // ===== WAR — melee =====
   { id: 'w1', name: 'Sharpened Edge', branch: 'war', col: 0, row: 0, maxRank: 5,
     effects: { meleeDmgPct: 4 } },
-  { id: 'w2', name: 'Quick Hands', branch: 'war', col: 0, row: 1, maxRank: 5,
-    effects: { swingSpeedPct: 3 }, req: ['w1'] },
-  { id: 'w3', name: 'Wide Arc', branch: 'war', col: 1, row: 0, maxRank: 3,
-    effects: { arcWidthPct: 6 }, req: ['w1'] },
-  { id: 'w4', name: 'Brutal Strike', branch: 'war', col: 1, row: 1, maxRank: 3,
-    effects: { meleeDmgPct: 5, dmgRollFloor: 0.02 }, req: ['w2'] },
-  { id: 'w5', name: 'Flurry', branch: 'war', col: 0, row: 2, maxRank: 5,
-    effects: { swingSpeedPct: 2, meleeDmgPct: 1 }, req: ['w2'] },
-  { id: 'w6', name: 'Heavy Blade', branch: 'war', col: 1, row: 2, maxRank: 3,
-    effects: { meleeDmgPct: 8 }, req: ['w4'] },
-  { id: 'w7', name: 'Momentum', branch: 'war', col: 2, row: 0, maxRank: 3,
-    effects: { swingSpeedPct: 4, moveSpeedPct: 1 }, req: ['w3'] },
-  { id: 'w8', name: 'Deep Wound', branch: 'war', col: 2, row: 1, maxRank: 3,
-    effects: { meleeDmgPct: 3, dmgRollFloor: 0.03 }, req: ['w4'] },
-  { id: 'w9', name: 'War Dance', branch: 'war', col: 0, row: 3, maxRank: 3,
-    effects: { moveSpeedPct: 2, swingSpeedPct: 2 }, req: ['w5'] },
-  { id: 'w10', name: 'Executioner', branch: 'war', col: 1, row: 3, maxRank: 3,
-    effects: { meleeDmgPct: 6, dmgRollFloor: 0.02 }, req: ['w6'] },
-  { id: 'w11', name: 'Whirlwind', branch: 'war', col: 2, row: 2, maxRank: 3,
-    effects: { arcWidthPct: 8, swingSpeedPct: 2 }, req: ['w7', 'w8'] },
-  { id: 'w12', name: "Berserker's Heart", branch: 'war', col: 1, row: 4, maxRank: 1,
-    effects: { meleeDmgPct: 12, dmgRollFloor: 0.05 }, req: ['w10'] },
+  { id: 'w2', name: 'Whirling Guard', branch: 'war', col: 0, row: 1, maxRank: 4,
+    effects: { swingSpeedPct: 3, arcWidthPct: 4 }, req: ['w1'] },
+  { id: 'w3', name: 'Executioner', branch: 'war', col: 0, row: 2, maxRank: 3,
+    effects: { meleeDmgPct: 4, dmgRollFloor: 0.02 }, req: ['w2'] },
 
-  // ===== FIELD branch — gathering, crafting, movement =====
+  // ===== FIELD — gathering, crafting, movement =====
+  // Forks after the root: one arm ends in Night Market, the other in The Long
+  // Thread. Field carries two keystones because the branch has two distinct
+  // fantasies (the harvester and the traveller) and because splitting them keeps
+  // every keystone at the same depth.
   { id: 'f1', name: 'Harvester', branch: 'field', col: 0, row: 0, maxRank: 5,
     effects: { gatherSpeedPct: 5 } },
-  { id: 'f2', name: 'Lucky Find', branch: 'field', col: 0, row: 1, maxRank: 5,
-    effects: { doubleYieldChance: 3 }, req: ['f1'] },
-  { id: 'f3', name: 'Swift Feet', branch: 'field', col: 1, row: 0, maxRank: 5,
+  { id: 'f2', name: 'Lucky Find', branch: 'field', col: 0, row: 1, maxRank: 4,
+    effects: { doubleYieldChance: 3, gatherSpeedPct: 2 }, req: ['f1'] },
+  { id: 'f3', name: 'Master Crafter', branch: 'field', col: 0, row: 2, maxRank: 3,
+    effects: { craftCostReduction: 5 }, req: ['f2'] },
+  { id: 'f4', name: 'Swift Feet', branch: 'field', col: 1, row: 1, maxRank: 4,
     effects: { moveSpeedPct: 3 }, req: ['f1'] },
-  { id: 'f4', name: 'Efficiency', branch: 'field', col: 1, row: 1, maxRank: 5,
-    effects: { craftCostReduction: 4 }, req: ['f2'] },
-  { id: 'f5', name: 'Forager', branch: 'field', col: 0, row: 2, maxRank: 5,
-    effects: { gatherSpeedPct: 3, doubleYieldChance: 1 }, req: ['f2'] },
-  { id: 'f6', name: 'Pathfinder', branch: 'field', col: 1, row: 2, maxRank: 3,
-    effects: { moveSpeedPct: 4 }, req: ['f3'] },
-  { id: 'f7', name: 'Master Crafter', branch: 'field', col: 2, row: 0, maxRank: 3,
-    effects: { craftCostReduction: 5, doubleYieldChance: 1 }, req: ['f4'] },
-  { id: 'f8', name: 'Bounty Hunter', branch: 'field', col: 2, row: 1, maxRank: 3,
-    effects: { gatherSpeedPct: 4, moveSpeedPct: 1 }, req: ['f5'] },
-  { id: 'f9', name: 'Wind Walker', branch: 'field', col: 0, row: 3, maxRank: 3,
-    effects: { moveSpeedPct: 3, swingSpeedPct: 1 }, req: ['f6'] },
-  { id: 'f10', name: 'Scavenger', branch: 'field', col: 1, row: 3, maxRank: 3,
-    effects: { doubleYieldChance: 4, gatherSpeedPct: 2 }, req: ['f7'] },
-  { id: 'f11', name: 'Nomad', branch: 'field', col: 2, row: 2, maxRank: 3,
-    effects: { moveSpeedPct: 5, gatherSpeedPct: 2 }, req: ['f8', 'f9'] },
-  { id: 'f12', name: "Provisioner's Gift", branch: 'field', col: 1, row: 4, maxRank: 1,
-    effects: { doubleYieldChance: 8, craftCostReduction: 6 }, req: ['f10'] },
+  { id: 'f5', name: 'Wind Walker', branch: 'field', col: 1, row: 2, maxRank: 3,
+    effects: { moveSpeedPct: 3, swingSpeedPct: 1 }, req: ['f4'] },
 
-  // ===== WARD branch — defense, buildings, economy =====
+  // ===== WARD — defence, buildings, economy =====
   { id: 'd1', name: 'Fortify', branch: 'ward', col: 0, row: 0, maxRank: 5,
-    effects: { buildingHpPct: 5 } },
-  { id: 'd2', name: 'Iron Resolve', branch: 'ward', col: 0, row: 1, maxRank: 5,
-    effects: { armorPct: 4 }, req: ['d1'] },
-  { id: 'd3', name: 'Tribute', branch: 'ward', col: 1, row: 0, maxRank: 5,
-    effects: { territoryIncomePct: 5 }, req: ['d1'] },
-  { id: 'd4', name: 'Hearty', branch: 'ward', col: 1, row: 1, maxRank: 5,
-    effects: { regenPct: 5 }, req: ['d2'] },
-  { id: 'd5', name: 'Siege Engineer', branch: 'ward', col: 0, row: 2, maxRank: 5,
-    effects: { towerDmgPct: 5 }, req: ['d2'] },
-  { id: 'd6', name: 'Stone Mason', branch: 'ward', col: 1, row: 2, maxRank: 3,
-    effects: { buildingHpPct: 4, towerDmgPct: 2 }, req: ['d3'] },
-  { id: 'd7', name: 'Longshot', branch: 'ward', col: 2, row: 0, maxRank: 3,
-    effects: { towerRange: 0.5 }, req: ['d5'] },
-  { id: 'd8', name: 'Tax Collector', branch: 'ward', col: 2, row: 1, maxRank: 3,
-    effects: { territoryIncomePct: 4, regenPct: 1 }, req: ['d6'] },
-  { id: 'd9', name: 'Bulwark', branch: 'ward', col: 0, row: 3, maxRank: 3,
-    effects: { armorPct: 3, buildingHpPct: 3 }, req: ['d5'] },
-  { id: 'd10', name: 'Keep Lord', branch: 'ward', col: 1, row: 3, maxRank: 3,
-    effects: { towerDmgPct: 4, towerRange: 0.3 }, req: ['d7'] },
-  { id: 'd11', name: 'Golden Age', branch: 'ward', col: 2, row: 2, maxRank: 3,
-    effects: { territoryIncomePct: 6, regenPct: 2 }, req: ['d8', 'd9'] },
-  { id: 'd12', name: "Warden's Oath", branch: 'ward', col: 1, row: 4, maxRank: 1,
-    effects: { buildingHpPct: 10, towerDmgPct: 5 }, req: ['d10'] },
+    effects: { buildingHpPct: 5, armorPct: 2 } },
+  { id: 'd2', name: 'Siege Engineer', branch: 'ward', col: 0, row: 1, maxRank: 4,
+    effects: { towerDmgPct: 5, towerRange: 0.25 }, req: ['d1'] },
+  { id: 'd3', name: 'Golden Age', branch: 'ward', col: 0, row: 2, maxRank: 3,
+    effects: { territoryIncomePct: 6, regenPct: 3 }, req: ['d2'] },
 
-  // ===== Keystones (rule-warping, one-shot) =====
+  // ===== Keystones — one rank, rule-warping, all at depth 4 =====
   {
-    id: 'keystone_glass', name: 'Glass Echo', branch: 'war', col: 2, row: 3, maxRank: 1,
+    id: 'keystone_glass', name: 'Glass Echo', branch: 'war', col: 0, row: 3, maxRank: 1,
     effects: {}, keystone: true,
     keystoneDesc: 'Your damage rolls only use the TOP half of the D5 band. Max HP halved.',
-    req: ['w11'],
+    req: ['w3'],
   },
   {
-    id: 'keystone_roots', name: 'Deep Roots', branch: 'ward', col: 2, row: 3, maxRank: 1,
-    effects: {}, keystone: true,
-    keystoneDesc: 'Buildings +50% HP and towers +1 range. You move 12% slower.',
-    req: ['d11'],
-  },
-  {
-    id: 'keystone_market', name: 'Night Market', branch: 'field', col: 2, row: 3, maxRank: 1,
+    id: 'keystone_market', name: 'Night Market', branch: 'field', col: 0, row: 3, maxRank: 1,
     effects: {}, keystone: true,
     keystoneDesc: 'Gold rate +40%. Gold rouses bosses at HALF the threshold.',
-    req: ['f11'],
+    req: ['f3'],
   },
   {
-    id: 'keystone_thread', name: 'The Long Thread', branch: 'field', col: 0, row: 4, maxRank: 1,
+    id: 'keystone_thread', name: 'The Long Thread', branch: 'field', col: 1, row: 3, maxRank: 1,
     effects: {}, keystone: true,
-    keystoneDesc: '+1 Loom point per 4 total skill levels. Skills cap at 80.',
-    req: ['f9'],
+    keystoneDesc: '+1 Loom point per 12 total skill levels.',
+    req: ['f5'],
+  },
+  {
+    id: 'keystone_roots', name: 'Deep Roots', branch: 'ward', col: 0, row: 3, maxRank: 1,
+    effects: {}, keystone: true,
+    keystoneDesc: 'Buildings +50% HP and towers +1 range. You move 12% slower.',
+    req: ['d3'],
   },
 ];
 

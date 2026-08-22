@@ -23,10 +23,12 @@ export const CFG = {
   },
 
   // RS-style curve: xp to go from level L to L+1 = base * growth^(L-1)
+  // B1: retuned for the 15-min run window — copper immediately, iron mid-run,
+  // silver as a good run's reward, star as aspirational.
   xp: {
-    base: 400,               // ×10 (W4 balance pass) — leveling is a journey, not a sprint
-    growth: 1.32,
-    maxLevel: 50,
+    base: 60,
+    growth: 1.12,
+    maxLevel: 40,
   },
 
   // Weighty combat: attacks commit through windup → active (damage resolves
@@ -151,10 +153,109 @@ export const CFG = {
     orbContactImmunitySec: 0.8, // per-foe grace between orb contact hits
   },
 
-  // C3: The Loom — per-run passive tree point income.
+  // C4/A1: the seven item-effect hooks that shipped with a registered handler
+  // and NO consumer anywhere in the game.
+  //
+  // `registerEffect()` builds a registry and `applyEffect()` dispatches from it --
+  // but nothing in the game has ever called `applyEffect()`. The eight LIVE hooks
+  // are all consumed a different way: `activeEffects(state).has('key')` at the
+  // site that cares, with the behaviour written inline there. The other seven had
+  // a handler in the registry, a row in the affix table, a plain-language label in
+  // the tooltip, and no path to the screen.
+  //
+  // The bill for that: four of the five domain-lord relics did nothing at all, and
+  // 350 of the 750 suffix weight in A1's affix table -- very nearly half of every
+  // rolled suffix -- was placebo. It also quietly falsified A1's own premise, that
+  // "the fifteen effect hooks already work, so the suffix half is a data table".
+  //
+  // These are the numbers for the seven consumers that now exist. Tunable live
+  // through NW.CFG like every other block here.
+  itemEffects: {
+    thornsPct: 0.30,        // share of a melee hit sent back to the attacker
+    fireAuraSec: 2.0,       // seconds between aura ticks
+    fireAuraDmg: 4,         // damage per tick, before the D5 roll
+    fireAuraTiles: 2.2,
+    chillAuraTiles: 3.0,    // foes this close to you move at chillAuraMult
+    chillAuraMult: 0.80,
+    regenBoostPct: 0.50,    // +50% daytime regen (the handler's own old comment)
+    moveBurstSec: 2.0,      // how long a kill's burst of speed lasts
+    moveBurstMul: 1.25,
+    resonancePct: 0.25,     // +25% damage on everything the Echoes do
+  },
+
+  // A3: The ability bar. Every echo you hold keeps auto-firing exactly as it did
+  // in C1 — this adds a SECOND, empowered form you press for, paid in Resolve.
+  //
+  // Resolve is the resource because the game has no mana and should not invent
+  // one. Resolve is already a morale meter: it decays at night, near a lord, and
+  // while idle, it is repaid by kills and by surviving to dawn, and it already
+  // punishes you at zero (CFG.vitals.resolveZero*). Spending it on heroics is
+  // what a morale meter is FOR, and it turns the one passive number on the HUD
+  // into the most active one.
+  //
+  // The economy that makes the costs read: +12 resolve per kill, +40 per lord,
+  // +30 at dawn, against costs of 14-22. So an active is roughly "one and a half
+  // kills", and a night fight pays for its own heroics while a quiet run cannot
+  // afford them. That asymmetry is the point.
+  abilities: {
+    enabled: true,           // escape hatch, same terms as CFG.loot.enabled — off = pure C1 autofire
+    slots: 4,                // you can hold 5 echoes; the last lord forces a choice
+    // A cast that would leave you in debt is refused. A cast that leaves you at
+    // ZERO is allowed — walking yourself into the resolve-zero penalty to land
+    // one more nova is a decision, and the game should let you make it.
+    globalLockSec: 0.25,     // stops one keypress-repeat burst emptying the meter
+    fizzleToastCooldownSec: 2.0, // don't spam "not enough resolve" on a held key
+  },
+
+  // A5: Sockets & Weaves. Gear rolls 0–3 sockets by rarity; threads socket in
+  // order; a recognised sequence completes a weave. The socket RANGES are data
+  // (data/weaves.ts, alongside the rarity tables they decorate); the bonus
+  // NUMBERS live here with every other balance knob.
+  weaves: {
+    enabled: true,           // escape hatch, same terms as CFG.loot.enabled
+    // Threads drop from domain lords (the elite of this build until A2). Two
+    // per kill, matching the lord's element. A full clear of five lords is ten
+    // threads — enough for Long Night AND Ironwake, or Hollow Song plus two.
+    threadsPerLordKill: 2,
+    // The Long Night — Rime · Rime · Ember. Flat damage multiplier, night only.
+    longNightDmgMul: 1.25,
+    // Hollow Song — Null · Tide. Extra Resolve per kill, on top of the S1 base.
+    hollowSongResolve: 4,
+    // Ironwake — Thorn · Thorn. Melee attackers take this share of the damage
+    // they deal back, and are stunned for this long.
+    ironwakeReflectPct: 0.30,
+    ironwakeStunSec: 0.8,
+  },
+
+  // C3: The Loom — per-run passive tree point income and keystone magnitudes.
+  //
+  // B3.a: the keystone numbers used to be literals scattered across loom.ts,
+  // economy.ts and combat.ts — where they were literals at all. Five of the eight
+  // clauses below were not implemented anywhere; the tree advertised them and the
+  // game ignored them. They live here now for the same reason every other balance
+  // number does: one file, live-editable through window.NW.CFG.
   loom: {
     pointsPerBossKill: 2,   // L1: a second income source — 1/night alone is too
                              // thin for a 15-minute run to meaningfully spend
+
+    // Glass Echo — rolls from the top of the band, but you are made of glass.
+    glassEchoHpMul: 0.5,          // "Max HP halved"
+
+    // Deep Roots — your holdings stand; you do not move well.
+    deepRootsBuildingHpMul: 1.5,  // "Buildings +50% HP"
+    deepRootsTowerRangeAdd: 1,    // "...and towers +1 range" (tiles)
+    deepRootsMoveMul: 0.88,       // "You move 12% slower"
+
+    // Night Market — gold talks, and it wakes things up.
+    nightMarketGoldMul: 1.4,      // "Gold rate +40%"
+    nightMarketWakeDiv: 2,        // "Gold rouses bosses at HALF the threshold"
+
+    // The Long Thread — breadth of skill, converted to weave.
+    // B3.b: was 10. On B1's curve a full run reaches ~71 total skill levels, so /10
+    // paid 7 points for a 4-point keystone — a faucet that made the opening forced.
+    // /12 pays ~5: a sidegrade that trades a rule-warp for flexible points arriving
+    // early enough to spend. This is the number most likely to want a feel verdict.
+    longThreadLevelsPerPoint: 12, // "+1 Loom point per 12 total skill levels"
   },
 
   audio: {
@@ -211,7 +312,7 @@ export const CFG = {
   },
 
   // S1: survival pressure — vitals that decay and must be restored by action.
-  // STUBS ONLY (2026-07-17) — not yet wired; implementation per S1-survival-pressure.md.
+  // All values wired by S1 and consumed by L1 aging; live-editable via NW.CFG.
   // ALL VALUES BELOW ARE BASE (neutral connection: 10Mbps, 50ms RTT, 4g, 5ms jitter,
   // 4 cores, 4GB RAM). At runtime, NetworkSystem applies multipliers on top via
   // NET_GAME_MAP rows (vigorDecay, vigorPerKill, vigorPerGather, vigorPerCampfire,
@@ -248,6 +349,9 @@ export const CFG = {
 
   ui: {
     toastSec: 3.2,
+    // B6: the level-up flourish. A toast in the corner is information; the
+    // point of the ask was that it should happen ON the character.
+    levelFlourish: true,
   },
 
   debug: {
@@ -277,6 +381,216 @@ export const CFG = {
     campfireFearSpeedMult: 0.5,  // speed multiplier applied to foes inside the fear radius
     charcoalChance: 0.7,         // chance a player-ignited controlled burn leaves charcoal on burnout
     charcoalXp: 12,              // bonus Firemaking xp when a controlled burn actually yields charcoal
+  },
+  // B5: Ground Drops — loot lands on the floor and is walked over to collect.
+  // `enabled: false` restores the pre-B5 instant-pickup path exactly, which is
+  // the escape hatch if the playtest verdict goes against the feature.
+  drops: {
+    enabled: true,
+    tossSpeed: [40, 90],     // px/s outward, random per stack
+    tossSec: 0.45,           // arc duration
+    hopHeight: 14,           // px at the apex — visual only, never in the sim maths
+    bobPx: 1.5,              // idle bob amplitude once settled
+    bobHz: 1.1,              // idle bob rate
+    armDelaySec: 0.25,       // no magnet before this — you always see it land
+    magnetTiles: 1.6,        // attract radius; a pure walk-over turns a night wave into pixel-hunting
+    magnetAccel: 420,        // px/s²
+    magnetMaxSpeed: 260,     // px/s
+    pickupPx: 10,            // collected inside this
+    despawnSec: 90,          // game seconds before a material rots away
+    blinkLastSec: 8,         // flashes for this long before it goes
+    gearNeverDespawns: true, // weapons/armour/trinkets/relics/tools wait forever
+    maxDrops: 200,           // hard cap; oldest non-gear evicted first
+    mergePx: 8,              // same-id stacks landing this close merge instead of piling
+    mergeMaxN: 999,          // never merge past this stack size
+    sfxMinGapSec: 0.12,      // pickup blip rate limit — the deathWhistle lesson (2026-08-14)
+    toastWindowSec: 0.4,     // pickups inside this window collapse into one toast line
+    // B5 Q2 — decided 2026-08-22. This key spent months as the one deliberate
+    // dormant row in this file; it is now read by DropSystem.awardGold(), the
+    // single seam every gold award in the game passes through.
+    //
+    // Three states, and all three are real behaviour:
+    //   'off'  — every kill credits state.player.gold directly (pre-B5)
+    //   'boss' — a boss bursts into a pile you walk through; routine kills credit
+    //   'all'  — every corpse drops its coins
+    //
+    // 'boss' is the verdict. Coins on every kill are a tax on the one fight you
+    // were right to run from, and a 5-gold detour is not worth the walk. A boss
+    // you have already beaten is the opposite case: the pile IS the trophy, you
+    // are standing on it anyway, and walking through it is the victory lap.
+    goldDrops: 'boss' as 'off' | 'boss' | 'all',
+    coinBurst: [5, 9] as [number, number],  // coins a pile splits into; the shares sum to the award exactly
+    coinSpread: 2.4,                        // toss spread for a hoard — the same width the Hoarder's spill uses
+  },
+
+  // A1 — the rarity roll. `enabled: false` is a real escape hatch, not a
+  // decoration: with it off, rollItem() returns the id it was handed, so the
+  // game is byte-for-byte its pre-A1 self and a negative playtest verdict is a
+  // config edit rather than a revert. Same discipline as CFG.drops.enabled.
+  loot: {
+    enabled: true,
+    /** Crafted gear rolls too, in the narrow `forge` band — mostly Plain, and
+     *  occasionally Touched. Crafting must stay worth doing once loot exists,
+     *  and a forge that can never produce anything interesting is a forge the
+     *  player abandons the moment the first blue drops. */
+    craftRolls: true,
+    /** Ground drops at or above this tier get a light shaft and a floating
+     *  name (A4). Below it the world would be a disco. */
+    beamFrom: 'woven',
+    /** Seconds after a rift during which ordinary drops roll the `rift` band —
+     *  the only route to a Riftborn item. A rift should be worth chasing. */
+    riftWindowSec: 60,
+    /** A4: the corner radar. Hidden on narrow screens regardless (see styles). */
+    minimap: true,
+    /** Tooltip delta colouring thresholds — a change smaller than this reads as
+     *  noise and is drawn neutral rather than green. */
+    deltaEpsilon: 0.05,
+  },
+
+  // A2 — Elites & champions. The rolled-affix layer on the night wave.
+  //
+  // `enabled: false` is a real revert and not a mute: with the flag off
+  // HordeSystem.rollElite() returns null before it touches Math.random, so a
+  // wave is byte-for-byte its pre-A2 self — same spawn sequence, same stats,
+  // same loot bands. The same discipline as CFG.drops.enabled, CFG.loot.enabled
+  // and CFG.a8.enabled, and it matters more here than for any of them: A2 is
+  // the milestone the plan itself predicted would make nights unwinnable.
+  //
+  // The affix vocabulary, the conflict groups, the per-night budget and the
+  // power numbers all live in data/elites.ts. What is HERE is only what the
+  // systems layer needs to decide whether and how often — a balance pass on
+  // "how many elites" should never have to read the affix table, and a balance
+  // pass on "how strong is Vigorous" should never have to read this file.
+  a2: {
+    enabled: true,
+    /** Global x on eliteChance()/championChance(). One number to make the whole
+     *  layer rarer or thicker without touching the two curves, which are shaped
+     *  (a floor, a slope and a cap) and would lose their shape to hand-edits. */
+    rateMul: 1.0,
+    /** Elites in day spawns too? Off: a day roamer is loot on legs and the day
+     *  is the part of the loop with no pressure in it by design. A Vigorous
+     *  Gnawer ambushing a player mid-gather is a different game than the one
+     *  the day/night cycle promises. Left as a switch because the Hoarder
+     *  proved the day CAN hold an event — but that event was opt-in, and this
+     *  one would not be. */
+    inDaySpawns: false,
+    /** Elites among the woken dead of a Cairn? On. A Cairn is already an opt-in
+     *  fight the player chose to start, which is exactly the shape that earns a
+     *  spike, and the Cairn's Hallowed-tier payout already prices it. */
+    inCairns: true,
+    /** Cap on elites alive at once, so a long night cannot accumulate a field
+     *  of them faster than the player can clear it. Champions count too. */
+    maxAlive: 6,
+    /** Champions arrive with minions. This caps the retinue against the horde's
+     *  own maxAlive so a champion spawning into a nearly-full field does not
+     *  silently eat the last four slots of the wave. */
+    minionsRespectCap: true,
+  },
+
+  // A8 — Cairns, Wardstones and the Hoarder: the three things in the world
+  // that are neither a resource node nor a siege.
+  //
+  // `enabled: false` is a real revert, not a mute. Both A8 features are the LAST
+  // rows in FEATURES and WorldGen's density table is a running cumulative sum,
+  // so dropping them restores the pre-A8 world tile for tile; the Hoarder leaves
+  // the day pool by the same flag. A negative playtest verdict is one boolean,
+  // the same discipline as CFG.drops.enabled and CFG.loot.enabled. Note that it
+  // is read when the WORLD is built — flipping it mid-run stops the payouts but
+  // does not un-place stones that are already standing.
+  a8: {
+    enabled: true,
+    /** Opening a Cairn wakes what was buried under it (features.ts `wake`).
+     *  Off, a Cairn is free Hallowed-tier loot — which is exactly the balance
+     *  question the playtest has to answer, so it gets its own switch rather
+     *  than being welded to `enabled`. */
+    cairnWake: true,
+    /** Most Boons live at once. Three lets a lucky cluster of Wardstones
+     *  combine without a run turning into a christmas tree of stacked auras.
+     *  At the cap the OLDEST boon is displaced and NAMED in the toast and the
+     *  Chronicle — displacing out loud beats refusing, because a refusal at a
+     *  Wardstone leaves the player either wasting the stone or waiting on a
+     *  timer whose end they cannot see. */
+    maxBoons: 3,
+    /** Global × on every Boon's duration. One number to make the whole
+     *  blessing layer longer or shorter without touching twelve rows. */
+    boonSecMul: 1.0,
+  },
+
+  // A6 — the Hall becomes a hub: the Reliquary and the Forge-Warden, the two
+  // things in the game that take gold instead of materials.
+  //
+  // `enabled: false` is a real revert. Both rows are the LAST entries in
+  // BUILDINGS and BuildSystem.selectable() filters them, so with the flag off
+  // the build carousel is its pre-A6 self in the same order, no panel can be
+  // reached, and no gold can be spent. A negative playtest verdict is one
+  // boolean — the same discipline as CFG.drops.enabled, CFG.loot.enabled and
+  // CFG.a8.enabled.
+  a6: {
+    enabled: true,
+    /** How close you must stand for interact to open a hub instead of
+     *  gathering. Must stay TIGHTER than CFG.gather.reachTiles (1.6, above) —
+     *  a Reliquary raised beside a tree would otherwise steal the chop, and
+     *  the only way out of that would be a priority rule nobody can see.
+     *
+     *  The first pass shipped 2.4 with a comment claiming gather reach was 3.2.
+     *  It is 1.6, so the tie-break was inverted and the comment was the reason
+     *  nobody checked. `testHubReach` asserts the INEQUALITY rather than the
+     *  two numbers, which is what caught it.
+     *
+     *  1.5 tiles is 48px against a diagonal neighbour's 45.3, so every tile
+     *  touching the counter — corners included — can trade. */
+    reachTiles: 1.5,
+    /** THE retune knob. A-arsenal §5.6 predicted this: tribute is tuned
+     *  against a world where gold does nothing, and two sinks change what the
+     *  `goldRate` mapping and the Night Market keystone are worth. Every seal
+     *  price and every Forge-Warden bill multiplies through here, so moving
+     *  the whole economy is one edit — and it waits for the playtest, which is
+     *  what the plan asked for. */
+    priceMul: 1.0,
+    /** What each subsequent rework of the SAME item multiplies by. See
+     *  data/hub.ts reforgePrice(): rerolling one affix repeatedly is still a
+     *  slot machine unless the price climbs. At 1.8 the first rework on a
+     *  Hallowed costs 420, the second 756, the fourth 2,449 — which is most of
+     *  a run's income for one line of text. */
+    reforgeEscalation: 1.8,
+  },
+
+  // N4.5 + A7 — the Sounding and the Covenants: ONE selector, two vocabularies.
+  //
+  // The covenant IS the difficulty tier and the data budget IS its price — see
+  // data/covenants.ts for why those can never be two axes. `enabled: false` is
+  // a real revert, not a mute, the same discipline as CFG.a6 / CFG.a8 / CFG.a2:
+  // the Sounding Stone row is the LAST entry in BUILDINGS and BuildSystem drops
+  // it, HubSystem.near() stops seeing it, the covenant panel never opens, and
+  // activeCovenant() returns the Quiet Pact everywhere the difficulty is read.
+  // With the flag off the game is byte-for-byte its pre-N4.5 self: no stone, no
+  // panel, every multiplier exactly 1.0, nothing spent.
+  n45: {
+    enabled: true,
+    /** Seconds the stone must recover between soundings. The cooldown IS the
+     *  rate limit IS the budget — one mechanism serving the game design and the
+     *  good-citizenship constraint at the same time. */
+    cooldownSec: 45,
+  },
+
+  // N4.3: Omens — a detected step change on the wire becomes a temporary world
+  // state. See systems/omens.ts; the per-kind numbers live in OMEN_DEFS, which
+  // is a table, so balance is a row edit rather than a code change.
+  omens: {
+    enabled: true,
+    // The safety valve on the whole feature: no more than this many omens may be
+    // active at once, so a network having a genuinely terrible minute cannot
+    // stack five multipliers onto a run at the same time.
+    maxActive: 3,
+    // Screen-space corruption when a Surge is up (0 = off). The wire fraying is
+    // the one omen the plan explicitly asks to be *frightening*.
+    //
+    // Was 0.5, which was tuned against a screen with nothing else on it. A2
+    // adds elite auras and attack telegraphs to the same pixels, and two
+    // systems both spending the player's attention budget on "something is
+    // wrong" is how a warning becomes noise. 0.35 keeps the Surge unmistakable
+    // and leaves A2 room to be read. Retuned 2026-08-22 by user verdict.
+    surgeFxStrength: 0.35,
   },
 };
 

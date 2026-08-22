@@ -1,11 +1,14 @@
 // Item database. `icon` is a procgen recipe (shape kind + colors) — icons are
 // drawn at runtime like everything else. Add a row = new item exists.
 import { type RGB, hex } from '../../engine/procgen/palette';
+import type { RarityId } from './rarity';
+import type { GearMod } from './affixes';
+import type { ThreadId } from './weaves';
 
 export type IconKind =
   | 'log' | 'plank' | 'stone' | 'ore' | 'bar'
   | 'herb' | 'berry' | 'axe' | 'pick' | 'sword' | 'potion' | 'armor'
-  | 'ring' | 'amulet' | 'charm' | 'torch' | 'charcoal';
+  | 'ring' | 'amulet' | 'charm' | 'torch' | 'charcoal' | 'thread' | 'coin';
 
 export interface ItemDef {
   id: string;
@@ -29,9 +32,31 @@ export interface ItemDef {
   effects?: string[];
   /** C4: boss relic — unique drop from a specific lord (6th equip slot) */
   relic?: string;
+  /** A5: this item is a thread that sockets into rolled gear. */
+  thread?: ThreadId;
   /** W7: soul XP granted when fed to a soul-gear slot. Materials use MaterialDef.xpValue instead. */
   soulXp?: number;
 }
+
+/** B5 Q2 — the coin pile. A reserved id that is deliberately NOT an ITEMS row.
+ *
+ *  Gold is a scalar on the player, not a stack in the bag, and giving it a real
+ *  ITEMS row would put it into every list that walks ITEMS — the Reliquary
+ *  shelf, the loot tables, the affix slots, the soul-gear feed. It would be a
+ *  dormant row in nine tables to make one pile of coins bounce.
+ *
+ *  So it is a pseudo-item: a drop id the ground layer understands and nothing
+ *  else does. The `@` prefix cannot collide with an authored id and reads at a
+ *  glance as "this is not an item". Every place that has to know is a special
+ *  case against this constant — drops.ts banks it to player.gold instead of
+ *  calling invAdd, and art.ts hands it the icon below instead of asking
+ *  itemDef() for one. Three call sites, all of them in this file's neighbours.
+ */
+export const GOLD_ID = '@gold';
+
+/** The icon for the above, since itemDef(GOLD_ID) is undefined by design and
+ *  the fallback in art.itemIcon() is a grey stone. */
+export const GOLD_ICON = { kind: 'coin' as IconKind, color: hex('#d8a83a'), accent: hex('#fff0b0') };
 
 const I = (
   id: string, name: string, kind: IconKind, color: string, accent?: string,
@@ -138,4 +163,125 @@ export const ITEMS: Record<string, ItemDef> = Object.fromEntries([
   I('wispflower', 'Wispflower', 'herb', '#6644cc', '#aaddff'),
   I('ancient_oak', 'Ancient Oak', 'log', '#3a2a10', '#88aa44'),
   I('echo_dust', 'Echo Dust', 'ore', '#aaaacc', '#ffffff'),
+
+  // ---- A5: Threads — the echo's residue, socketed into rolled gear ---------
+  // Not gear: they carry no stat column, so they never roll and never equip.
+  I('thread_rime', 'Rime Thread', 'thread', '#a9c8ea', '#ffffff', { thread: 'rime' }),
+  I('thread_ember', 'Ember Thread', 'thread', '#e8844a', '#ffd27a', { thread: 'ember' }),
+  I('thread_null', 'Null Thread', 'thread', '#8a4fc4', '#ffb0ff', { thread: 'null' }),
+  I('thread_tide', 'Tide Thread', 'thread', '#3fb0bd', '#eaffff', { thread: 'tide' }),
+  I('thread_thorn', 'Thorn Thread', 'thread', '#5aa24a', '#c9e6b0', { thread: 'thorn' }),
 ].map((d) => [d.id, d]));
+
+// ---------------------------------------------------------------------------
+// A1 — rolled items.
+//
+// The whole game is id-keyed: `inv` is Record<itemId, count>, `equip` is
+// Record<slot, itemId>, soul items bind by id, `bestTool` scans inventory keys.
+// A rolled item is UNIQUE, and forcing uniqueness into that shape by hand would
+// have meant touching every one of those structures.
+//
+// So a rolled item gets a SYNTHETIC ID — `iron_blade#7f3a` — and the inventory,
+// the equip map, the soul bindings, the ground drops and the merge logic all
+// keep working completely untouched. Exactly one thing breaks: `ITEMS[id]`
+// returns undefined for a synthetic id. That is what `itemDef()` below is for,
+// and it is the ONLY change the other 33 lookup sites needed.
+//
+// `itemDef()` returns the base def with the affixes ALREADY MERGED into the
+// stat columns, which is the load-bearing decision in this file: it means
+// `bestWeaponDmg`, `baseStatFor`, `wornStat`, `armorDef`, `charmRegen`,
+// `activeEffects` and every other existing stat reader picks up affixes for
+// free, with no knowledge that rarity exists. Affixes are invisible everywhere
+// except where we deliberately want to show them.
+
+/** One affix as it actually landed on one item. The RANGES live in
+ *  data/affixes.ts; the resolved ROLL lives here, which is what makes two Keen
+ *  blades genuinely different blades rather than two copies of one blade. */
+export interface RolledAffix {
+  id: string;
+  name: string;
+  kind: 'prefix' | 'suffix';
+  /** Which stat column it wrote to, and what it contributed. */
+  stat?: 'weaponDmg' | 'armor' | 'regen' | 'toolPower';
+  add?: number;
+  mul?: number;
+  /** A named multiplier read through gearMod(). */
+  mod?: GearMod;
+  modVal?: number;
+  /** One of the fifteen registered effect hooks. */
+  effect?: string;
+  cursed?: boolean;
+}
+
+export interface RolledItem {
+  /** The synthetic inventory id: `${base}#${n}`. */
+  uid: string;
+  /** The authored row this was rolled from. */
+  base: string;
+  rarity: RarityId;
+  /** "Keen Iron Blade of the Ember" — prefix + base name + suffix. */
+  name: string;
+  affixes: RolledAffix[];
+  /** A5: how many threads this piece can hold (0–3, by rarity). */
+  sockets: number;
+  /** state.clock at the moment it was rolled, for the run trophy. */
+  bornT: number;
+}
+
+/** uid → the merged def handed to every existing consumer. */
+const ROLLED_DEFS = new Map<string, ItemDef>();
+/** uid → the roll itself, for the tooltip, the Bag and the scorecard trophy. */
+const ROLLED = new Map<string, RolledItem>();
+
+/** Strip the roll suffix. A base id passes through unchanged, so this is safe
+ *  to call on anything. */
+export function baseIdOf(id: string): string {
+  const i = id.indexOf('#');
+  return i < 0 ? id : id.slice(0, i);
+}
+
+export function isRolledId(id: string): boolean {
+  return id.indexOf('#') >= 0;
+}
+
+/** THE resolver. Use this instead of `ITEMS[id]` everywhere — it is correct for
+ *  base ids and rolled ids alike. */
+export function itemDef(id: string): ItemDef | undefined {
+  const d = ITEMS[id];
+  if (d) return d;
+  return ROLLED_DEFS.get(id) ?? ITEMS[baseIdOf(id)];
+}
+
+/** Display name, never undefined. Several call sites used to do
+ *  `ITEMS[id].name` unguarded and would throw on an unknown id; this is a
+ *  straight upgrade over that as well as being rarity-aware. */
+export function itemName(id: string): string {
+  return ROLLED.get(id)?.name ?? ITEMS[id]?.name ?? ITEMS[baseIdOf(id)]?.name ?? id;
+}
+
+/** The roll behind a uid, or undefined for an ordinary authored item. */
+export function rolledOf(id: string): RolledItem | undefined {
+  return ROLLED.get(id);
+}
+
+/** A5: the thread an item carries, or undefined. Authored thread items are the
+ *  only carriers; nothing rolled ever has a `thread` column. */
+export function threadOf(id: string): ThreadId | undefined {
+  return ITEMS[id]?.thread;
+}
+
+export function registerRolled(r: RolledItem, merged: ItemDef) {
+  ROLLED.set(r.uid, r);
+  ROLLED_DEFS.set(r.uid, merged);
+}
+
+export function allRolled(): RolledItem[] {
+  return [...ROLLED.values()];
+}
+
+/** A run is the lifetime of the registry. Called from newWorld() — without it
+ *  a long session leaks every item every previous run ever dropped. */
+export function resetRolled() {
+  ROLLED.clear();
+  ROLLED_DEFS.clear();
+}

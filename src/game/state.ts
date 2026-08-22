@@ -1,7 +1,9 @@
 // The single source of truth. Everything that must survive a reload lives in
 // this plain-JSON-able object; systems are functions that mutate it.
 import { CFG } from './data/config';
-import { ITEMS } from './data/items';
+import { DEFAULT_COVENANT } from './data/covenants';
+import { ITEMS, itemDef, resetRolled } from './data/items';
+import { resetLootSeq } from './systems/loot';
 import type { SoulSlot } from './data/soulgear';
 import { mulberry32 } from '../engine/rng';
 
@@ -11,6 +13,12 @@ export interface Building {
   tx: number;
   ty: number;
   hp: number;
+  /** B3.a: a building's own ceiling, not BUILDINGS[type].hp. The Loom's
+   *  buildingHpPct ranks and Deep Roots scale it at placement time, so two walls
+   *  in the same run can have different maxima and the health bar has to read the
+   *  building rather than the type. Optional so anything constructing a Building
+   *  without one still works — readers fall back to the def. */
+  maxHp?: number;
 }
 
 /** A roaming domain lord on the overworld (see systems/worldbosses.ts). */
@@ -37,6 +45,11 @@ export interface GameState {
   v: 1;
   seed: number;
   clock: number;                      // game seconds since world start
+  /** B2.1: the clock this run actually booted at, recorded once by main(). Exists so
+   *  a test can pin the start-at-dawn rule against the live boot and not only against
+   *  daynight.startClock() — the seam that reintroduces the real-clock lottery is
+   *  main()'s call site, not the function. */
+  bootClock: number;
   nextUid: number;
   player: {
     x: number; y: number;
@@ -48,6 +61,12 @@ export interface GameState {
     relic?: string;                   // C4: boss relic (6th equip slot)
     soulItems: Partial<Record<SoulSlot, SoulItem>>; // per-slot soul-bound leveling
     echoes: Record<string, number>;   // C1: echoId → level (Echoes of the Slain)
+    /** A3: which echoes are socketed on the ability bar, in slot order. Held
+     *  echoes and BOUND echoes are deliberately different lists: you can hold
+     *  five and the bar has four, so the fifth lord you slay is a choice rather
+     *  than an automatic upgrade. An echo off the bar still auto-fires — it
+     *  loses only its pressed form. */
+    abilityBar: string[];
     vigor: number;                    // S1: survival vital (0-100)
     resolve: number;                  // S1: survival vital (0-100)
     lastActionT: number;              // S1: clock time of last non-idle action
@@ -60,9 +79,46 @@ export interface GameState {
   depleted: Record<string, number>;
   buildings: Building[];
   worldBosses: WorldBoss[];
+  /** B5: loot lying on the ground, waiting to be walked over. */
+  drops: GroundDrop[];
+  /** A5: socketed threads on rolled gear. Keyed by rolled item uid; each entry
+   *  is the ORDERED thread kinds that item currently holds. Order is the whole
+   *  game — a weave is a sequence, and reordering breaks it (see data/weaves.ts). */
+  sockets: Record<string, string[]>;
+  /** A6: how many times each rolled item has been through the Forge-Warden.
+   *  Keyed by rolled item uid, exactly like `sockets`. The count is the price:
+   *  data/hub.ts escalates each rework off it, which is what keeps the
+   *  Forge-Warden a repair rather than a reroll grinder. A real state field
+   *  rather than a stowaway on the RolledItem, because the registry is reset
+   *  per run by resetRolled() and this has to be cleared by newWorld() on the
+   *  same beat as everything else the player accumulated. */
+  reforged: Record<string, number>;
+  /** A8: Boons currently blessing the player — timed entries into the effect
+   *  vocabulary, granted by Wardstones. A real state field rather than an
+   *  underscore-prefixed stowaway like `_moveBurstUntil`, because newWorld()
+   *  has to clear it: a boon surviving a restart would be the shared-world
+   *  hazard the Gauntlet keeps finding, with a 120-second fuse. */
+  boons: import('./systems/effects').ActiveBoon[];
+  /** N4.5 + A7: the pact sworn this run — one control that is both the data
+   *  budget and the difficulty tier. See data/covenants.ts for why those are
+   *  the same row. Defaults to 'quiet', which is byte-for-byte the pre-N4.5
+   *  game and spends nothing: a player who never opens the panel has consented
+   *  to nothing and is owed the game that shipped. */
+  covenant: string;
+  /** Nights survived under each pact, keyed by covenant id. The Legacy
+   *  multiplier is weighted by this rather than read off whatever is held at
+   *  death — otherwise nine quiet nights plus one Abyssal oath on the way out
+   *  scores as an Abyssal run, and the selector stops meaning anything. */
+  nightsAtCovenant: Record<string, number>;
   region: string;                      // region key the player is currently in
   explored: Record<string, number>;    // region key → 1 (for fog / future minimap)
   nightsSurvived: number;
+  /** B2: has dusk fallen since the last dawn? Dawn credits a night only if so.
+   *  A flag, not a counter compared against nightsSurvived — the run's own stats
+   *  get assigned directly by fixtures and by any future save/restore, and a
+   *  gate that a stray assignment can wedge shut is the wrong shape. This is
+   *  simply the rule itself: you cannot survive a night you were not here for. */
+  nightEntered: boolean;
   gameOver: boolean;
   gameOverCause: 'hall_fallen' | 'old_age' | null; // L1: what actually ended the run
   god: boolean;                        // debug/test mode: immortal, everything unlocked
@@ -70,6 +126,23 @@ export interface GameState {
   lifespanTargetMin: number;           // L1: seeded target run length in minutes (CFG.lifespan.baseRunMinutes ± jitter)
 }
 
+/** B5: a stack of loot lying on the ground.
+ *
+ *  `hopH` is deliberately VISUAL ONLY. The pickup test is a plain 2-D distance
+ *  check against (x, y) on the ground plane, so nothing can ever be collected
+ *  'in mid-air' on one frame and not the next. The arc is a lie told to the eye. */
+export interface GroundDrop {
+  uid: number;
+  id: string;            // key into ITEMS
+  n: number;             // stack size
+  x: number; y: number;  // world px — the resting position on the ground plane
+  vx: number; vy: number;// px/s; zero once at rest
+  hopT: number;          // seconds left in the toss arc; <= 0 means settled
+  hopH: number;          // px above the ground plane, for the visual arc only
+  bornT: number;         // state.clock at spawn — drives arm delay and despawn
+  magnet: boolean;       // latched once the player first came in range
+  gear: boolean;         // derived at spawn: exempt from despawn and from cap eviction
+}
 /** Worn gear, one item id per slot (undefined = empty). */
 export interface Equip {
   weapon?: string;
@@ -92,12 +165,17 @@ export interface SoulItem {
 export const tileKey = (tx: number, ty: number) => tx + ',' + ty;
 
 export function newState(seed: number, spawn: { x: number; y: number }): GameState {
+  // A1: a run is the lifetime of the rolled-item registry. Without this a long
+  // session accumulates every item every previous run ever dropped — a leak
+  // that would never surface in a test and would grow all day in a real tab.
+  resetRolled();
+  resetLootSeq();
   const inv: Record<string, number> = {};
   const soulItems: Partial<Record<SoulSlot, SoulItem>> = {};
   for (const s of CFG.player.startingItems) {
     inv[s.id] = (inv[s.id] ?? 0) + s.n;
     // starting tools are soul-bound from the first swing too, at level 1
-    const cls = ITEMS[s.id]?.toolClass;
+    const cls = itemDef(s.id)?.toolClass;
     if (cls) {
       const slot: SoulSlot = cls === 'axe' ? 'tool_axe' : 'tool_pick';
       soulItems[slot] = { slot, templateId: s.id, level: 1, xp: 0 };
@@ -114,14 +192,25 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     v: 1,
     seed,
     clock: 0,
+    bootClock: 0,
     nextUid: 1,
-    player: { x: spawn.x, y: spawn.y, hp: CFG.player.maxHp, gold: 0, inv, xp: {}, equip: {}, soulItems, echoes: {}, vigor: CFG.vitals.vigorMax, resolve: CFG.vitals.resolveMax, lastActionT: 0, loomPoints: 0, loomNodes: {}, age: CFG.lifespan.startAge },
+    player: { x: spawn.x, y: spawn.y, hp: CFG.player.maxHp, gold: 0, inv, xp: {}, equip: {}, soulItems, echoes: {}, abilityBar: [], vigor: CFG.vitals.vigorMax, resolve: CFG.vitals.resolveMax, lastActionT: 0, loomPoints: 0, loomNodes: {}, age: CFG.lifespan.startAge },
     depleted: {},
     buildings: [],
     worldBosses: [],
+    drops: [],
+    sockets: {},
+    reforged: {},
+    boons: [],
+    // N4.5 + A7: the default is the pact that spends nothing and changes
+    // nothing. Consent is a choice the player makes, never a state they are
+    // found already in.
+    covenant: DEFAULT_COVENANT,
+    nightsAtCovenant: {},
     region: '',
     explored: {},
     nightsSurvived: 0,
+    nightEntered: false,   // a run that boots mid-night has not entered it
     gameOver: false,
     gameOverCause: null,
     god: false,

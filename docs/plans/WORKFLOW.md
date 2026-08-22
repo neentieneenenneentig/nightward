@@ -62,7 +62,9 @@ An implementation session may not declare a milestone complete without:
 
 1. **Static trio green:** `npm run typecheck` clean, `npm run build` green, `cargo test` all pass.
 2. **Full Gauntlet green at `?seed=1234&test`** with the console output pasted into the session
-   record — all existing tests AND all behavioral tests pass.
+   record — all existing tests AND all behavioral tests pass. **Run `npm run build` first**: the
+   Gauntlet harness drives a `vite preview` of `dist/`, so without a build it green-lights the
+   previous milestone (Testing doctrine §1).
 3. **The brief's acceptance checklist run live with evidence** — every item exercised and output
    captured (harness gotchas apply: verify via `window.__nw`, not screenshots).
 4. **Tag pushed** to the remote.
@@ -70,6 +72,177 @@ An implementation session may not declare a milestone complete without:
 **Known gaps are not allowed.** If something cannot be finished, stop and ask the user for explicit
 sign-off BEFORE merge — not disclosure after. "I'll fix it in the next PR" is not a valid merge
 strategy.
+
+## Testing doctrine (accumulated — this is where the suite's value lives)
+
+Six tautologies and one dead-hook certification have been found in this suite. Every one of
+them was green when it was found. The rules below are what each of them cost, written as
+rules so that the next one is caught by a reader rather than by an audit.
+
+**1. Build before you run the Gauntlet.** `scripts/run-gauntlet.mjs` drives
+`http://localhost:5199`, a port it does **not** start — that is a long-running `vite preview`
+serving `dist/`. **The Gauntlet tests the last build, not your working tree.** Three green
+runs were banked against stale code before this surfaced. `npm run build`, then
+`npm run gauntlet`, every time.
+
+**2. A negative assertion needs a positive control.** "With the effect off, nothing happened"
+passes just as happily when the effect is off *and* broken. Measure with it on, measure with
+it off, assert on the difference. Every matched pair in the suite exists because a one-sided
+version of it was green while the feature did nothing.
+
+**3. Never derive the expected value from the code under test.** `testXpCurve` summed
+`xpToNext()` and asserted `levelFromXp()` of that sum — the identity `f(f⁻¹(L)) === L`. It was
+green under `base 1 / growth 1.001` and under `base 99999 / growth 3.0`. Any test whose
+expectation is *computed* rather than *written down* is tautological until a mutation proves
+otherwise, and the mutation output belongs in the commit message, not a claim that it would
+have failed.
+
+**4. Driving a handler proves the handler works, never that the game calls it.** The C4 test
+called `applyEffect('thorns_reflect', …)`, got 6 back and went green — and it was the only
+caller of `applyEffect()` in the entire project. Seven effect hooks stayed placebo through
+three milestones behind that one assertion. Assert through the path the *player* takes.
+
+**5. Check the return value of the call your test is built on.** `testLoomKeystones` called
+`allocate('keystone_glass_echo')`; the node id is `keystone_glass`. It returned `false`, the
+whole `if (allocated)` body was unreachable, and the test closed on `ok(true, '…completed')`.
+
+**6. No disjunct escape hatches.** `!state.gameOver || m.nightsSurvived >= 3` passes for any
+run that merely did not end; so does `skillLevel >= beforeLevel || newLevel > 0`. If either
+half can carry the assertion alone, the assertion is the weaker half.
+
+**7. `ok(true, '…test completed')` is not a test.** It is the fossil left behind when the real
+assertions above it became unreachable.
+
+**8. Bound against what the phase can actually produce, not against a fixed number.** Phase 4
+steps a live, un-paused game whose rAF loop races the suite's own stepping; measured across
+three identical runs it survived 1, 4 and 6 nights. Any fixed lower bound there is a coin flip.
+
+**9. Every new data row needs a live consumer in the same commit.** This project's cardinal
+sin is a row or config knob that nothing reads. See the C4 entry in the ROADMAP for what
+fifteen registered effect hooks with seven consumers actually cost.
+
+**10. State the claim in the design's units, not the implementation's.** A8's Cairn density
+test could have asserted "the per-tile density is 0.00058", which is the data table read back
+to itself and passes no matter how wrong the table is. It asserts "a run meets about one
+Cairn" instead — and immediately caught that the shipped densities produced 0.38, because a
+density is per-tile *of its biome* and three quarters of the map carries no features at all.
+The assertion that can tell you the design is wrong is worth more than the one that can only
+tell you the code changed.
+
+**11. Pin a precondition, measure the thing.** `regen_boost`'s control measured 0.000 hp/s
+because regen is daytime-only and the suite's clock had drifted into a night. Stubbing
+`ctx.isNight` to fix that is not cheating — the claim is about the relic, and the phase is a
+precondition to being able to see it. Cheating would be stubbing the regen.
+
+**12. When you add a new source of an effect, the suite's strip-to-nothing helper is where the
+fix belongs.** A8's boons made `wearOnly()` a lie: it cleared gear, sockets and the relic but
+not the new thing that also feeds `activeEffects()`. Every test that isolates already calls
+that helper; patching the two call sites that went red is how the third one gets missed.
+
+**13. A parser test that only feeds it the shapes it already handles is a mirror, not a
+test.** N4.4 extracted `parseDohAnswer` from a filter accepting DNS record types 1, 28 and 12
+and kept only the first two — silently emptying the Vessel's ISP row forever, because type 12
+is PTR and `resolvePtr()` is its only source. The extraction shipped with an adversarial
+parser test of nine malformed inputs, and it stayed green, because every input it tried was a
+type the new code already knew. **Enumerate the accepted set as a named table and have the
+test walk it**, so a dropped case fails at the parser instead of going quiet three files
+downstream. The generalisation: when you narrow an input domain, the test must be written
+against the CALLERS' needs, not against the new code's behaviour.
+
+**14. A test that moves a clock forward has to move it back.** The A4 radar test stamped
+`minimap.draw`'s throttle to `performance.now() + 2e6` to defeat the 10 Hz gate, and never
+restored it — so any `?test` run froze the player's own radar for the following half hour.
+Anything a test pushes into the future (a throttle, a cooldown, a respawn timer) is world
+state in a suite that shares one live world, and belongs in the same `finally` as the rest.
+
+**15. When a value is only correct RELATIVE to another value, assert the relation, not the
+two numbers.** A6 gave the hub counters `reachTiles: 2.4` under a comment reading "TIGHTER
+than CFG.gather.reachTiles (3.2)". Gather reach is **1.6**. The comment was wrong, the
+tie-break was therefore inverted, and a Reliquary raised beside a tree would have stolen
+the chop — the exact failure the comment claimed to prevent. Two assertions pinning 2.4 and
+1.6 would both have passed. `ok(CFG.a6.reachTiles < CFG.gather.reachTiles)` failed on the
+first run. **A comment that quotes a constant from another file is a claim with no test
+behind it, and it decays silently the moment either file is retuned.** If the relation
+matters, it is the assertion.
+
+**16. Build a fixture through the game's own verb, or measure a world the game cannot
+produce.** The A6 forge test wore a blade by writing `state.player.equip.weapon = uid`, and
+then measured the player's damage at **0.000 forever** — because `wornStat()` reads
+`soulItems[slot]`, and only `toggleEquip()` binds that. The assertion was not wrong about
+the game; it was right about a state no player can reach. Driving `ui.hooks.equip()` instead
+both fixed it and proved main's equip wiring for free. Where the game has a verb for
+reaching a state, the test uses the verb.
+
+**17. Scope an assertion to the subject its message names.** `ok(state.drops.length === 0,
+'a Wardstone pays in a blessing, not in loot')` claimed something about a Wardstone and
+measured *the entire world for eight game-seconds* — the length of the harvest it was
+holding down. It went red about one run in five and blamed A8 for a drop A8 had nothing to
+do with. The failure message is part of the test: an assertion whose scope is wider than its
+wording will one day accuse the wrong system, and send the next reader to the wrong file
+with a confident sentence in their hand. It now measures within three tiles of the stone,
+names whatever it finds, and carries a matched control proving that measurement can see a
+drop at all.
+
+**18. Before concluding that something did not answer, check whether the platform
+deduplicated it.** N4.7b's first NAT classifier asked two STUN servers, got one reflexive
+candidate back, and concluded `unknown` — one server must not have replied, and a comparison
+needs two. Measuring each server on its own killed that: both answered, in 11 ms and 35 ms,
+and gathering completed in 138 ms with both configured. ICE **prunes redundant candidates**,
+and two candidates are only redundant when they carry the same address and port — so the
+missing second candidate was not a silence, it was *the two servers agreeing*, which was the
+exact finding the code had given up on. An absence produced by deduplication carries
+information; an absence produced by a timeout does not. The classifier now separates them on
+whether gathering finished on its own, and the reading that rests on the inference is tagged
+`inferred` so the panel never presents a deduction as a comparison.
+
+**19. A promise in a doc string is a dormant row wearing a different hat.** `identity-ipv6`
+had advertised `flowsInto: '... N4.7 Dual-Souled trait'` since N4.4 and no such trait was
+ever built. Nothing failed, because nothing *reads* a `flowsInto` — which is precisely the
+problem: the cardinal sin in this codebase is a data row nothing consumes, and a row that
+documents a consumer that does not exist is worse than one that admits it has none. "Surfaced
+for the Lens only" is an honest `flowsInto`. A named mechanic that was never written is a
+claim the next reader will spend an afternoon looking for.
+
+### The shared-world hazards
+
+`regression.ts` tests all run against **one live world**, in order, and `ok()` **throws**.
+Both facts have bitten:
+
+- **Restore stubbed globals in `finally`, never inline.** Because `ok()` throws, an inline
+  restore leaks the stub into every later test the first time that assertion goes red. This
+  has applied to `Math.random`, `state.god`, `state.buildings` and `ctx.net.rollDamageMul`.
+- **A leaked `state.god = true` silently disarms every damage assertion after it.**
+  `damagePlayer` early-returns under god mode, so the later tests do not fail — they stop
+  measuring.
+- **Any new test that consumes `Math.random()` shifts the global stream for every test
+  downstream**, shaking latent flakes loose. Seen eight times now (vigor-starve, the Ironwake
+  dodge, the uniform-corridor Loom flake, the D5 resonance band, A8's three — the boon leak
+  through `wearOnly`, the night-phase regen control, the chill march on blocked ground — and
+  N4.4's ability-bar Resolve arithmetic). A red test in a file you did not touch is usually
+  this, not a regression. **A milestone that changes worldgen shifts more than the stream** —
+  A8 added two blocking feature types, so `canStand()` answers differently around wherever a
+  test left the player. **A milestone that changes network cadence shifts it too**: N4.4's
+  AAAA retry altered how many requests are in flight, which moved the frame timing the whole
+  suite rides on.
+- **An exact-arithmetic assertion needs the ambient world held still, not just the subject.**
+  The ability bar's "it spends exactly 18 resolve" measured 86 against 82 because Bramblebreak
+  killed a foe and `resolvePerKill` landed inside the same synchronous `cast()`. Nothing about
+  the bar was wrong. Before asserting an exact delta, ask what ELSE can move that number in
+  the window you are measuring, and pin it.
+- **Never measure movement on ground you did not choose.** `findUniformCorridor()` exists for
+  this. Two separate tests have now measured 0.00px in both halves of a matched pair because
+  the foe or the player was against water, a cliff or a tree, and reported it as a failure of
+  the multiplier under test.
+- **Isolate what you are measuring from everything else that produces the same number.**
+  `combat.update()` also ticks the towers, so a "nothing burns" control measured 52 damage
+  from a tower built forty tests earlier. Ironwake's control cleared the sockets but not the
+  gear, so it measured two independent reflect sources and called it one.
+- **Assertion counts drift a few either way run to run** (1872–1874 before A8, 2055–2058
+  after) from RNG-dependent assertion loops. An exact count is a weak regression signal; the
+  test *names* are the strong one.
+- **`GameLog` is a 2000-entry ring buffer.** `entries.slice(rememberedLength)` returns nothing
+  once it is full, so a test asserting "the Chronicle said so" silently stops looking. Use
+  `log.recent(n)`.
 
 ## Debugging & troubleshooting
 

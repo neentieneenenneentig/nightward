@@ -18,7 +18,11 @@ import { Views } from './game/world/views';
 import { Player } from './game/world/player';
 import { Camera } from './game/world/camera';
 import { UI, NET_LOG_LABELS, styleNetworkMsg } from './game/ui/ui';
-import { GatherSystem, VERB } from './game/systems/gather';
+import { Lens } from './game/ui/lens';
+import { ChronicleStore, CHRONICLE_SERIES, exportChronicle, sampleChronicle } from './game/systems/chronicle';
+import { OmenSystem } from './game/systems/omens';
+import { DropSystem } from './game/systems/drops';
+import { GatherSystem, verbFor } from './game/systems/gather';
 import { EconomySystem } from './game/systems/economy';
 import { BuildSystem } from './game/systems/build';
 import { HordeSystem } from './game/systems/hordes';
@@ -26,22 +30,37 @@ import { CombatSystem } from './game/systems/combat';
 import { WorldBossSystem } from './game/systems/worldbosses';
 import { FireSystem } from './game/systems/fire';
 import { EchoSystem } from './game/systems/echoes';
+import { AbilitySystem } from './game/systems/abilities';
 import { NetworkSystem } from './game/systems/network';
 import { VitalsSystem } from './game/systems/vitals';
 import { LifespanSystem } from './game/systems/lifespan';
 import { LoomSystem } from './game/systems/loom';
+import { WeaveSystem } from './game/systems/weaves';
+import { HubSystem } from './game/systems/hub';
+import { SoundingSystem, soundingReward } from './game/systems/sounding';
 import { ScoreboardSystem } from './game/systems/scoreboard';
 import { SoulFeedSystem } from './game/systems/soulfeed';
 import { MaterialEffectSystem } from './game/systems/materialEffects';
 import { craft } from './game/systems/crafting';
-import { activeEffects } from './game/systems/effects';
-import { toggleEquip, invAdd } from './game/rules';
+import { activeBoons, activeEffects, grantBoon, moveBurstMul, tickBoons, venomStacks } from './game/systems/effects';
+import { toggleEquip, invAdd, gearMod, playerMaxHp } from './game/rules';
 import { BUILDINGS } from './game/data/buildings';
+import { canSwear, covenantDef } from './game/data/covenants';
 import { NET_GAME_MAP, NET_METRICS, BEACON_INSPECT, LENS_SECTION_INSPECT, allBeacons, type NetInspect } from './game/data/network';
-import { phase, tintAt } from './game/systems/daynight';
+import { Minimap } from './game/ui/minimap';
+// A1/A4 test seam. The Gauntlet can only observe the roll through the same
+// pure functions the game calls — asserting that rollItem() returned an object
+// would pass with the whole merge deleted. Namespace imports so a new export is
+// automatically reachable from a test without another edit here.
+import * as rulesMod from './game/rules';
+import * as lootMod from './game/systems/loot';
+import * as itemsMod from './game/data/items';
+import * as effectsMod from './game/systems/effects';
+import { phase, tintAt, startClock } from './game/systems/daynight';
 import { Fog } from './game/world/fog';
 import { domainAt, regionOf, regionKey } from './game/world/domains';
 import { Sound } from './engine/audio';
+import { vesselLine } from './game/systems/vessel';
 import { FloaterSystem } from './game/ui/floaters';
 import { ParticleSystem } from './engine/particles';
 import { PostProcess, type PostProcessConfig } from './engine/postprocess';
@@ -85,7 +104,12 @@ async function boot() {
 
   const state: GameState = newState(seed, spawn);
   const world = new World(gen, state, worldCore);
-  const chunks = new ChunkMap(world, art, stage.ground);
+  // G1: relief lighting on by default; ?norelief boots without it and R toggles
+  // it live, so the two looks can be compared on the same seed and camera.
+  const chunks = new ChunkMap(world, art, stage.ground, {
+    relief: !new URLSearchParams(location.search).has('norelief'),
+    seed,
+  });
   const views = new Views(stage.entities, art, world);
   views.reset(state.buildings);
 
@@ -112,17 +136,31 @@ async function boot() {
   // shared context every system reads/writes
   const ctx: any = {
     state, world, worldCore, chunks, views, cam, player, spawnPoint: spawn, log,
+    // B5 Q2 test seam: the icon atlas, so the suite can prove a coin is drawn
+    // as coins rather than as art.itemIcon()'s grey-pebble fallback for unknown ids.
+    art,
     floaters,
     isNight: () => phase(state.clock).isNight,
     nightIndex: () => phase(state.clock).dayIndex,
     toast: (m: string, k?: any) => ui.toast(m, k),
     onGold: () => {},
-    damagePlayer: (d: number, src?: string) => combat.damagePlayer(d, src),
+    damagePlayer: (d: number, src?: string, foe?: any) => combat.damagePlayer(d, src, foe),
     onHallDestroyed: () => triggerGameOver('hall_fallen'),
   };
 
   // G1: particle system — pre-allocated pool for gather poofs, fire embers, slash trails, etc.
-  const particles = new ParticleSystem(stage.app.stage, 400);
+  //
+  // Parented to stage.world, NOT to app.stage. Every call site passes WORLD
+  // pixels (the module's own doc comment says so, and the wisp/ember/heal sites
+  // all derive their coordinates from the player's world position), but
+  // app.stage is screen space — the camera only ever transforms stage.world.
+  // So every particle in the game was being drawn at its world coordinate as
+  // though that were a screen coordinate, which is correct only while the
+  // player is near the origin. That is where a run starts, which is why this
+  // survived since G1: walk a few hundred tiles and the effects silently leave
+  // the viewport. Found while capturing B6 gate shots — the level-up burst drew
+  // its rings (views.fx, world-space) and none of its motes.
+  const particles = new ParticleSystem(stage.world, 400);
   ctx.particles = particles;
 
   // G1: post-processing — bloom, color grading, vignette (between world and UI)
@@ -145,6 +183,16 @@ async function boot() {
     set radius(v: number) { painterlyRadius = Math.max(1, Math.min(4, v | 0)); },
   } };
 
+  // B5: Ground Drops — loot lands on the floor. Constructed BEFORE the three
+  // loot systems because each of them calls ctx.drops.spawn() the first time
+  // anything is gathered or killed.
+  const drops = new DropSystem(ctx);
+  ctx.drops = drops;
+
+  // A4: the corner radar. Entity-only, 10 Hz, no terrain sampling — see the
+  // header of ui/minimap.ts for why it is a local radar and not a world map.
+  const minimap = new Minimap(document.getElementById('hud')!);
+
   const gather = new GatherSystem(ctx);
   const economy = new EconomySystem(ctx);
   const build = new BuildSystem(ctx);
@@ -160,6 +208,12 @@ async function boot() {
   ctx.echoes = echoes;
 
   // S1: Survival Pressure — vigor & resolve decay, restore via action
+  // A3: The Bar - the same echoes, pressed for and paid for in Resolve.
+  // Constructed AFTER EchoSystem because it casts through it; before VitalsSystem
+  // only because that is where it reads best.
+  const abilities = new AbilitySystem(ctx);
+  ctx.abilities = abilities;
+
   const vitals = new VitalsSystem(ctx);
   ctx.vitals = vitals;
 
@@ -172,6 +226,19 @@ async function boot() {
   // C3: The Loom — per-run passive tree, points from nights survived
   const loom = new LoomSystem(ctx);
   ctx.loom = loom;
+
+  // A5: Sockets & Weaves — threads socket into rolled gear, in order, and a
+  // recognised sequence completes a weave. Pure passive reads (no per-frame
+  // update); combat/vitals/worldbosses consult its typed bonus getters.
+  const weaves = new WeaveSystem(ctx);
+  ctx.weaves = weaves;
+
+  // A6: the hub. Constructed after WeaveSystem because a reworked item keeps
+  // its uid and therefore its sockets, and after loot because both counters
+  // are thin wrappers over rollItem()/reforgeAffix(). No update() — a shop
+  // ticks when the player presses a button and at no other time.
+  const hub = new HubSystem(ctx);
+  ctx.hub = hub;
 
   // W6: Scoreboards — connection uptime, death scorecard, leaderboard
   const scoreboard = new ScoreboardSystem(ctx);
@@ -208,101 +275,53 @@ async function boot() {
     scoreboard.onRift();  // W6: count rifts survived
   });
 
-  // N2a: The Lens — raw observatory panel (O key). 8 sections:
-  // 1.Connection 2.Realm 3.Routes 4.Identity 5.Vessel 6.Threads 7.Feed 8.Inspect
-  const obsPanel = document.createElement('div');
-  obsPanel.id = 'nw-observatory';
-  obsPanel.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:35;'
-    + 'font-family:ui-monospace,Consolas,monospace;font-size:10px;line-height:1.35;'
-    + 'color:#bbb;background:#080810f2;padding:12px 16px;border-radius:8px;'
-    + 'border:1px solid #334;display:none;min-width:340px;max-width:420px;max-height:94vh;overflow-y:auto;'
-    + 'pointer-events:auto;user-select:none;';
-  obsPanel.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;border-bottom:1px solid #334;padding-bottom:4px;">
-      <span style="color:#aaa;font-weight:bold;font-size:12px;">🔍 The Lens</span>
-      <span style="color:#555;font-size:9px;">O to close</span>
-    </div>
-    <div id="nw-lens-body"></div>
-  `;
-  document.body.appendChild(obsPanel);
+  // N4.5: the Sounding Stone and the Covenant it reads. Instantiated after the
+  // NetworkSystem because a sounding's resolver race reads net.resolverStats;
+  // no update() — the stone ticks only when the player presses it.
+  const sounding = new SoundingSystem(ctx);
+  ctx.sounding = sounding;
 
-  // N2a: Inspect detail box — appears on hover/tap of any Lens row
-  const inspectBox = document.createElement('div');
-  inspectBox.id = 'nw-lens-inspect';
-  inspectBox.style.cssText = 'position:fixed;z-index:40;'
-    + 'font-family:ui-monospace,Consolas,monospace;font-size:9px;line-height:1.4;'
-    + 'color:#ccc;background:#0a0a16f8;padding:8px 10px;border-radius:6px;'
-    + 'border:1px solid #557;display:none;max-width:320px;'
-    + 'pointer-events:none;user-select:none;';
-  document.body.appendChild(inspectBox);
+  // N4.2: The Lens is now a right-edge side cart (src/game/ui/lens/). It used
+  // to be a centred modal that covered the game, which is exactly the wrong
+  // shape for a panel whose whole premise is that these numbers are driving the
+  // world in front of you. The 115 lines of string concatenation that used to
+  // live here are five tab modules now.
+  const chronicle = new ChronicleStore();
+  for (const m of CHRONICLE_SERIES) chronicle.define(m);
+  net.chronicle = chronicle;
 
-  // Attach hover/tap handler to the Lens body (delegated)
-  obsPanel.addEventListener('mouseover', (e) => {
-    const target = (e.target as HTMLElement).closest('[data-inspect-key]') as HTMLElement | null;
-    if (!target) { inspectBox.style.display = 'none'; return; }
-    showInspectBox(target, inspectBox, e);
+  // N4.3: Omens — the Chronicle's detected step changes stop being Feed lines
+  // and become world states with real multipliers. This is the half of N4 that
+  // makes the network the world rather than a readout beside it.
+  const omens = new OmenSystem({
+    clock: () => state.clock,
+    chronicle,
+    toast: (m, k) => ui.toast(m, (k ?? 'bad') as any),
+    log,
+    rift: (reason) => net.riftFromWire(reason),
+    fx: (o) => {
+      // Good omens rise off the player as wisps; bad ones tear like a rift. The
+      // rift kind spawns nothing here because net.onRift() already does the
+      // full-screen flash — doubling it would just be loud.
+      if (o.kind === 'rift') return;
+      particles.spawn(o.def.good ? 'wisp' : 'rift', player.x, player.y - 8, o.def.good ? 14 : 22);
+    },
   });
-  obsPanel.addEventListener('mouseout', (e) => {
-    const target = (e.target as HTMLElement).closest('[data-inspect-key]') as HTMLElement | null;
-    if (!target) { inspectBox.style.display = 'none'; return; }
-    // Only hide if mouse actually left the Lens
-    if (!obsPanel.contains(e.relatedTarget as Node)) {
-      inspectBox.style.display = 'none';
-    }
-  });
-  // Tap-to-pin on mobile (click toggles pin)
-  obsPanel.addEventListener('click', (e) => {
-    const target = (e.target as HTMLElement).closest('[data-inspect-key]') as HTMLElement | null;
-    if (!target) return;
-    if (inspectBox.dataset.pinned === target.dataset.inspectKey) {
-      inspectBox.dataset.pinned = '';
-      inspectBox.style.display = 'none';
-    } else {
-      inspectBox.dataset.pinned = target.dataset.inspectKey ?? '';
-      showInspectBox(target, inspectBox, e);
-    }
-  });
+  ctx.omens = omens;
 
-  function showInspectBox(target: HTMLElement, box: HTMLElement, e: MouseEvent) {
-    const key = target.dataset.inspectKey ?? '';
-    const inspectData = getInspectData(key);
-    if (!inspectData) { box.style.display = 'none'; return; }
-    box.innerHTML = `
-      <div style="color:#f96;font-size:10px;font-weight:bold;margin-bottom:4px;">${key}</div>
-      <div style="margin-bottom:3px;"><span style="color:#888;">SOURCE</span><br><span style="color:#ccc;">${inspectData.api}</span></div>
-      <div style="margin-bottom:3px;"><span style="color:#888;">ACTION</span><br><span style="color:#ccc;">${inspectData.action}</span></div>
-      <div><span style="color:#888;">FLOWS INTO</span><br><span style="color:#ccc;">${inspectData.flowsInto}</span></div>
-    `;
-    // Position beside the target, clamped to the viewport. The box height varies
-    // with content (long SOURCE strings wrap), so measure the real size first —
-    // the old hardcoded ~100px estimate let tall boxes run off the bottom, and the
-    // left-flip could push the box past the left edge on narrow viewports.
-    const rect = target.getBoundingClientRect();
-    box.style.left = '0px';
-    box.style.top = '-9999px';
-    box.style.display = '';
-    const bw = box.offsetWidth, bh = box.offsetHeight;
-    let left = rect.right + 8;
-    if (left + bw > window.innerWidth - 4) left = rect.left - bw - 8;
-    left = Math.max(4, Math.min(left, window.innerWidth - bw - 4));
-    let top = rect.top;
-    top = Math.max(4, Math.min(top, window.innerHeight - bh - 4));
-    box.style.left = left + 'px';
-    box.style.top = top + 'px';
-  }
+  let lastChronicleT = -1;
+
+  const lens = new Lens(
+    { net, chronicle, log, omens, sounding, inspectFor: getInspectData },
+    () => exportChronicle(chronicle, net, state, omens),
+  );
 
   // O key toggles the Lens
   window.addEventListener('keydown', (e) => {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
     if (e.key === 'o' || e.key === 'O') {
       e.preventDefault();
-      const closing = obsPanel.style.display !== 'none';
-      obsPanel.style.display = closing ? 'none' : '';
-      // when closing the Lens, dismiss any pinned inspect popup too
-      if (closing) {
-        inspectBox.style.display = 'none';
-        inspectBox.dataset.pinned = '';
-      }
+      lens.toggle();
     }
     // V toggles the oil-painting Kuwahara filter
     if (e.key === 'v' || e.key === 'V') {
@@ -315,16 +334,96 @@ async function boot() {
       e.preventDefault();
       hordes.scatterCache();
     }
+    // G1: R toggles height-field relief lighting
+    if (e.key === 'R') {
+      e.preventDefault();
+      const on = !chunks.reliefEnabled;
+      chunks.setRelief(on);
+      ctx.toast(`Relief lighting: ${on ? 'ON' : 'OFF'}`, on ? 'good' : 'info');
+    }
   });
 
   const ui = new UI(state, {
-    interact: () => gather.tryStart(),
+    // A6: one key, two meanings. The hub wins when one is in reach because
+    // CFG.a6.reachTiles (1.5) is tighter than CFG.gather.reachTiles (1.6) —
+    // so a node and a counter can only both be live when you are practically
+    // inside the counter, and that is the thing you walked up to. A gather
+    // already in progress is never interrupted: tryStart() is what stops it
+    // being re-entered, and the hub check runs before it precisely so the
+    // panel cannot open on top of a swing you are mid-way through.
+    interact: () => {
+      if (!gather.active) {
+        const h = hub.near();
+        if (h) { ui.open(h.kind); return; }
+      }
+      gather.tryStart();
+    },
+    hubView: () => {
+      const h = hub.near();
+      return h ? { kind: h.kind, name: h.def.name } : null;
+    },
+    hubOffers: (slot: any) => hub.offers(slot),
+    hubBuy: (slot: any, sealId: string) => { const r = hub.buy(slot, sealId); if (r.ok) ui.rebuildPanel(); return r; },
+    hubBench: () => hub.bench(),
+    hubReforge: (uid: string, index: number) => { const r = hub.reforge(uid, index); if (r.ok) ui.rebuildPanel(); return r; },
+    // N4.5: the Sounding Stone's panel. Reads the live system; the run verb
+    // below fires the sounding and pays out the reward on completion.
+    soundingView: () => {
+      const cov = sounding.pact();
+      return {
+        pactName: cov.name,
+        budgetLabel: cov.budgetLabel,
+        budgetMB: cov.budgetMB,
+        spentMB: sounding.spent / 1e6,
+        leftMB: sounding.budgetLeft() / 1e6,
+        busy: sounding.busy,
+        count: sounding.count,
+        cooldownSec: Math.max(0, Math.ceil(sounding.readyAt - state.clock)),
+        blocked: sounding.blocked(),
+        last: sounding.last,
+      };
+    },
+    runSounding: () => {
+      if (sounding.busy) return;
+      sounding.sound().then((r) => {
+        const reward = soundingReward(r);
+        if (reward.gold) { state.player.gold += reward.gold; ctx.onGold?.(); }
+        if (reward.boon) grantBoon(state, reward.boon);
+        if (reward.line) log.push('system', reward.line, state.clock);
+        if (reward.boon) ctx.toast(`${reward.boon.name} — +${reward.gold} gold`, 'good');
+        else if (reward.gold) ctx.toast(`+${reward.gold} gold`, 'good');
+        else ctx.toast('The stone heard nothing back.', 'info');
+        ui.rebuildPanel();
+      });
+    },
+    // N4.5/A7: the covenant picker. The UI forwards the verb; the raise-only
+    // rule and the price both live in data/covenants.ts, so a panel can never
+    // disagree with the system about what may be sworn.
+    swearCovenant: (id: string) => {
+      if (!canSwear(state.covenant, id)) {
+        return { ok: false, why: 'A pact can only be sworn deeper, never renounced.' };
+      }
+      state.covenant = id;
+      const cov = covenantDef(id);
+      log.push('system', `You swear ${cov.name} — ${cov.cost}`, state.clock);
+      ctx.toast(`You swear ${cov.name}`, 'good');
+      ui.rebuildPanel();
+      return { ok: true };
+    },
     attack: () => combat.attack(),
     ignite: () => fire.tryIgnite(),
     enterBuild: (id: string) => (id ? build.enter(id) : build.cancel()),
     startBuild: () => build.start(),
     cycleBuild: (dir: number) => build.cycle(dir),
-    craft: (id: string) => { const ok = craft(state, id, ctx.toast, log, net); if (ok) vitals.markAction(); ui.rebuildPanel(); },
+    craft: (id: string) => { const ok = craft(state, id, ctx.toast, log, net, loom, ctx); if (ok) vitals.markAction(); ui.rebuildPanel(); },
+    // B3.b: the Loom's first production caller. Until this line existed the tree
+    // was unreachable — points accrued and could never be spent.
+    allocateLoom: (id: string) => loom.allocate(id),
+    loomView: () => ({
+      points: loom.points,
+      allocated: loom.allocated,
+      canAllocate: (id: string) => loom.canAllocate(id),
+    }),
     useItem: (id: string) => { useItem(id); ui.rebuildPanel(); },
     equip: (id: string) => { equipItem(id); ui.rebuildPanel(); },
     feedSoul: (itemId: string, count: number, targetSlot: import('./game/data/soulgear').SoulSlot) => {
@@ -332,12 +431,19 @@ async function boot() {
       if (result) {
         vitals.markAction();
         log.push('system',
-          `Fed ${count}× ${ITEMS[itemId].name} → ${targetSlot} soul +${result.xp} xp` +
+          `Fed ${count}× ${itemName(itemId)} → ${targetSlot} soul +${result.xp} xp` +
           (result.leveled ? ` (lv ${result.newLevel}!)` : ''),
           state.clock);
       }
       return result;
     },
+    // A3: the bar. The UI forwards two verbs and reads one view model; every
+    // rule about cost, cooldown and slotting lives in AbilitySystem, so a socket
+    // literally cannot disagree with the system about whether it is ready.
+    abilityView: () => abilities.view(),
+    castAbility: (slot: number) => abilities.cast(slot),
+    swapAbility: (slot: number) => abilities.swap(slot),
+    abilityTip: (slot: number) => abilities.describe(slot),
     toggleMute: () => Sound.toggle(),
     newWorld: () => { location.hash = 's=' + ((Math.random() * 2 ** 31) | 0); location.reload(); },
     isPlacing: () => !!build.mode,
@@ -354,37 +460,76 @@ async function boot() {
       if (gather.target) return { label: labelFor(gather.target.def) + ' (E)', frac: 0 };
       return null;
     },
+    // N4.3 + A8: everything temporarily true, in one list, each row stamped with
+    // its `kind`. The HUD splits that list into two badge rows on `kind` alone —
+    // an Omen is something happening to the WORLD, a Boon is something true of
+    // YOU, and one row meant neither read under pressure (verdict, 2026-08-22).
+    // The split lives in the view layer, not here: this is the source of truth
+    // for what is active, and it should not also own how it is arranged.
+    // Omens first because they are the ones the player did not choose.
+    worldStateView: () => [
+      ...omens.active.map((o) => ({
+        name: o.def.name,
+        good: o.def.good,
+        secs: Math.max(0, Math.ceil(o.until - state.clock)),
+        blurb: o.def.blurb,
+        kind: 'omen' as const,
+      })),
+      ...activeBoons(state).map((b) => ({
+        name: b.name,
+        good: true,
+        secs: Math.max(0, Math.ceil(b.until - state.clock)),
+        blurb: b.blurb,
+        kind: 'boon' as const,
+        color: b.color,
+      })),
+      // A2: venom rides the SECOND row, beside the boons, because that row's
+      // question is "what is true of me right now" and venom is the loudest
+      // possible answer to it. It is not a boon and it is not pretending to be
+      // one — it is red, it says how many stacks, and the row's tooltip names
+      // both halves. A stacking DoT with no HUD presence is a health bar that
+      // empties for no visible reason, which is the one thing a survival meter
+      // must never do.
+      ...(venomStacks(state) > 0 ? [{
+        name: `Venom ×${venomStacks(state)}`,
+        good: false,
+        secs: Math.max(0, Math.ceil((state as any)._venomUntil - state.clock)),
+        blurb: 'what it opened has not closed',
+        kind: 'boon' as const,
+        color: '#8fd05a',
+      }] : []),
+    ],
   });
 
   // hand the build system a way to drive the placement carousel banner
   ctx.setBuildBanner = (sel: { def: any; afford: number } | null) => ui.setBuildBanner(sel);
 
-  function labelFor(def: any) { return (VERB[def.skill] ?? 'Gather') + ' ' + def.name; }
+  function labelFor(def: any) { return verbFor(def) + ' ' + def.name; }
 
   function equipItem(id: string) {
     const slot = toggleEquip(state, id);
     if (!slot) return;
     const nowWorn = state.player.equip[slot] === id;
-    ui.toast(`${nowWorn ? 'Equipped' : 'Unequipped'} ${ITEMS[id].name}`, nowWorn ? 'good' : 'info');
-    log.push('system', `${nowWorn ? 'Equipped' : 'Unequipped'} ${ITEMS[id].name}`, state.clock);
+    ui.toast(`${nowWorn ? 'Equipped' : 'Unequipped'} ${itemName(id)}`, nowWorn ? 'good' : 'info');
+    log.push('system', `${nowWorn ? 'Equipped' : 'Unequipped'} ${itemName(id)}`, state.clock);
   }
 
   function useItem(id: string) {
-    const heal = ITEMS[id]?.heal;
+    const heal = itemDef(id)?.heal;
     if (!heal || (state.player.inv[id] ?? 0) <= 0) return;
-    if (state.player.hp >= CFG.player.maxHp) { ui.toast('Already at full health'); return; }
+    if (state.player.hp >= playerMaxHp(state)) { ui.toast('Already at full health'); return; }
     state.player.inv[id]--;
     if (state.player.inv[id] <= 0) delete state.player.inv[id];
-    state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + heal);
-    ui.toast(`Used ${ITEMS[id].name} (+${heal} hp)`, 'good');
-    log.push('system', `Used ${ITEMS[id].name} (+${heal} hp)`, state.clock);
+    state.player.hp = Math.min(playerMaxHp(state), state.player.hp + heal);
+    ui.toast(`Used ${itemName(id)} (+${heal} hp)`, 'good');
+    log.push('system', `Used ${itemName(id)} (+${heal} hp)`, state.clock);
   }
 
   function triggerGameOver(cause: 'hall_fallen' | 'old_age') {
     if (state.gameOver) return;
     state.gameOver = true;
     state.gameOverCause = cause;
-    hordes.onDawn(); // clear the field
+    hordes.clearField(); // B2: clear the field WITHOUT crediting a night survived
     if (cause === 'old_age') {
       log.push('death', `The years catch up at last. Age ${Math.floor(state.player.age)}, the dream lets go gently.`, state.clock);
     } else {
@@ -436,17 +581,43 @@ async function boot() {
   window.addEventListener('pointerdown', startAudio);
   window.addEventListener('keydown', startAudio);
 
+  // B2.1: every run starts at dawn — see daynight.startClock() for why this
+  // overturns D2. The real clock still colours the run through the witching-hours
+  // resolveNightMult; it no longer decides how much of the run is night.
+  //
+  // B2.2: this MUST stay above the `wasNight` seed below. It used to run ~35 lines
+  // later, so wasNight was read off the un-initialised clock (0 = day) and the first
+  // sim tick of any run that booted into the night saw a day→night edge that had not
+  // happened. That synthetic dusk called hordes.onDusk() — spawning a full night's
+  // wave on top of a player with a flint axe and no walls (§4) — and armed the
+  // free-night credit that survived even the gate below, because a dusk edge
+  // genuinely had fired (§5). Starting at dawn makes that unreachable in practice;
+  // the ordering stays correct on purpose rather than by luck.
+  state.clock = startClock(net.snap.timeOfDay);
+  state.bootClock = state.clock;
+
   // ---- the loop ----
   let acc = STEP;
   let wasNight = phase(state.clock).isNight;
   let frames = 0;
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
-    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, vitals, lifespan, loom, scoreboard, net }, world, player, gen, chunks,
+    // B3.a test seam: movement is composed inside sim(), so the Gauntlet can only
+    // observe it by driving the axis. Exposed for that; nothing in the game reads it.
+    input,
+    sys: { gather, economy, build, hordes, combat, worldbosses, fire, echoes, abilities, vitals, lifespan, loom, scoreboard, net, drops, weaves, hub, sounding }, world, player, gen, chunks,
+    lens, chronicle, omens,   // N4.2/N4.3 test seam: drawer, series store, omens
+    // N4.6 test seam: the Deep Vessel's live reading. Exposed because every
+    // field on it is browser-conditional — a suite has to be able to force a
+    // pressure state or a jank peak and watch the mapping move, and the real
+    // observers cannot be made to fire on demand.
+    vessel: net.vessel,
+    minimap,                  // A4 test seam
+    mods: { rules: rulesMod, loot: lootMod, items: itemsMod, effects: effectsMod },  // A1 test seam
     get log() { return log; },  // expose full GameLog (entries + export + download)
     // test hook: advance the simulation deterministically (bypasses rAF)
     step: (n = 1, dt = STEP / 1000) => { for (let i = 0; i < n; i++) sim(dt); },
-    craft: (id: string) => craft(state, id, ctx.toast, log, net),
+    craft: (id: string) => craft(state, id, ctx.toast, log, net, loom, ctx),
     // R1: the writable-world seam. __nw.core is the WorldCore wrapper (materialAt,
     // setMaterial, overrideAt, pushMaterials, stats, _activate, _deactivate).
     core: worldCore,
@@ -465,15 +636,24 @@ async function boot() {
     },
   };
 
+  // N4.6: name the vessel in the Chronicle, once, after the async half has had
+  // a moment to resolve. Deferred rather than awaited because nothing in the
+  // boot path may block on a promise — the game is already playable, and this
+  // is a line of flavour, not a dependency. If the reads never resolve the line
+  // says so ("a vessel that does not name itself") rather than not appearing,
+  // because a missing log line teaches nothing and an honest absence does.
+  setTimeout(() => {
+    net.vessel.start(Sound.context);
+    log.push('system', `The vessel: ${vesselLine(net.vessel.reading)}`, state.clock);
+    if (net.vessel.reading.reducedMotion) {
+      log.push('system', 'Reduced motion is set — the camera will hold still', state.clock);
+    }
+  }, 1200);
+
   // ?test URL param → auto-run the regression suite after a short warm-up
   if (new URLSearchParams(location.search).has('test')) {
     setTimeout(() => regression.runAll((window as any).__nw), 500);
   }
-
-  // D2: set initial clock phase to real time-of-day once; game then runs at
-  // its own speed — no per-tick nudge toward wall clock.
-  const cy = CFG.time.daySec + CFG.time.nightSec;
-  state.clock = net.snap.timeOfDay * cy;
 
   stage.app.ticker.add((tk) => {
     frames++;
@@ -498,15 +678,24 @@ async function boot() {
     const ph = phase(state.clock);
     if (ph.isNight && !wasNight) { hordes.onDusk(ph.dayIndex); Sound.play('nightfall'); net.snapshotDuskRtt(); }
     if (!ph.isNight && wasNight) {
-      hordes.onDawn();
-      net.computeNightRttStability();
-      vitals.onSurviveNight();
-      loom.onNightSurvived();  // C3: nights survived = Loom points
+      // B2: you can only survive a night you were here for. A run that boots
+      // mid-night (D2 starts the clock at real time-of-day, and 29% of the real
+      // day lands inside one) never saw the dusk transition, so this dawn is
+      // not a survival — no night, no Loom point, and no RTT stability window
+      // computed against a dusk snapshot that was never taken.
+      const fought = state.nightEntered;
+      state.nightEntered = false;
+      hordes.onDawn(fought);
       Sound.play('dawn');
-      // Action-gated beacon echo — surviving the night pings the southern beacons
-      net.probeAction('survive_night');
-      // Passive pulse drift — dawn pulse minus dusk pulse, zero HTTP
-      net.samplePassive('survive_night');
+      if (fought) {
+        net.computeNightRttStability();
+        vitals.onSurviveNight();
+        loom.onNightSurvived();  // C3: nights survived = Loom points
+        // Action-gated beacon echo — surviving the night pings the southern beacons
+        net.probeAction('survive_night');
+        // Passive pulse drift — dawn pulse minus dusk pulse, zero HTTP
+        net.samplePassive('survive_night');
+      }
     }
     wasNight = ph.isNight;
     // S1: collect RTT samples during the night for stability tracking
@@ -516,14 +705,27 @@ async function boot() {
     const feetSpeed = world.speedAt(Math.floor(player.x / TILE), Math.floor(player.y / TILE));
     // N2a: move speed modifier from echo jitter — read from mapping (live-tweakable)
     const moveSpeedMul = net.getGameValue('moveSpeed');
+    // N4.1: Silt — the world thickens as the path's buffers fill. Neutral 1.0
+    // whenever the deep wire has no reading, which is most networks.
+    const siltMul = net.getGameValue('siltDrag');
     // S1: resolve-zero speed penalty
     const resolveSpeedMul = vitals.getSpeedMult();
-    // C3: Loom move speed modifier
-    const loomSpeedMul = 1 + (loom.ensureMods().moveSpeedPct / 100);
+    // C3: Loom move speed modifier. B3.a: this also carries Deep Roots' "you move
+    // 12% slower", which was advertised and never implemented.
+    const loomSpeedMul = loom.getMoveSpeedMul();
     // N2b: material speed burst (e.g. Flux Crystal exit)
     const matSpeedMul = matFx.speedBurst;
+    // N4.3: Quickening speeds the world up, Miring thickens it. They share this
+    // target deliberately, so a link that is both fast and bloated cancels out.
+    const omenSpeedMul = omens.mul('moveSpeed');
+    // A1: 'Swift' speeds you up, 'of Weight' (a Riftborn curse) drags.
+    const gearSpeedMul = gearMod(state, 'moveSpeed');
+    // C4: 'move_burst_on_kill' — hordes.hurt arms a window on a kill; this is
+    // the half that was missing. 1.0 when the window is shut, so it costs a
+    // multiply and no branch.
+    const burstMul = moveBurstMul(state);
     const moved = player.update(dt, a.x, a.y, (x, y) => world.canStand(x, y),
-      feetSpeed * moveSpeedMul * resolveSpeedMul * loomSpeedMul * matSpeedMul);
+      feetSpeed * moveSpeedMul * resolveSpeedMul * loomSpeedMul * matSpeedMul * siltMul * omenSpeedMul * gearSpeedMul * burstMul);
     state.player.x = player.x;
     state.player.y = player.y;
 
@@ -538,8 +740,10 @@ async function boot() {
     combat.update(effectiveDt);
     hordes.update(effectiveDt);
     worldbosses.update(effectiveDt);
+    drops.update(effectiveDt);   // B5: after every loot producer, so a kill's drop integrates the same tick
     fire.update(effectiveDt);
     echoes.update(effectiveDt);
+    abilities.update(effectiveDt);   // A3: reconciles the bar with what is held
     vitals.update(effectiveDt);
     matFx.update(effectiveDt);  // N2b: material tile effects
     build.updateDecay(effectiveDt);  // C2: disconnect decay
@@ -577,31 +781,32 @@ async function boot() {
   function render(alpha: number, frameMs: number) {
     const [fx, fy] = player.render(alpha);
     player.cont.zIndex = fy;
+    // N4.6: honour prefers-reduced-motion. Re-read every frame rather than
+    // latched at boot, because the setting can be toggled mid-session and the
+    // person toggling it is doing so precisely because something on screen is
+    // making them ill right now — a value that only takes effect on the next
+    // page load is not an accessibility setting, it is a promise of one.
+    cam.motionScale = net.vessel.reading.reducedMotion ? 0 : 1;
     cam.follow(fx, fy);
 
     const w = stage.app.screen.width, h = stage.app.screen.height;
     // world core first — activate/deactivate chunks so the baker below reads the
     // EFFECTIVE (override-aware) materials for anything freshly scrolled in
     worldCore.ensureAround(fx, fy, w / cam.zoom, h / cam.zoom);
-    chunks.setPlayerPos(fx, fy);
+
     chunks.ensureAround(fx, fy, w / cam.zoom, h / cam.zoom);
     chunks.tickFoam(performance.now());
     chunks.tickGlow(performance.now());
+    chunks.tickRelief(state.clock);
 
-    views.syncFoes(hordes.foes, alpha);
+    views.syncFoes(hordes.foes, alpha, activeEffects(state).has('see_foe_hp'), state.player.x, state.player.y);
     views.syncBosses(state.worldBosses, alpha);
+    views.syncDrops(state.drops, state.clock, net.getGameValue('dropMemory'));   // B5 + N4.6
     for (const b of state.buildings) views.syncBuilding(b);
 
     const ph = phase(state.clock);
     const threat = worldbosses.nearestThreatTiles();
     const bossNear = threat != null && threat < CFG.worldBoss.warnTiles;
-    const bossLordId = bossNear ? worldbosses.nearestThreatLordId() : null;
-
-    // Combat mood: enemies nearby but no boss → combat music; boss near → per-boss or generic boss
-    const foesNear = !bossNear && hordes.foes.some((f: any) => {
-      const d = Math.hypot(f.x - fx, f.y - fy) / TILE;
-      return d < 10; // within ~10 tiles
-    });
 
     // ambient tint = day/night light blended toward the current dream's mood
     const base = tintAt(state.clock);
@@ -622,9 +827,12 @@ async function boot() {
     if (activeEffects(state).has('night_vision')) fogI *= 0.65;
     fog.update(fogI);
 
-    Sound.setMood(state.gameOver ? 'dead' : bossNear ? 'boss' : foesNear ? 'combat' : ph.isNight ? 'night' : 'day');
-    if (bossLordId) Sound.setBossMood(bossLordId);
-    else Sound.setBossMood(null);
+    // A4: drawn after the fog so the radar is never dimmed by it — the point of
+    // a radar is that it works when sight does not.
+    minimap.setVisible(CFG.loot.minimap !== false && !ui.isOpen());
+    if (CFG.loot.minimap !== false) minimap.draw(state, performance.now(), hordes.foes, net.getGameValue('scrying'));
+
+    Sound.setMood(state.gameOver ? 'dead' : bossNear ? 'boss' : ph.isNight ? 'night' : 'day');
     ui.refresh();
     floaters.update(performance.now() / 1000, cam);
 
@@ -714,12 +922,23 @@ async function boot() {
         'cellular': [255, 192, 192],  // harsh red
         'unknown': [200, 200, 200],   // neutral
       };
-      const gradeTint = gradeColors[biome.id] ?? gradeColors['unknown'];
-      const gradeStrength = 0.06; // subtle — per G1 spec (5-10%)
+      let gradeTint = gradeColors[biome.id] ?? gradeColors['unknown'];
+      let gradeStrength = 0.06; // subtle — per G1 spec (5-10%)
 
       // Vignette: darker at night, darker when offline
       let vignetteI = ph.isNight ? 0.25 : 0.10;
       if (!net.snap.online) vignetteI += 0.15;
+      // N4.3: a Surge is packet loss made visible. The plan asks for loss to be
+      // FRIGHTENING, and a number in a panel is not frightening — the vignette
+      // closes in and the grade turns hostile for as long as the wire is
+      // fraying. Scaled by CFG.omens.surgeFxStrength so it is one number to
+      // turn down if it reads as too much in playtest.
+      if (omens.has('surge')) {
+        const k = Math.max(0, Math.min(1, CFG.omens.surgeFxStrength));
+        vignetteI += 0.22 * k;
+        gradeTint = [255, 120, 120];
+        gradeStrength = 0.06 + 0.10 * k;
+      }
 
       const ppCfg: PostProcessConfig = {
         bloomSpots,
@@ -730,10 +949,8 @@ async function boot() {
       post.apply(stage.app.screen.width, stage.app.screen.height, ppCfg, stage.app.canvas);
     }
 
-    // update Resonance panel
-    if (obsPanel.style.display !== 'none') {
-      updateObservatory();
-    }
+    // N4.2: self-throttling to 4 Hz and a no-op while the drawer is closed.
+    lens.refresh();
 
     // sim tick — R2: this is where the fire CA actually advances. Feed REAL elapsed wall-clock
     // time (frameMs), not the fixed sim step: render() runs once per rendered frame regardless
@@ -747,186 +964,35 @@ async function boot() {
     // poll browser metrics & push to Rust core (non-blocking)
     net.update(performance.now());
     net.recordHistory(performance.now());
+    // N4.2: one Chronicle sample per second, keyed on the WORLD clock so the
+    // series lines up with the run's own events rather than with wall time.
+    if (state.clock - lastChronicleT >= 1) {
+      lastChronicleT = state.clock;
+      sampleChronicle(chronicle, net, state.clock);
+      // A detected step is content twice over: a Feed line in the Feed's own
+      // voice, and an offer to the Omen system, which may raise a world state
+      // with a multiplier behind it. takeEvents() drains only the undelivered
+      // queue — `chronicle.events` stays intact for the Lens and the export.
+      for (const ev of chronicle.takeEvents()) {
+        log.push('resonance', `${ev.label} stepped ${ev.dir === 'up' ? 'up' : 'down'}: `
+          + `${ev.from.toFixed(1)} → ${ev.to.toFixed(1)} (${Math.abs(ev.sigma).toFixed(1)}σ)`, state.clock);
+        omens.consider(ev);
+      }
+      omens.tick();
+      // A8: sweep expired boons and say what lifted. Cosmetic by design — every
+      // reader filters on the clock anyway, so a missed tick costs a Feed line
+      // and nothing else. See tickBoons() for why that is the right way round.
+      for (const b of tickBoons(state)) {
+        log.push('resonance', `${b.name} fades`, state.clock);
+      }
+    }
     worldCore.pushNetworkParams(net.packForCore());
     const changed = worldCore.drainEvents();
     fire.onWorldEvents(changed);
     if (changed.length) worldCore.bumpRebakes(chunks.rebakeTiles(changed));
   }
 
-  // N2a: Lens update — rebuilds all 7 sections with inspect data attributes
-  function updateObservatory() {
-    const body = document.getElementById('nw-lens-body');
-    if (!body) return;
-    const s = net.snap;
-    const biome = net.getBiome();
-    const stability = net.getStability();
-    const profile = (net as any).computeRealmProfile?.() ?? { median: s.rtt, variance: s.jitter * s.jitter };
 
-    const attr = (key: string) => `data-inspect-key="${key}"`;
-
-    let html = '';
-
-    // ── 1. Connection ──
-    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
-    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">CONNECTION</div>';
-    html += `<div style="display:flex;gap:8px;">`;
-    html += `<span ${attr('connection-rtt')} style="color:#f96;cursor:help;">RTT <b>${s.rtt.toFixed(0)}</b>ms</span>`;
-    html += `<span ${attr('connection-dl')} style="color:#6cf;cursor:help;">DL <b>${s.downlink.toFixed(1)}</b>Mbps</span>`;
-    html += `<span ${attr('connection-jitter')} style="color:#fc6;cursor:help;">Jit <b>${s.jitter.toFixed(1)}</b>ms</span>`;
-    html += `</div>`;
-    html += `<div style="font-size:8px;color:#556;margin-top:1px;">`;
-    html += `RTT quantized to 25 ms by browser · DL capped at 10 Mbps`;
-    html += `<br>effectiveType: ${s.effectiveType} · type: ${s.connectionType || '— (desktop browsers hide this)'}`;
-    html += ` · saveData: ${(navigator as any).connection?.saveData ? 'yes' : 'no'} · online: ${s.online}`;
-    html += `</div></div>`;
-
-    // ── 2. Realm profile ──
-    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
-    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">REALM PROFILE</div>';
-    html += `<div ${attr('realm-profile')} style="cursor:help;">echo median ${profile.median.toFixed(0)}ms · variance ${(profile.variance).toFixed(0)} → <b style="color:${biome.hex}">${biome.name}</b></div>`;
-    html += `<div style="margin-top:2px;height:3px;background:#222;border-radius:2px;overflow:hidden;">`;
-    html += `<div style="height:100%;width:${Math.round(stability*100)}%;background:${biome.hex};transition:width 0.5s;"></div></div>`;
-    html += `<div ${attr('realm-stability')} style="font-size:9px;color:#666;cursor:help;">Stability ${Math.round(stability*100)}%</div></div>`;
-
-    // ── 3. Routes ──
-    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
-    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">ROUTES</div>';
-    html += `<div ${attr('routes-origin')} style="font-size:9px;cursor:help;"><b>this origin</b> DNS ${s.pageDnsTime.toFixed(0)}ms · TCP — · TLS ${s.pageTlsTime.toFixed(0)}ms · TTFB ${s.pageTtfb.toFixed(0)}ms <span style="color:#585;">measured</span></div>`;
-    const base = (net as any).baseline;
-    if (base) {
-      html += `<div ${attr('routes-baseline')} style="font-size:9px;cursor:help;color:#8c8;">baseline ${base.ms.toFixed(0)}ms · dns ${base.dns.toFixed(0)} · tcp ${base.tcp.toFixed(0)} · tls ${base.tls.toFixed(0)} · ttfb ${base.ttfb.toFixed(0)}${base.proto ? ` · ${escapeHtml(base.proto)}` : ''}</div>`;
-    }
-    const wire = (net as any).wireStats?.();
-    if (wire) {
-      html += `<div ${attr('routes-gate')} style="font-size:8px;color:#667;cursor:help;">gate: ${wire.granted} sent · ${wire.denied} throttled${wire.off ? ' · PROBING OFF' : ''}</div>`;
-      for (const r of wire.resolvers) {
-        html += `<div ${attr('routes-resolver')} style="font-size:8px;color:#778;cursor:help;">resolver ${escapeHtml(r.label)} · n=${r.n} · avg ${r.avg.toFixed(0)}ms · best ${r.best.toFixed(0)}ms</div>`;
-      }
-    }
-    const probes = s.endpointProbes ?? [];
-    const seen = new Set<string>();
-    for (const p of probes) {
-      if (seen.has(p.label)) continue; seen.add(p.label);
-      const route = (net as any).echoSamples?.get(p.host ?? p.label) as number[] | undefined;
-      const last = p.rtt > 0 ? p.rtt : '—';
-      const best = route?.length ? Math.min(...route).toFixed(0) : last;
-      const med = route?.length ? [...route].sort((a,b)=>a-b)[Math.floor(route.length/2)].toFixed(0) : last;
-      const warm = (net as any).warmedRoutes?.has(p.host ?? p.label) ? '🔥' : '';
-      const ip = (p as any).ip ? escapeHtml((p as any).ip) : (p.detail ? escapeHtml(p.detail) : '—');
-      const ttl = (p as any).ttl ? ` · ttl ${(p as any).ttl}` : '';
-      const dnssec = (p as any).ad ? ' · 🔒' : '';
-      const via = (p as any).resolver ? ` · via ${escapeHtml((p as any).resolver)}` : '';
-      html += `<div ${attr(p.label)} style="font-size:9px;cursor:help;">${warm} ${p.label} → <span style="color:#9bd;">${ip}</span> · ${last}ms · best ${best} · med ${med} · n=${route?.length ?? 0}${ttl}${dnssec}${via}</div>`;
-    }
-    if (!probes.length) html += '<div style="font-size:9px;color:#555;">No routes resolved yet — the scheduler resolves one every few seconds</div>';
-    html += '</div>';
-
-    // ── 4. Identity ──
-    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
-    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">IDENTITY</div>';
-    const idRevealed = (net as any).identityFetched;
-    // Review fix: isp/city/country/asn/colo come verbatim from third-party
-    // JSON (ipapi.co) / text (cloudflare trace) responses with no
-    // sanitization, then went straight into innerHTML — escape before
-    // interpolating so a markup-bearing registrant/org string can't inject.
-    const unrev = '— unrevealed (explore to reveal)';
-    html += `<div ${attr('identity-ip')} style="font-size:9px;cursor:help;">IP: ${idRevealed && s.publicIp !== '...' ? escapeHtml(s.publicIp) : unrev}</div>`;
-    html += `<div ${attr('identity-isp')} style="font-size:9px;cursor:help;">PTR: ${idRevealed && s.isp !== '...' ? escapeHtml(s.isp) : unrev}</div>`;
-    html += `<div style="font-size:9px;">Country: ${idRevealed && s.country !== '..' ? escapeHtml(s.country) : '—'} · <span style="color:#887;">city/ASN need a geo-IP vendor — none is contacted</span></div>`;
-    html += `<div ${attr('identity-colo')} style="font-size:9px;cursor:help;">CF colo: ${s.colo !== '...' ? escapeHtml(s.colo) : '—'} · warp: ${s.warp ? 'yes' : 'no'}</div>`;
-    const tls = (net as any).tlsVersion, kex = (net as any).kex, proto = (net as any).httpProto;
-    html += `<div ${attr('identity-tls')} style="font-size:9px;cursor:help;">TLS: ${tls ? escapeHtml(tls) : '—'} · kex: ${kex ? escapeHtml(kex) : '—'} · proto: ${proto ? escapeHtml(proto) : '—'}</div>`;
-    const skew = (net as any).clockSkewMs ?? 0;
-    html += `<div ${attr('identity-skew')} style="font-size:9px;cursor:help;">Clock drift: ${skew > 0 ? '+' : ''}${(skew / 1000).toFixed(2)}s vs internet time</div>`;
-    html += `<div style="font-size:9px;color:#887;">local gateway / LAN — not observable from a browser</div>`;
-    html += '</div>';
-
-    // ── 5. Vessel ──
-    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
-    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">VESSEL</div>';
-    const ua = navigator.userAgent;
-    const brand = /Edge|Chrome|Firefox|Safari/.exec(ua)?.[0] ?? '—';
-    html += `<div ${attr('vessel-ua')} style="font-size:9px;cursor:help;">UA: ${brand} · cores: ${s.cpuCores} · RAM: ${s.deviceMemory}GB</div>`;
-    html += `<div ${attr('vessel-screen')} style="font-size:9px;cursor:help;">Screen: ${screen.width}×${screen.height} @${devicePixelRatio}x · lang: ${navigator.language} · tz: ${Intl.DateTimeFormat().resolvedOptions().timeZone}</div>`;
-    const gl = document.createElement('canvas').getContext('webgl2') || document.createElement('canvas').getContext('webgl');
-    const gpu = (gl as any)?.getParameter?.(gl?.RENDERER) ?? '—';
-    html += `<div ${attr('vessel-gpu')} style="font-size:9px;cursor:help;">GPU: ${gpu}</div>`;
-    html += '</div>';
-
-    // ── 6. Threads (decoder ring) ──
-    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
-    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">THREADS</div>';
-    const gmCtx = { snap: net.snap, distinctRegionsProbed: (net as any).distinctRegionsProbed ?? 0 };
-    for (const gm of NET_GAME_MAP) {
-      const raw = net.get(gm.netKey);
-      const val = Math.max(gm.min, Math.min(gm.max, gm.transform(raw, gmCtx)));
-      // Dormant threads: the mapping computes truthfully but no system consumes it yet.
-      const dim = gm.dormant ? 'opacity:0.4;' : '';
-      const tag = gm.dormant ? ' <span style="color:#557;">dormant</span>' : '';
-      html += `<div ${attr(gm.target)} style="font-size:9px;cursor:help;${dim}">${gm.label} ×${val.toFixed(2)} ← ${gm.netKey} ${raw.toFixed(1)} (clamp ${gm.min}–${gm.max})${tag}</div>`;
-    }
-    html += `<div style="font-size:9px;">Realm ← ${biome.name} (${biome.id})</div>`;
-    html += '</div>';
-
-    // ── 7. Feed (last 30 truth-kind entries) ──
-    html += '<div style="margin-bottom:6px;border-bottom:1px solid #2a2a3a;padding-bottom:4px;">';
-    html += '<div style="color:#888;font-size:9px;margin-bottom:2px;">FEED</div>';
-    const feedEntries = log.recentFeed(30);
-    if (!feedEntries.length) {
-      html += '<div style="font-size:9px;color:#555;">No truth events yet</div>';
-    } else {
-      for (const e of feedEntries) {
-        const t = Math.floor(e.t);
-        const ts = `${String((t/60)|0).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
-        const kindLabel = NET_LOG_LABELS[e.kind] ?? e.kind;
-        const styledMsg = styleNetworkMsg(e.msg);
-        html += `<div ${attr('feed-entry')} style="font-size:8px;color:#888;cursor:help;">[${ts}] <span style="color:#f96;">${kindLabel}</span> ${styledMsg}</div>`;
-      }
-    }
-    html += '</div>';
-
-    body.innerHTML = html;
-  }
-
-  /** Draw a sparkline on a canvas element by id. */
-  function drawSparkline(canvasId: string, data: number[], color: string, yMin: number, yMax: number) {
-    const canvas = document.getElementById(canvasId) as HTMLCanvasElement | null;
-    if (!canvas || data.length < 2) return;
-    const ctx2d = canvas.getContext('2d');
-    if (!ctx2d) return;
-    const w = canvas.width, h = canvas.height;
-    ctx2d.clearRect(0, 0, w, h);
-
-    // find actual data range
-    let dMin = Infinity, dMax = -Infinity;
-    for (const v of data) { if (v < dMin) dMin = v; if (v > dMax) dMax = v; }
-    if (dMax === dMin) { dMin -= 1; dMax += 1; }
-    // clamp to sensible display range
-    const dispMin = yMin > 0 ? Math.min(dMin, yMin) : dMin;
-    const dispMax = yMax > 0 ? Math.max(dMax, yMax) : dMax;
-    const range = dispMax - dispMin || 1;
-
-    const scaleX = w / Math.max(data.length - 1, 1);
-    const scaleY = (h - 4) / range;
-
-    // draw line
-    ctx2d.strokeStyle = color;
-    ctx2d.lineWidth = 1.5;
-    ctx2d.beginPath();
-    for (let i = 0; i < data.length; i++) {
-      const x = i * scaleX;
-      const y = h - 2 - (data[i] - dispMin) * scaleY;
-      if (i === 0) ctx2d.moveTo(x, y);
-      else ctx2d.lineTo(x, y);
-    }
-    ctx2d.stroke();
-
-    // draw min/max labels
-    ctx2d.fillStyle = '#666';
-    ctx2d.font = '8px monospace';
-    ctx2d.fillText(dispMax.toFixed(0), 2, 8);
-    ctx2d.fillText(dispMin.toFixed(0), 2, h - 2);
-  }
 }
 
 // ---- helpers ----
@@ -1034,7 +1100,7 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
         for (const id of ['log', 'plank', 'stone', 'copper_bar', 'fine_log'])
           state.player.inv[id] = (state.player.inv[id] ?? 0) + 10;
         ctx.toast('debug: +materials'); break;
-      case 'h': state.player.hp = CFG.player.maxHp; break;
+      case 'h': state.player.hp = playerMaxHp(state); break;
       case 'j': hordes.onDusk(phase(state.clock).dayIndex); break; // force a wave
       case 'u': { // god/test mode: immortal + effectively infinite everything
         state.god = !state.god;
@@ -1046,7 +1112,7 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
           state.player.gold += 99999;
           for (const id of Object.keys(ITEMS)) state.player.inv[id] = 9999;
           for (const s of SKILLS) state.player.xp[s.id] = Math.max(state.player.xp[s.id] ?? 0, 1e7);
-          state.player.hp = CFG.player.maxHp;
+          state.player.hp = playerMaxHp(state);
         }
         ctx.toast(`debug: god mode ${state.god ? 'ON — immortal, everything unlocked' : 'OFF'}`, state.god ? 'good' : 'info');
         ctx.log?.push('system', `God mode ${state.god ? 'enabled' : 'disabled'}`, state.clock);
@@ -1059,7 +1125,7 @@ function setupDebug(ctx: any, hordes: HordeSystem, worldbosses: WorldBossSystem)
   (window as any).NW = { ...((window as any).NW ?? {}), CFG, state, MATS: MATERIALS, ENEMIES, NET: ctx.net };
 }
 
-import { ITEMS } from './game/data/items';
+import { ITEMS, itemDef, itemName } from './game/data/items';
 import { SKILLS } from './game/data/skills';
 import { ENEMIES } from './game/data/enemies';
 boot();

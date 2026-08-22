@@ -5,13 +5,13 @@
 // Slain, they re-form deeper in the network, stronger (Diablo-GR style).
 import { CFG } from '../data/config';
 import { ENEMIES, type EnemyDef } from '../data/enemies';
-import { ITEMS } from '../data/items';
-import { acquireGear, addXp, awardSoulXp, hall, invAdd, rollLoot, territoryScore } from '../rules';
+import { addXp, awardSoulXp, hall, rollLoot, territoryScore } from '../rules';
 import type { WorldBoss } from '../state';
 import { TILE } from '../world/worldgen';
 import { REGION, domainAtRegion, regionCenterPx } from '../world/domains';
 import { hash2 } from '../../engine/rng';
 import { Sound } from '../../engine/audio';
+import { levelUpFlourish } from './flourish';
 
 const defOf = (id: string): EnemyDef => ENEMIES.find((e) => e.id === id)!;
 
@@ -36,19 +36,6 @@ export class WorldBossSystem {
       if (best == null || d < best) best = d;
     }
     return best;
-  }
-
-  /** Lord ID of the nearest hunting boss, or null — drives per-boss music. */
-  nearestThreatLordId(): string | null {
-    const p = this.ctx.state.player;
-    let best: number | null = null;
-    let bestLord: string | null = null;
-    for (const b of this.alive()) {
-      if (!b.hunting) continue;
-      const d = Math.hypot(b.x - p.x, b.y - p.y) / TILE;
-      if (best == null || d < best) { best = d; bestLord = b.lordId; }
-    }
-    return bestLord;
   }
 
   // ---- spawning / reviving ------------------------------------------------
@@ -117,7 +104,11 @@ export class WorldBossSystem {
     const p = state.player;
     const hallB = hall(state);
     const terr = territoryScore(state);
-    const goldRoused = state.player.gold >= CFG.worldBoss.wakeGold;
+    // B3.a: Night Market advertises "gold rouses bosses at HALF the threshold".
+    // loom.getBossWakeGold() has existed since C3 and was called by nothing, so
+    // the keystone's second clause did not exist in the game.
+    const wakeGold = this.ctx.loom?.getBossWakeGold?.() ?? CFG.worldBoss.wakeGold;
+    const goldRoused = state.player.gold >= wakeGold;
     const territoryRoused = terr >= CFG.worldBoss.wakeTerritory || this.ctx.isNight() || goldRoused;
 
     for (const b of state.worldBosses as WorldBoss[]) {
@@ -131,7 +122,12 @@ export class WorldBossSystem {
         b.telegraphT -= dt;
         if (b.telegraphT <= 0) {
           const dPlyNow = Math.hypot(p.x - b.x, (p.y - 10) - b.y);
-          if (dPlyNow < CFG.worldBoss.attackReachPx + CFG.combat.telegraphSlackPx) {
+          // N4.6 Mercy — the same compensation the horde's telegraph gets, and
+          // it matters more here: a lord's swing is the biggest single number
+          // in the game, and losing one to a dropped frame is the worst version
+          // of the unfairness this multiplier exists to remove.
+          const slack = CFG.combat.telegraphSlackPx * (this.ctx.net?.getGameValue?.('mercy') ?? 1);
+          if (dPlyNow < CFG.worldBoss.attackReachPx + slack) {
             this.ctx.damagePlayer(b.dmg, b.name);
             this.ctx.cam.shake?.(7);
           } else {
@@ -238,14 +234,26 @@ export class WorldBossSystem {
 
     const def = defOf(b.defId);
     const [gmin, gmax] = CFG.worldBoss.goldOnKill;
-    state.player.gold += gmin + Math.floor(Math.random() * (gmax - gmin + 1)) + b.level * 20;
-    for (const d of rollLoot(def.loot)) {
-      invAdd(state, d.id, d.n); acquireGear(state, d.id);
-      this.ctx.toast(`+${d.n} ${ITEMS[d.id].name}`, 'good');
+    const goldWon = gmin + Math.floor(Math.random() * (gmax - gmin + 1)) + b.level * 20;
+    // B5 Q2: a lord is a boss by construction — there is no enemy row to read a
+    // `boss` flag off, which is why awardGold takes the claim as an argument.
+    // At the shipped 'boss' setting this hoard bursts across the floor with the
+    // relics, which is the only reason the number was ever worth this much.
+    this.ctx.drops.awardGold(goldWon, b.x, b.y, true);
+    // B5: a lord's hoard bursts outward rather than teleporting into the bag.
+    // Relics are gear, so they never despawn — nothing rare is ever lost to a timer.
+    // A1: a domain lord is the only ordinary route to a Sovereign — floor
+    // Hallowed, ceiling Sovereign. See LOOT_BANDS in data/rarity.ts.
+    this.ctx.drops.spawn(rollLoot(def.loot), b.x, b.y, { spread: 1.8, band: 'lord' });
+    // A5: a lord leaves its element's thread — the elite drop this build has,
+    // until A2's elites take over the job.
+    const threadItem = this.ctx.weaves?.threadForBoss?.(b.defId);
+    if (threadItem) {
+      this.ctx.drops.spawn([{ id: threadItem, n: CFG.weaves.threadsPerLordKill }], b.x, b.y, { spread: 1.2 });
     }
     if (fromPlayer) {
       const lvl = addXp(state, 'combat', def.xp);
-      if (lvl) { this.ctx.toast(`Combat reached level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Combat reached level ${lvl}`, state.clock); }
+      if (lvl) { levelUpFlourish(this.ctx); this.ctx.toast(`Combat reached level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Combat reached level ${lvl}`, state.clock); }
       if (state.player.equip?.charm) {
         const cl = awardSoulXp(state, 'charm', CFG.soulgear.charmXpPerKill * 10); // bosses feed charms well
         if (cl) { this.ctx.toast(`Your charm drinks deep — soul level ${cl}!`, 'good'); this.ctx.log?.push('level', `Charm reached soul level ${cl}`, state.clock); }
@@ -253,6 +261,8 @@ export class WorldBossSystem {
     }
     // S1: a boss kill always feeds vitals — never AFK (locked spec)
     this.ctx.vitals?.onKill?.(true);
+    // A5: Hollow Song stacks on top of the S1 resolve-per-kill
+    this.ctx.weaves?.onKill?.();
     // Review fix: this call was missing entirely — hordes.ts calls
     // scoreboard.onKill on every foe death, but world bosses (the only
     // enemies with `boss: true`) never went through that path, so

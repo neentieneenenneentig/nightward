@@ -1,4 +1,10 @@
-# NIGHTWARD — Roadmap (Batch 7 "Soul-Forged" — ACTIVE 2026-07-19)
+# NIGHTWARD — Roadmap
+
+This file is the **ship record**: newest first, one entry per milestone, what it changed and
+what it caught. It is not a plan. Live plans are [`A-arsenal.md`](A-arsenal.md) (Batch A) and
+[`N4-deep-wire.md`](N4-deep-wire.md) (the N4 phases); what the game *is* lives in
+[`../GDD.md`](../GDD.md); how we work lives in [`WORKFLOW.md`](WORKFLOW.md). A plan that has
+shipped is deleted, not archived — see "Retired plan documents" at the bottom.
 
 > **Pivot (2026-07-16):** The world is no longer a dream — it's your network. Live browser
 > network metrics (RTT, jitter, bandwidth, connection type, real clock) drive every game
@@ -6,11 +12,1057 @@
 > — but its parameters are now live functions of your internet connection. Same tab, same
 > seed, totally different world depending on where and how you're connected.
 
-**Status: L1 "The Lifespan" SHIPPED ✅ (2026-07-31).** Branch `u2-grimdark`.
-Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions PASSED**
-(live-verified 3× consecutively via headless Chrome + raw CDP at `?gl&seed=1234`, zero flakes).
+## Where we are — 2026-08-22
+
+**Active branch: `dev/night-build`.** Nineteen milestones are shipped-and-unmerged on it —
+B5, B6, N4.1, N4.2, N4.3, N4.4, N4.5, N4.6, N4.7, N4.7b, A1, A2, A3, A4, A5, A6, A7, A8 and
+the C4 repair. `main` is still at the last tagged release, and nothing merges to it without
+explicit sign-off.
+
+**Gauntlet 2653 across 140 tests**, green. Typecheck clean on both tsconfigs, build green.
+(Counts drift by a few from RNG-dependent assertion loops — the test *names* are the
+regression signal, not the total.)
+
+> ### Both live plans are now fully built.
+>
+> [`A-arsenal.md`](A-arsenal.md) and [`N4-deep-wire.md`](N4-deep-wire.md) have no unshipped
+> phases left. **A2** was unblocked on 2026-08-22 when both its N4.3 numbers were decided and
+> shipped the same day; **A7** was welded to **N4.5** by its own brief and the two shipped as
+> one selector; **N4.6** and **N4.7** followed; and **N4.7b** closed §2.6, the last unbuilt
+> section in either document.
+>
+> By this file's own doctrine a plan that has shipped is **deleted, not archived** — see
+> *Retired plan documents* at the bottom. Neither has been retired yet, because one idea in
+> each is still standing and the call on whether it is worth keeping is the user's:
+>
+> | document | what is left in it | worth building? |
+> |---|---|---|
+> | `N4-deep-wire.md` §2.8f | **Connection-limit probing.** Fire N parallel requests at an `h1` host and an `h2` host; the HTTP/1.1 six-connection limit shows up as visible head-of-line stair-stepping while h2 multiplexes flat. Researched, never phased — it is in §2.8's list but in no phase row | costs a handful of requests. Would pair naturally with N4.7's Protocol Reality panel, which currently *names* the protocol without demonstrating what it changes |
+> | `A-arsenal.md` §4.3 | **Classes, declined.** Recorded as a decision, not a gap | no — the verdict was to build the Loom out instead, and the Loom is built |
+>
+> Everything else in both files is either shipped or an answered question. Say the word and
+> they get deleted with their path and sha recorded below, the way `BG-batch-proposal.md` was.
+
+### Open and owed
+
+| | what | decided by |
+|---|---|---|
+| **playtest verdict** | **eighteen** milestones — Batch G, Batch B, `fix/sound-rollback`, N4.1–N4.7b, A1–A8, the C4 repair. Automated pass started 2026-08-22; the **feel** verdict is still owed and cannot be delegated | user |
+| **merge to `main`** | `dev/night-build` is 68 commits and nineteen milestones ahead. Nothing merges without an explicit go-ahead | user |
+| **retire the plan docs** | both live plans are fully built. Delete them (recording path + sha) or keep them for §2.8f? | user |
+| **balance queue** | **done, 2026-08-22.** Seven applied, one overturned by its own re-measurement — see below | — |
+| **unstarted, ungated** | **none.** Both batches are complete | — |
+| **unstarted, gated** | **none** | — |
 
 ---
+
+> ## N4.7b — The UDP path, 2026-08-22 (branch `dev/night-build`, unmerged)
+>
+> §2.6 was the last unbuilt section in either live plan. Every measurement this project had
+> ever taken rode TCP over HTTPS — `fetch`, the Performance API waterfalls, the trace, the
+> DoH resolvers, the Sounding's download. A STUN binding request is **UDP** and takes a
+> different path through the same network. Two roads out of the same house, and the game had
+> only ever walked down one.
+>
+> `systems/udp.ts` gathers ICE candidates against the two public STUN servers the plan names.
+> No media, no `getUserMedia`, no permission prompt, no data channel that ever opens, no peer
+> on the other end — about 200 bytes, once per run. They are now named in the **boot
+> disclosure** alongside the HTTPS endpoints, because a disclosure that enumerates only what
+> you reached with `fetch()` is a disclosure with a hole in it.
+>
+> Two mappings, both with a real consumer:
+>
+> | mapping | reads | drives | band |
+> |---|---|---|---|
+> | **The Warded Gate** | NAT class | building `maxHp`, applied once at placement | 0.9 / 1.0 / 1.2 |
+> | **The Swift Road** | time to first reflexive candidate | ability cooldowns | 0.85–1.15× |
+>
+> A NAT is literally the wall between a home network and the internet, and the three classes
+> are three strengths of wall. A symmetric NAT — the configuration that *breaks* peer-to-peer
+> games — is the strictest thing a consumer network does, and this repays it. Applied once at
+> placement beside the Loom multiplier and A1's Rooted, for their reason: carrying a laptop
+> onto a different network must not retroactively weaken a wall already standing.
+>
+> And the fourth masking signal §2.8c asked for from the start: the address STUN saw over UDP
+> against the one the trace saw over TCP. Worth 0.35 — a split tunnel or a TCP-only proxy has
+> few innocent explanations, but CGNAT and multi-WAN policy routing are two of them.
+>
+> ### The measurement that overturned the first classifier
+>
+> The first version read one `srflx` candidate from two configured servers and concluded
+> `unknown` — a comparison needs two. That was wrong, and it was wrong on the most common home
+> network there is. Measured, headless, each server alone and then together:
+>
+> | configured | srflx back | port | first answer | gathering |
+> |---|---|---|---|---|
+> | google only | 1 | 56672 | 35 ms | complete |
+> | cloudflare only | 1 | 51079 | 11 ms | complete |
+> | **both** | **1** | — | — | complete in 138 ms |
+>
+> Both alive, both fast, both answering. What happens with both configured is that ICE
+> **prunes redundant candidates** — two `srflx` entries with the same address and port are the
+> same candidate. The missing second candidate is not a silence. **It is the two servers
+> agreeing, and agreement is precisely the cone finding.**
+>
+> So: gathering completed on its own, two or more servers asked, exactly one v4 reflexive
+> candidate back ⇒ **cone**. A symmetric NAT gives the two servers different ports, the
+> candidates are not redundant, neither is pruned, and both arrive. A timeout stays `unknown`,
+> because a gather that never finished cannot tell a pruned duplicate from a server that went
+> quiet.
+>
+> That is a *deduction from browser behaviour*, not a comparison of two numbers, so the
+> reading carries `inferred` and the Lens tags it `derived` rather than `measured`. **Collapsing
+> those two would be the quietest possible lie on a panel whose entire job is honesty tags.**
+>
+> The same experiment settled a second thing: `relatedPort` on a `srflx` candidate is **0** in
+> Chrome, not the local port. The per-socket grouping stays — Firefox does populate it, and
+> grouping by a constant is harmless — but the comment now says so, because code that looks
+> like it is doing work and is not is worse than code that does nothing.
+>
+> ### And then the same discipline turned on the row itself
+>
+> The Swift Road shipped saying "how fast the OTHER road answers", and that overclaimed. Six
+> bare ICE gathers run *inside the running game page*, against the same two servers:
+>
+> `1215, 161, 159, 170, 178, 179 ms` — and this milestone's own walk reads **164 ms**, right in
+> that band, which is how we know the implementation measures what a bare gather measures.
+>
+> The identical gather on an idle `about:blank` page: **11 ms and 35 ms**. So roughly 150 ms of
+> every in-game reading is ICE agent startup plus a callback queued behind the render loop, and
+> only the remainder is the wire. It is a **machine-and-network** number, and the fiction now
+> says "this vessel walking the road" rather than "the road".
+>
+> The outlier is the part that mattered. **That first 1215 ms sample is a cold ICE stack, not a
+> slow network** — and the walk happens *once per run*, so a single cold sample would have
+> pinned an entire run's ability cooldowns at the worst end of the band, invisibly, on any
+> player whose first sensor poll caught a cold stack. `COLD_STUN_MS = 600` discards a reading
+> that high rather than punishing it, which is pillar 5 applied to a reading rather than to a
+> missing API: **a number we do not trust maps to the neutral value, never to a penalty.**
+>
+> ### Two smaller corrections it forced
+>
+> **A trait promised in a doc string is the dormant row wearing a different hat.**
+> `identity-ipv6` had advertised an "N4.7 Dual-Souled trait" in its `flowsInto` since N4.4 and
+> nothing was ever built. The promise is gone; the row now says what is true, which is that
+> the UDP walk's reflexive candidate is the *better* v6 answer — an AAAA record answers a
+> question about somewhere else.
+>
+> **`abilities.view()` divided remaining cooldown by the AUTHORED duration.** With the Swift
+> Road scaling the charged one, that ring would empty at the wrong rate and never reach zero —
+> the class of bug where the number is right and the thing the player *looks at* is wrong. The
+> charged duration is recorded per echo, and the tooltip quotes the effective cooldown with
+> the multiplier beside it.
+>
+> Five tests, 86 assertions. The classifier is pure and tested without a network: both
+> measured branches, the inference, the timeout guard that forbids it, both blocked paths and
+> the open one. Both mappings proved **monotone across their whole range** and neutral at the
+> value that is also their fallback. Both consumers driven through the game's own verbs — a
+> wall raised by `BuildSystem` and read back off state, and the cooldown ring asserted to stay
+> inside 0..1, which is exactly what a mismatched divisor would break.
+>
+> Gauntlet 2653/2653 across 140 tests, twice, no drift.
+
+---
+
+> ## N4.5 + A7 — The Sounding and the Covenants, 2026-08-22 (branch `dev/night-build`, unmerged)
+>
+> **One control, two vocabularies.** The Veil calls it a covenant you swear; the Lens calls it
+> a data budget you consent to. They are the same row, and that is the whole design — A7's own
+> brief said in bold *do not build a second difficulty axis*, because two independent
+> difficulty systems is exactly what ships when two plans are written by the same person on
+> different days, and it makes both of them unbalanceable.
+>
+> Five tiers. `quiet` is the default and it is byte-for-byte the game that shipped: every
+> multiplier exactly 1.0, `budgetMB` 0, and the Sounding Stone refuses to fire. **A throughput
+> sounding spends the player's data** — not the developer's, not a server's, theirs, possibly
+> metered — which makes it the one thing in this project that cannot be a default.
+>
+> | pact | budget | hp | dmg | rarity floor | riftborn | legacy |
+> |---|---|---|---|---|---|---|
+> | The Quiet Pact | 0 MB | 1.00 | 1.00 | plain | no | 1.00 |
+> | The Listening Pact | 3 MB | 1.15 | 1.10 | plain | no | 1.15 |
+> | The Deep Pact | 12 MB | 1.35 | 1.25 | touched | yes | 1.40 |
+> | The Drowning Pact | 40 MB | 1.60 | 1.45 | woven | yes | 1.80 |
+> | The Abyssal Pact | 100 MB | 1.90 | 1.70 | woven | yes | 2.40 |
+>
+> Three rules the panel enforces rather than describes. **The budget is a hard ceiling for the
+> whole run, not a per-sounding rate** — a budget you can exceed by playing longer is not a
+> budget. **Every tier's cost is stated in megabytes, in the panel, before the player picks** —
+> not in a tooltip, not in a doc, not in the Lens. And **pacts raise only**: a difficulty
+> selector that can be turned down after the hard part is not a difficulty selector.
+>
+> Raising mid-run is allowed and is *fairly paid*, which is the part that took the thought. A
+> "whatever you hold at death" rule lets a player clear nine nights quiet and swear the Abyssal
+> Pact on the way out for ×2.4; a "lowest ever held" rule punishes raising so completely that
+> nobody would. **Weighting by nights** is the only version that makes raising a real decision —
+> the nights you already survived are scored at the price you actually paid for them.
+>
+> The rarity floor is an **overlay, never a mutation**: `covenantBand()` returns an adjusted
+> band and `LOOT_BANDS.rift.ceiling` is still `riftborn` afterwards. Raise-only, so a lord's
+> guaranteed Hallowed survives a Drowning Pact.
+>
+> `systems/sounding.ts` sequences idle baseline → download with a latency sampler running
+> underneath → upload → resolver race, and grades bufferbloat off the difference. The download
+> is timed **from first byte**, and `planSounding()` returns `null` rather than truncating
+> below the honest minimum — a short burst measures TCP slow-start, not bandwidth. The reward
+> pays gold and grants an **A8 Boon** rather than inventing a second buff system.
+>
+> Five tests, and the flake they caught: `testMobBirthStats` had been reading `veilPressure`
+> through the live net, which is a `PressureObserver` since N4.6 and was the JS heap before
+> that. Either way it is a number that moves **when the garbage collector runs**, which put the
+> hp/dmg product outside the fixture's bounds at random. WORKFLOW 11 — pin every input, measure
+> the thing.
+
+---
+
+> ## N4.6 + N4.7 — The Deep Vessel, and physics that checks the guess, 2026-08-22 (branch `dev/night-build`, unmerged)
+>
+> **N4.6 measures the vessel instead of the wire** — the machine and the browser the run is
+> happening inside. No packets, no prompts, nothing transmitted. `PressureObserver('cpu')`
+> replaces the Chrome-only JS-heap proxy the game had been inferring load from; LoAF gives real
+> main-thread stalls with attribution; `storage.estimate()`, the audio pipeline, the unmasked
+> GPU, media-device counts and the preference queries fill a tab.
+>
+> Three become real inputs. **Mercy** is the one that runs backwards on purpose: measured jank
+> *shrinks* enemy telegraph slack, so your dodges land. Every other row in the table says "your
+> network shapes your world"; this one says "and it will not be allowed to cheat you", which is
+> the same doctrine read from the other end. **Drop Memory** ties despawn to storage headroom —
+> and it shipped with a pillar-5 violation caught in smoke: an unreadable quota falls back to
+> `free = 1`, so the first transform paid every browser that cannot answer `storage.estimate()`
+> a permanent 15% gift. Re-banded to ceiling at exactly 1.0. **Reduced motion** is the one
+> reading the game *obeys* rather than displays.
+>
+> `veilPressure` was upgraded **in place** rather than given a second row. `getGameValue()`
+> resolves with `.find()`, so a second row aimed at an existing target is automatically dormant.
+> It branches on `cpuPressureState !== 'unknown'` and never on the number, because `cpuPressure`
+> is 0 at *both* `nominal` and `unknown`.
+>
+> **N4.7 derives truths from readings already taken.** Great-circle distance from the colo to a
+> timezone-estimated position against the kernel `min_rtt` gives speed-of-light efficiency,
+> which drives **Homeward** — a path whose packets go straight drops you close to the hall when
+> you fall; one that tours the country drops you a long way out.
+>
+> The panel first printed `efficiency 0.5` and "faster than the glass allows" — a true sentence
+> that reads as a bug. The fix was to let **the physics refute the guess**: when the reach
+> exceeds the horizon, the timezone estimate is provably wrong, efficiency goes to 0 and the
+> verdict says so. That refutation then became the *fifth and strongest* masking signal, because
+> it is not a heuristic at all — no weighting judgement, no cultural assumption, just a bound
+> that cannot be argued with.
+>
+> The masking panel is **evidence with confidence, never a verdict**. A false positive accuses a
+> player of something, so: bands not booleans, every signal shows what it compared, and a signal
+> whose inputs are unknown is *skipped* rather than counted as a miss. The timezone check
+> compares against `snap.country` and not the colo's country — Cloudflare routes you to a nearby
+> edge, so comparing to the colo agrees almost by construction.
+>
+> Also fixed: the Lens VESSEL tab was building a **WebGL context on every render at 4 Hz**,
+> which can evict the game's own context — Chrome caps at 16.
+
+---
+
+> ## A2 — Elites and champions, 2026-08-22 (branch `dev/night-build`, unmerged)
+>
+> Nine affixes, two ranks, and the failure mode the plan predicted in advance: *"Vigorous +
+> Warded + Leeching on a night-8 charger is an unkillable wall inside a fifteen-minute clock."*
+> Three guards shipped against it. A **conflict table** (`bulk` holds both survivability
+> affixes, so they can never roll together). A **per-night power budget** rather than an affix
+> count, so three cheap affixes and one expensive one cost the same. And `fromNight` gates on
+> the loud ones.
+>
+> Nine new *consumers*, not nine new subsystems. Every affix reuses proven machinery — the
+> march-step product, `damagePlayer`, `structureDmgMul`, the poison-DoT shape — with two
+> deliberate exceptions.
+>
+> **Venom bypasses `damagePlayer`.** Armour must not soften the affix that exists to answer
+> armour, and nobody is swinging, so dodge, thorns and soul-xp must not fire either. It still
+> has to be able to kill, which forced `fall()` out of `damagePlayer` as its own verb —
+> `damagePlayer` floors every hit at 1, so `damagePlayer(0)` would itself have dealt a point of
+> damage and rolled dodge.
+>
+> **`rollElite()` returns null before touching `Math.random`.** The Gauntlet seeds worlds and
+> compares spawn sequences, so a feature flag that consumes an RNG draw on its disabled path
+> shifts every downstream roll. A flag that changes the stream is not a flag.
+>
+> Unseen fades the body only — ring and nameplate stay at full alpha, because an invisible
+> enemy you cannot *locate* is a different and much worse mechanic than one you cannot see.
+
+---
+
+> ## Balance batch — the eight verdicts that cost work, 2026-08-22 (branch `dev/night-build`, unmerged)
+>
+> Seven shipped. One did not, because doing the measurement its own cost column
+> demanded showed the number it was written against was wrong.
+>
+> | # | verdict | what shipped |
+> |---|---|---|
+> | 1 | `surgeFxStrength` 0.5 → 0.35 | one config number, leaving A2's auras room on the same pixels |
+> | 2 | Scrying slope ×0.01 → ×0.02 | `data/network.ts`, written as an offset FROM 50 ms so the neutral point stays visible in the arithmetic |
+> | 3 | a Scrying readout | `SCRYING ×1.32` under the radar, green above neutral, amber below, and shown at ×1.00 too — pillar 5 made visible rather than merely obeyed |
+> | 4 | split the Omen and Boon chips | two badge rows partitioned on `kind`, which `main()` already stamps. Not on `color` or `good`: those would be a second source of truth that disagrees the first time a benign omen is authored |
+> | 5 | Hoarder stamina | `staminaSec: 8`, `tiredFadeSec: 2`, `tiredSpeedMul: 0.95`. It decays *into* `pace`, so every chill, tar pit and tower slow still stacks on an exhausted Hoarder exactly as it stacked on a fresh one |
+> | 6 | grey the Reliquary ladder | `shelf()` joins `stock()` rather than replacing it — `stock()` is the buy pool `buy()` draws from and the 405-draw sweep asserts against, and widening it would have quietly put unreachable bases on sale |
+> | 7 | gold coins from bosses | `CFG.drops.goldDrops` is three-state and finally read by something |
+> | 8 | trim Riftborn to ~×1.8 | **not applied — see below** |
+>
+> ### Gold: the dormant row wakes up
+>
+> `CFG.drops.goldDrops` had been this project's one deliberately dormant config key for
+> months, kept because deleting it would have deleted the question. It now drives
+> `DropSystem.awardGold()`, the single seam every gold award in the game passes through —
+> the decision lives there rather than at the two call sites for the same reason A1's
+> rarity roll moved into `spawn()`: **two call sites is two chances to forget one, and the
+> one you forget is invisible.** A gold source that never bursts just quietly keeps
+> teleporting.
+>
+> Gold is a scalar on the player, not a stack in the bag, so the coin is a **pseudo-item**:
+> `GOLD_ID = '@gold'`, deliberately *not* an `ITEMS` row. A real row would have put gold
+> into every list that walks `ITEMS` — the Reliquary shelf, the loot tables, the affix
+> slots, the soul-gear feed — nine dormant rows to make one pile of coins bounce. Three
+> places special-case it: `bank()` credits the purse instead of calling `invAdd`,
+> `art.itemIcon()` hands it a coin spec instead of asking `itemDef()`, and the radar gives
+> it its own colour so a 2.4× spread's stragglers can be found.
+>
+> The property the tests actually pin is **conservation**: every award from 1 to 400 gold
+> is swept, and the coins on the floor must sum to the award exactly. A burst that rounded
+> would be a stealth nerf or a stealth buff to every boss in the game, and it would be
+> invisible — nobody counts a boss payout.
+>
+> ### Riftborn: the verdict that its own re-measurement overturned
+>
+> The verdict's cost column said "a table edit, **then re-measure through a worn blade**".
+> Doing the re-measurement first — 60,000 forced rolls per tier on `sword_iron`, folding in
+> the `swingSpeed` mod a curse can carry — produced this:
+>
+> | tier | raw mean | raw p50 | raw p90 | raw max | delivered mean |
+> |---|---|---|---|---|---|
+> | hallowed | ×1.533 | ×1.463 | ×1.924 | ×2.327 | ×1.489 |
+> | sovereign | ×1.763 | ×1.670 | ×2.188 | ×2.497 | ×1.701 |
+> | riftborn | ×1.912 | ×1.844 | ×2.343 | ×2.704 | **×1.807** |
+>
+> Three things fall out of it:
+>
+> 1. **×2.23 was never the typical Riftborn.** It sits around p85 of the raw distribution,
+>    read off the stat column rather than off the swing. The delivered mean is ×1.807 —
+>    the requested "~×1.8", already, today.
+> 2. **The trim would have inverted its own stated reason.** Riftborn leads Sovereign by
+>    +8.4% raw / +6.2% delivered, thin already for something at weight 4 that only drops
+>    inside a rift. Sweeping `statMul`: 1.48 cuts the lead to +3.9%, and 1.42 puts Riftborn
+>    *below* Sovereign on delivered damage. There is no `statMul` that lands the raw mean
+>    on 1.8 and leaves a tier gap worth the rarity.
+> 3. **The long tail is systemic, not Riftborn's.** A lucky Hallowed reaches ×2.33 — past
+>    the mean Riftborn and past the ×2.23 that started this. That overlap is rule 1 at the
+>    top of `data/rarity.ts`, and it is the same principle the `heavy` verdict upheld *on
+>    the same day*: "a lucky blue copper blade out-rolling a plain iron one is the best
+>    thing that can happen to an early drop."
+>
+> So the table is unchanged, the measurement is written into `data/rarity.ts` where the
+> numbers live, and `testRarityLadderIsWorthClimbing` now pins the *relation* — every rung
+> beats the one below it, and the top two stay between 3% and 20% apart — so a future
+> `statMul` edit cannot quietly collapse the ladder. Pinning "riftborn delivers ×1.807"
+> would fail on the next affix-pool edit and teach nobody anything (WORKFLOW 15).
+>
+> **This is a re-measurement, not a refusal.** If the feel verdict still says Riftborn is
+> too strong, the lever is the affix pool or the curse, not `statMul`.
+>
+> ### Two shared-world leaks, found by the batch and fixed
+>
+> The suite went from 6/6 green to roughly 1 run in 3 red, on two tests this batch never
+> touched. Both were latent leaks that the batch's extra second of runtime simply made
+> likely enough to see:
+>
+> - **`testAffixesDriveTheGame`** measured a Swift chestplate at ×1.008 against a rolled
+>   ×1.05. Diagnosed from `burst=1042.6 clock=1043.7`: C4's move-burst window, armed by an
+>   earlier test's kill, **expired between the two halves of the measurement** — the
+>   baseline ran inside the window and the comparison ran outside it. Now zeroed per
+>   attempt, along with Resolve and the two live-wire terms in the same nine-multiplier
+>   product. Pinned rather than given a wider tolerance, because a wider tolerance would
+>   have hidden the affix being wrong by exactly as much.
+> - **The new Hoarder stamina test** measured its own control at ×0.92 instead of ×1.00,
+>   because `fray` and `surge` are read off the live browser every tick and drift across
+>   twenty-eight seconds of sim. Same fix, same reason (WORKFLOW 11).
+>
+> Fourteen consecutive green runs after both.
+>
+> ### What was proved, and how
+>
+> Ten mutations, each caught by the assertion that names it: bosses never bursting; the
+> burst rounding; a coin reaching `invAdd`; the shelf reverting to the reachable half only;
+> boons folded back into the omen row; the stamina decay not reaching the mover; the tiring
+> line firing every frame (631 times); Riftborn trimmed to `statMul` 1.42; the Scrying slope
+> reverted to ×0.01.
+>
+> Visual gate in `qa/gate-balance-0822/` — eleven shots plus `measured.json`, driven through
+> the game's own verbs (`drops.awardGold`, `omens.consider`, `grantBoon`, `ui.open`) rather
+> than by writing display state. It confirms: a 240-gold boss burst becomes 6 coins summing
+> to 240 with 0 credited; a 37-gold routine kill credits 37 and leaves nothing on the floor;
+> Scrying reads ×1.50 / ×1.00 / ×0.75 at 25 / 50 / 70 ms; the two badge rows carry
+> "Famine 90s · Quickening 60s" and "Ember Ward 95s · Rime Ward 95s" separately, and the
+> boon row *disappears* rather than sitting empty; and the weapon shelf greys 0 / 2 / 4 of
+> its 8 blades across the three seals, which is the 240g → 620g → 1400g price gap made
+> visible. `scripts/shots-balance-0822.mjs` runs Chrome on its own throwaway
+> `--user-data-dir`, so it cannot touch a profile open on the machine.
+
+---
+
+> ## A6 — The Hall becomes a hub, 2026-08-22 (branch `dev/night-build`, unmerged)
+>
+> A-arsenal §3.5 has said since the batch was written that **"gold is a number that goes
+> up"** — one sink in the whole game, a scatter-cache button, plus a death penalty. Every
+> other currency here is spent: materials build, threads socket, Loom points allocate. A
+> resource you only ever watch rise is a score, not an economy. This gives gold two verbs.
+> **Gauntlet 2213–2215 across 128 tests, six consecutive green.**
+>
+> ### What shipped
+>
+> Two buildable counters, both `unique`, both raised beside the Hall, both taking **gold**
+> where every other building takes materials — and both charging a second time in
+> **territory**, which is what the night scales on. A hub is paid for once when you raise it
+> and again every night it stands.
+>
+> - **The Reliquary.** Choose a shape (blade, armour, ring, amulet, charm, tool) and a seal;
+>   the seal decides the tier band and how far down the base ladder it will reach. Lesser
+>   240g / Touched→Hallowed / the whole shelf. Warded 620g / Woven→Sovereign. Lord's 1,400g /
+>   Hallowed→Sovereign / finest stock only. The roll itself is `rollItem()` — the same
+>   function a corpse calls, reading the same **Fortune** the wire is already feeding every
+>   other roll in the game. The Reliquary is inside the economy, not beside it.
+> - **The Forge-Warden.** Rework one line on one carried piece for gold plus materials. The
+>   uid does not change, so sockets, threads, weaves and the equip slot all survive; a worn
+>   item's stats update on the next read with nothing to notify.
+>
+> Interact is one key with two meanings: standing at a counter opens its panel, otherwise it
+> gathers. `CFG.a6.enabled = false` removes both rows from the build carousel *in order* and
+> stops a counter already standing from answering.
+>
+> ### Four arguments with the brief
+>
+> Recorded in A-arsenal §5.6 in full. In short: **one affix at a time is not enough** to stop
+> a slot machine, so the price of reworking a piece climbs 1.8× per prior rework of that same
+> piece; **a cursed line rerolls from the cursed pool**, because letting gold launder
+> Riftborn's price retires the rule that keeps the top of the ladder honest; **the base has
+> to be bounded, not just the tier**, or the most expensive purchase in the game can hand you
+> something worse than a free drop; and **no seal reaches the rift**, because `rarity.ts`
+> promises that band is the sole route to Riftborn and a shop selling it would retire that
+> sentence without anyone deciding to.
+>
+> ### Two defects the tests caught on their first run
+>
+> - **The proximity tie-break was inverted, and a comment was the reason.** The hub reach
+>   shipped at 2.4 tiles under a comment reading "TIGHTER than CFG.gather.reachTiles (3.2)".
+>   Gather reach is **1.6**. A Reliquary raised beside a tree would have stolen the chop —
+>   the exact failure the comment claimed to prevent. Two assertions pinning 2.4 and 1.6
+>   would both have passed; `ok(CFG.a6.reachTiles < CFG.gather.reachTiles)` failed
+>   immediately. Now 1.5 tiles = 48px, which still covers a diagonal neighbour's 45.3 so
+>   every tile touching a counter can trade. **New WORKFLOW rule 15.**
+> - **The damage test measured a state the game cannot produce.** It wore a blade by writing
+>   `state.player.equip.weapon = uid` and read **0.000 forever**, because `wornStat()` reads
+>   `soulItems[slot]` and only `toggleEquip()` binds it. Driving `ui.hooks.equip()` instead
+>   fixed it and proved main's equip wiring for free. **New WORKFLOW rule 16.**
+>
+> ### The tests
+>
+> Four, and the shape of all four is the same: driving `hub.buy()` proves `hub.buy()` works
+> and nothing else (rule 3), so each ends somewhere a player would look.
+>
+> - The escape hatch is **measured, not assumed**: the carousel with the flag off is asserted
+>   equal to the carousel with it on, minus exactly two ids, in the same order.
+> - The counter's reach is walked tile by tile and the flip point is asserted against
+>   `Math.floor(CFG.a6.reachTiles)`. Then `ui.hooks.interact()` — main's own hook — is pressed
+>   and the UI is asked which panel opened.
+> - **405 seals broken** across three seals and three shapes: every draw inside its band,
+>   every base off that seal's own shelf, and zero Riftborn, with a control proving the
+>   roller can still produce one (61–84 in 4,000 on the rift band).
+> - The forge: every other line byte-for-byte unchanged, threads still socketed in order,
+>   the second bill exactly 1.8× the first, and the **worn blade's live damage measured
+>   moving** (11.16 → 12.72) with a control that an untouched piece does not drift.
+>
+> Five mutations, each confirmed red then reverted: the escape-hatch filter, main's interact
+> dispatch, the cursed-pool branch, the seal's stock floor, and the price escalation.
+> `grep -c MUTATION` is 0.
+>
+> ### One older flake, fixed at its source
+>
+> A8's `ok(state.drops.length === 0, 'a Wardstone pays in a blessing, not in loot')` claimed
+> something about a Wardstone and measured **the entire world for the eight game-seconds the
+> harvest takes**. It went red about one run in five, blaming A8 for a drop A8 had nothing to
+> do with. It now measures within three tiles of the stone, names whatever it finds, carries
+> a control proving that measurement can see a drop at all, and asserts the Wardstone's loot
+> table is empty where a new row would break it. **New WORKFLOW rule 17: the failure message
+> is part of the test.**
+>
+> ### The retune is parked, deliberately
+>
+> §5.6 predicted it before the code existed: tribute is tuned against a world where gold does
+> nothing. Tribute alone measures **1,908 gold over a 900-second run** at pop 8 with
+> `goldRate` at its 1.5× ceiling — ~1,270 at a neutral wire, kills on top and unmeasured.
+> Every price passes through `CFG.a6.priceMul`, so the retune is one edit and it waits for
+> the playtest, which is what the plan asked for.
+
+---
+
+> ## N4.4 — Scrying, 2026-08-22 (branch `dev/night-build`, unmerged)
+>
+> The ROADMAP has carried **"DNS resolution time → Scrying skill — reveals map by resolving
+> domains"** since N1, and N4.0 made it load-bearing when it moved the discovery mechanic off
+> favicon fetches and onto DoH. This is that promise. **Gauntlet 2134 across 124 tests.**
+>
+> ### What shipped
+>
+> Every beacon the game already resolves now times itself, and the **median** of those
+> resolutions sets the radius of the minimap disc: a sharp resolver folds more world into the
+> radar, a crawling one narrows it. Deliberately passive — no new request, no new host, no new
+> verb. Scrying reads a number the wire was already producing, which is the same trade N4.1
+> made and the reason this phase was scoped "self-contained, tiny bandwidth".
+>
+> IPv6 rides the same answers: the first sighting of a host gets one AAAA query, ~13 across a
+> session, and one v6 answer latches `ipv6Live` for the run. The host is never contacted — the
+> resolver answers, usually from cache — so the game learns whether this network carries a
+> working v6 answer set without a packet going near the name it asked about.
+>
+> ### Most of the brief was already standing, and that was the problem
+>
+> N4.4's brief listed "resolver race, PTR on own IP, AAAA/IPv6, TTL, DNSSEC `AD`, per-beacon
+> real IPs". Five of those six had shipped with N4.0 and N4.1 as a side effect of moving
+> discovery onto DoH. What was actually missing was AAAA and — much more to the point — **any
+> game consequence whatsoever.** The phase as written was a pile of readings with no verb,
+> which is the dormant-row sin at the scale of a milestone. The radar is the fix: it is the one
+> HUD element whose value is spatial, so it is the honest target for a measurement about reach.
+>
+> ### Three defects, none of which the Gauntlet found
+>
+> All three came out of reading the work back, not out of anything going red — worth recording
+> because the suite was green across every one of them.
+>
+> - **`parseDohAnswer` dropped record type 12.** It was extracted from a filter accepting 1, 28
+>   AND 12, and kept the first two. Type 12 is PTR, `resolvePtr()` is its only caller, and that
+>   call is the entire source of the Vessel's ISP row — which could therefore never have filled
+>   again. The extraction shipped **with** an adversarial parser test of nine malformed inputs
+>   and stayed green, because every input it tried was a type the new code already knew. The
+>   accepted set is now a named table (`DOH_READ_TYPES`) and the test walks it. **New WORKFLOW
+>   rule 13:** a parser test fed only the shapes it already handles is a mirror, not a test.
+> - **A host the rate gate refused was burned for the run.** `aaaaChecked` was marked before
+>   the probe fired. `ipv6Live: false` documents itself as "not yet seen", which is only honest
+>   if a host no request was ever made for gets asked again. The line drawn is between "never
+>   asked" and "asked and got nothing" — not between success and failure.
+> - **One resolution was enough to move the radar.** A single cold-cache lookup measures a
+>   cache miss, not a network; publishing it snapped the disc to a clamp on the first probe and
+>   drifted it back over the next minute, which reads as a bug rather than as weather.
+>   `DNS_MIN_SAMPLES` holds the neutral value until three have landed — the same rule pillar 5
+>   applies to a probe that never answers, since "not yet measured" is a kind of not answering.
+>
+> ### The test that was missing was the one that mattered
+>
+> The first pass shipped a mapping-table test and a parser test. Both real, both entirely
+> upstream of the game, and **neither could tell you whether the radar had ever moved.** The
+> radar is now measured in pixels off the live HUD canvas: one foe forty tiles east, three
+> sight values, the red mark located by scanning. At neutral it lands 42.5px from centre, and
+> the assertion is that a 58-tile disc drawn into a 124px circle must put a 40-tile foe at
+> 40/58 of the way out — ~42.8px — which is the claim in the design's units rather than the
+> render recomputing its own `span` and agreeing with itself. Sharp Scrying pulls it to 28.3,
+> dim pushes it to 56.8, and a control redraw proves the measurement is stable.
+>
+> Four mutations, each confirmed red then reverted: the sight multiplier cut from `span`
+> ("sharp Scrying widens the radar (42.5 < 42.5)"); PTR dropped from the parser, which
+> reproduces the exact regression this milestone shipped with; the sample floor removed; the
+> gate-refusal release removed. `grep -c MUTATION` is 0.
+>
+> ### The visual gate found the mechanic's actual value
+>
+> Screenshots of the radar at 10 / 50 / 150 ms (`qa/gate-n44/`) show a ring of twelve marks at
+> a fixed forty tiles sitting comfortably inside the disc at sharp Scrying and pressed against
+> the rim at dim. But the thing the numbers did not predict is what happens to marks BEYOND the
+> ring: at 1.4× three world-boss chevrons are on the disc, and at 0.75× they are simply gone.
+> **A sharp connection shows you the lords before they show you themselves**, and a slow one
+> does not. That is a real mechanic rather than a number on a HUD, and it is the argument for
+> the radar being the right home for this reading.
+>
+> ### One flake, and one older bug, both fixed in passing
+>
+> The ability bar's "it spends exactly 18 resolve" failed about one run in four at 86 against
+> 82 — Bramblebreak killing a foe and `resolvePerKill` landing inside the same synchronous
+> `cast()`. Nothing about the bar was wrong; the test was measuring the horde. Latent, and
+> shaken loose by N4.4 rather than caused by it: the AAAA retry changed how many requests are
+> in flight, and the suite's frame timing rides on that. Eighth incident of this kind.
+>
+>
+> `minimap.draw()` throttles at 10 Hz, so a test must hand it a far-future timestamp to be sure
+> it ran — and **testHudSurfaces has been stamping `performance.now() + 2e6` since A4 without
+> putting it back**, freezing the player's own radar for half an hour after any `?test` run.
+> **New WORKFLOW rule 14:** anything a test pushes into the future is world state in a suite
+> that shares one live world, and belongs in the same `finally` as the rest.
+
+---
+
+> ## A8 — Cairns, Wardstones and the Hoarder, 2026-08-21 (branch `dev/night-build`, unmerged)
+>
+> The last ungated phase of the Arsenal, and the first content in the game that has a
+> **price**. **Gauntlet 2055–2058 across 120 tests, nine consecutive green runs.**
+>
+> ### What shipped
+>
+> A **Cairn** — pale stacked stones, ~0.7 per run, visible across a field — opens through the
+> ordinary gather interaction and pays a guaranteed **Hallowed-or-better** piece. A
+> **Wardstone** — a violet monolith with a lit mark, ~2.5 per run — grants a timed **Boon**.
+> The **Hoarder** is a rare daytime runner that never attacks, outpaces you by a hair, bursts
+> a Woven-or-better hoard when killed, and is gone for good past 21 tiles.
+>
+> ### Four arguments with the brief, all of which the brief lost
+>
+> **1. "Guaranteed Hallowed+" is the domain-lord band.** Handing it over for a walk and a
+> five-second dig would invert the ladder A1 spent a milestone tuning. So the band stayed and
+> the price arrived: opening a Cairn **wakes what was buried under it** — five foes at the
+> *current night's* stat scaling, spawned as ordinary horde members rather than day prey, so
+> walking away from them means they march on your hall. `cairn` is its own LOOT_BAND row
+> rather than an alias of `lord`, so a future retune can move one without the other.
+>
+> **2. The timed-buff machinery the brief promised did not exist.** The plan said shrines were
+> "a data row plus a toast" because "`effects.ts` already has the timed buff machinery
+> (Nightseer Charm)". The Nightseer Charm is a permanently equipped item. What `effects.ts`
+> actually had was `armMoveBurst()` — one hard-coded window over one hard-coded effect — and
+> that IS the machinery, generalised here into a table. **A Boon is a timed entry into the
+> item-effect vocabulary**: twelve rows naming keys from the same fifteen hooks C4 built,
+> folded into `activeEffects()`, so all ~20 sites that ask
+> `activeEffects(state).has('fire_aura')` light up for a Wardstone without knowing one exists.
+> The constraint that buys that: **a boon may only name an effect that is already consumed**,
+> which `testA8DataRows` asserts against `hasEffect()` with a negative control. Second time
+> this project has found a plan asserting a capability it did not have — A1's premise about
+> the fifteen hooks was the first, and the C4 repair was the bill.
+>
+> **3. "Shrines" became Wardstones,** because `BUILDINGS` already contains a player-built
+> Shrine. Two different things sharing one word in the same HUD is how a Veil stops working.
+>
+> **4. Neither table may roll empty.** The Cairn's five gear rows at independent chances came
+> up with nothing **22%** of the time, and the whole table 3.3% of the time — a design
+> promising "guaranteed" quietly delivering nothing after a map crossing and a fight. Fixed by
+> giving `LootRoll` an optional **`group`**: rows sharing one are a weighted pick-one that
+> always yields exactly one row. Every pre-A8 table leaves it undefined and is untouched,
+> which `testLootGroups` measures at 0.400 against 0.400 before it measures anything else.
+>
+> ### Three latent flakes, found by the Gauntlet before a player could
+>
+> Six runs turned up three failures that had nothing to do with each other and everything to
+> do with A8 shifting the RNG stream — the fifth, sixth and seventh time that mechanism has
+> exposed something latent in this suite.
+>
+> - **`wearOnly()` no longer stripped the player.** `activeEffects()` now folds boons in, so a
+>   Wardstone the 10-minute playthrough test walked over left `resonance_boost` live for the
+>   next two game-minutes — and testEchoBounds' isolation assertion, added during the debloat
+>   pass *precisely* to catch "a future source of resonance we do not clear", caught exactly
+>   that, twice in six runs. That assertion earned its keep in under a day. Fixed in the
+>   helper, not at each call site, because fixing it at each call site is how one gets missed.
+> - **`regen_boost`'s control measured 0.000 hp/s.** Regen is daytime-only and the test ran
+>   wherever the suite's clock had drifted to after two playthrough tests. It now pins the
+>   phase as a precondition; both halves still run through the real `combat.update()`.
+> - **`chill_aura` measured 0.00px in BOTH halves.** It marched a foe from wherever the suite
+>   left the player standing; against water, a cliff or a tree — and A8 added two blocking
+>   feature types to worldgen — `canStand()` refused both axes. Now measured on a
+>   `findUniformCorridor`, which is the second time that has been the fix.
+>
+> ### The density arithmetic was wrong, and measuring is why we know
+>
+> The first pass reasoned "a run covers ~3,500 tiles, so a density sum of 0.0004 gives ~1.4
+> Cairns" and shipped numbers that measured **0.38**. A density is per-tile *of its biome*,
+> and roughly three quarters of a NIGHTWARD map is deep water, mountain and snow — none of
+> which carry features at all. `testA8Density` states the claim in the design's own units
+> ("about one Cairn, a handful of Wardstones, per run") rather than reading the density table
+> back to itself, which is the tautology this suite keeps finding in its own history.
+>
+> ### Mutation-proved
+>
+> Four load-bearing assertions, each broken deliberately and confirmed red, then reverted:
+> boons cut out of `activeEffects()` gives a failed Wardstone seam; the Cairn's band dropped at
+> the drop seam gives "at or above the Hallowed floor" failing on a Touched roll; the `dayOnly`
+> filter disabled gives 40/40 night spawns as Hoarders where 0/40 is correct; the flee vector
+> inverted reports "a spooked Hoarder runs: 96 to 3 px". `grep -c MUTATION` is 0.
+>
+> ### The escape hatch is a revert, not a mute
+>
+> `CFG.a8.enabled = false` drops both features out of worldgen and the Hoarder out of the day
+> pool. Both feature rows are appended **last** in `FEATURES` and the density table is a
+> running cumulative sum, so excluding them restores the pre-A8 world **tile for tile** —
+> which `testA8EscapeHatch` measures across 19,600 tiles rather than assuming.
+>
+> ### Visual gate
+>
+> The first in-world capture showed the Cairn as a dark blob indistinguishable from a bush, at
+> exactly the range the design needs it seen from — it had inherited the rock ramp. Repainted
+> in bleached limestone with a bone capstone and a dark seam between courses, so it reads as
+> *stacked stones* rather than one lumpy boulder. Screenshots in `qa/gate-a8/`.
+
+---
+
+> ## Debloat pass — 2026-08-21 (branch `dev/night-build`, unmerged)
+>
+> 3,087 lines out of `docs/` and two dead functions out of `network.ts`. What it cost is
+> recorded in "Retired plan documents" at the bottom of this file; what it *found* belongs
+> here, because it was not a documentation problem.
+>
+> **A live defect, found by the pass that was not looking for one.** The gauntlet went red on
+> `echo roll 9 within D5 band: 12 ∈ [1, 10]` immediately after a docs-only commit. The C4
+> repair had made `echoes.roll()` apply `resonance_boost` (×1.25), and `testEchoBounds`
+> derives its band from `base × [dmgRow.min, dmgRow.max]` while inheriting whatever the
+> previous test left the player wearing. With the Nullmaw relic still on, 9.6 × 1.25 rounds
+> to 12. It needs resonance live **and** a top-of-band roll at the same moment, so it hid
+> behind five consecutive green runs and only surfaced when an unrelated change shifted the
+> RNG stream — the fourth time that mechanism has exposed something. Fixed by clearing gear,
+> relic and sockets for the measurement and then *asserting* the isolation, so a future
+> resonance source is a red test rather than a wider band. Mutation-proved (forcing
+> `relic_null` turns the new assertion red), then green 4×: **1873–1875 across 113 tests.**
+>
+> **Two ROADMAP entries had recorded a correction nobody applied.** Both the N4.1 entry and
+> the Deep Wire direction update state that "What we CANNOT get from a browser" is wrong
+> about packet loss; N4's plan §10 carried a third copy as a to-do. The wrong list outlived
+> all three. That is the dormant-row doctrine in prose: a correction with no consumer is not
+> a correction. Applied at the source, along with six new API-matrix rows and the finding
+> that inverts the matrix's old reading — the best signals N4.1 added are **universal**, so a
+> Firefox player now gets kernel `min_rtt` and real packet loss and loses only the coarse
+> `navigator.connection` family.
+>
+> **A dormant-row sweep of all 199 CFG leaf keys and all 15 effect ids** found the two dead
+> `network.ts` functions, confirmed every effect id now has a consumer outside `effects.ts`
+> (the C4 repair holding up under a check written independently of it), and left exactly one
+> genuinely unread key: `CFG.drops.goldDrops`, which stays because deleting it would delete
+> the question. *(It was read by nothing until 2026-08-22, when the B5 Q2 verdict landed and
+> `DropSystem.awardGold()` started reading all three of its states. There are now zero
+> unread keys — see the balance batch above.)* Five CA keys were false positives — they cross into Rust as a positional
+> `[f32; 6]`, so no consumer ever names them. **The sweep is deliberately not in
+> `package.json`:** it would have reported zero on C4, whose seven hooks *were* referenced by
+> the affix table and never by any behaviour. A tool that is clean on the bug you just spent
+> a milestone fixing is worse than no tool.
+
+---
+
+> ## C4 repair — seven dead effect hooks, 2026-08-21 (branch `dev/night-build`, unmerged)
+>
+> Found while auditing what A1 had actually been built on. **Gauntlet 1874/1874 across 113
+> tests, five consecutive green runs.**
+>
+> ### The shape of it
+>
+> `registerEffect()` builds a registry and `applyEffect()` dispatches from it. **Nothing in
+> the game has ever called `applyEffect()`.** Every hook that works is read a different way
+> — `activeEffects(state).has('key')` at the site that cares, with the behaviour written
+> inline there, because the behaviours need that site's locals (the swing's arc, the foe's
+> march multiplier, the fog's alpha) and an `EffectContext` big enough to carry all of them
+> would be the whole game.
+>
+> So the registry was a **vocabulary**, and seven entries in it were only ever vocabulary:
+>
+> | hook | what it cost |
+> |---|---|
+> | `thorns_reflect` | the Thornwarden relic, `of the Thorn` |
+> | `fire_aura` | the Cindermaw relic, `of the Ember` |
+> | `chill_aura` | the Rimewraith relic, `of the Rime` |
+> | `regen_boost` · `move_burst_on_kill` | the Tideculler relic, `of Mending`, `of the Tide` |
+> | `see_foe_hp` · `resonance_boost` | the Nullmaw relic, `of the Eye`, `of Resonance` |
+>
+> **All five domain-lord relics did nothing** — the rewards for the five biggest fights in
+> the game. And **350 of the 750 suffix weight** in A1's affix table was placebo: very nearly
+> every second rolled suffix. It also quietly falsified A1's own premise, that "the fifteen
+> effect hooks already work, so the suffix half is a data table over hooks that already work".
+>
+> ### Why it survived two milestones behind a green suite
+>
+> The C4 test drove the handler **directly** — `applyEffect('thorns_reflect', …)` returned 6
+> and the assertion went green. A test that calls a handler proves the handler works and
+> never that the game calls it. Worse, the code *existed*: a reader checking "is thorns
+> implemented?" found a function with real logic in it and stopped reading.
+>
+> That assertion is now replaced by the rule that makes the mistake unrepeatable — every
+> handler is an inert flag naming its real consumer, so a hook implemented only in the
+> registry is red immediately.
+>
+> ### The seven consumers
+>
+> | hook | consumer |
+> |---|---|
+> | `thorns_reflect` | `combat.damagePlayer`, beside A5's Ironwake — they stack, and log separately |
+> | `fire_aura` | `combat.updateAuras`, a standing tick (an aura you must swing for is not an aura) |
+> | `chill_aura` | the `hordes` march product, by proximity — no per-foe bookkeeping to expire |
+> | `regen_boost` | `combat.update`, in the same product as the Loom's regenPct |
+> | `move_burst_on_kill` | `hordes.hurt` arms a window; main's movement product reads `moveBurstMul()` |
+> | `see_foe_hp` | `FoeView.sync` — the bar existed but only above a *hurt* foe, which is when you no longer need it. What the effect buys is appraisal. |
+> | `resonance_boost` | `echoes.roll()` — the one place both the autofire and A3's actives derive damage, so it cannot drift between them |
+>
+> Every number is a `CFG.itemEffects` row, tunable live through `NW.CFG`.
+>
+> ### Measured, matched-pair
+>
+> | | with | without |
+> |---|---|---|
+> | chill_aura, same foe, same tile, same tick | 21.08px | 26.35px (= ×0.80, the configured value) |
+> | regen_boost | 2.250 hp/s | 1.500 hp/s (= ×1.5) |
+> | move_burst_on_kill | ×1.25 window | ×1.0 |
+> | resonance_boost, D5 roll pinned to 1.0 | 1.25 | 1.00 |
+> | see_foe_hp, full-health foe | 2 draw calls | 0 |
+>
+> ### Two flakes it shook loose, neither of them new
+>
+> 1. **Both A3 ability tests leaked `state.god = true`.** This file's tests share one live
+>    world, and a leaked god mode silently disarms every damage assertion after it — which is
+>    how A5's Ironwake test came to measure nothing. Saved and restored in both, the way the
+>    rest of the file already does.
+> 2. **A5's Ironwake test had a 12% coin flip in it.** Its weave vessel is a *rolled* item, so
+>    it can carry `of Warding`, and `dodge` returns out of `damagePlayer` before any reflect
+>    happens. It went red the moment a new test shifted the global RNG stream — the same
+>    mechanism that shook the vigor-starve flake loose during A1. `Math.random` is now pinned
+>    above the threshold for that measurement and restored in the `finally`, because `ok()`
+>    throws and an inline restore would have leaked a stubbed RNG into every later test.
+>
+> Also corrected: the Ironwake control cleared the sockets but not the *gear*, so once thorns
+> stopped being placebo it was measuring two independent reflect sources and calling it
+> Ironwake.
+>
+> ### One process note
+>
+> `scripts/run-gauntlet.mjs` drives **port 5199**, which it does not start — that is a
+> long-running `vite preview` serving `dist/`. **The gauntlet tests the last build, not the
+> working tree.** Three green runs were banked against stale code before this surfaced.
+> `npm run build` before `npm run gauntlet`, every time.
+
+---
+
+> ## A1 + A4 — The Arsenal, first cut, 2026-08-21 (branch `dev/night-build`, unmerged)
+>
+> The Hero Siege yoink, shipped. User direction: *"i agree!!! gogogo!"* — accepting the
+> brief's three recommendations (§4.2 (a)+(b): compress the ladder into one run and put a
+> trophy on the scorecard, pillar 3 intact; §4.3: no classes; §5.7: A7 merges into N4.5's
+> selector). **Gauntlet 1744/1744 across 107 tests, 20 consecutive green runs.**
+>
+> ### The architecture decision that made A1 small
+>
+> The whole game is **id-keyed**: `inv` is `Record<itemId, count>`, `equip` is
+> `Record<slot, itemId>`, soul items bind by id, `bestTool()` scans inventory keys. A rolled
+> item is *unique*, and forcing uniqueness into that shape by hand would have meant touching
+> every one of those structures — plus the ground drops, the merge logic, and the bag.
+>
+> So a rolled item gets a **synthetic id**: `iron_blade#7f3a`. Every structure above keeps
+> working completely untouched. Exactly one thing breaks — `ITEMS[id]` returns undefined for
+> a synthetic id — and that is what `itemDef()` is for. It was the only change the other
+> **33 lookup sites** needed.
+>
+> `itemDef()` returns the base def with the affixes **already merged into the stat columns**,
+> which is the load-bearing half: `bestWeaponDmg`, `baseStatFor`, `wornStat`, `armorDef`,
+> `charmRegen` and `activeEffects` all pick up affixes for free, with no knowledge that
+> rarity exists. Affixes are invisible everywhere except where we deliberately show them.
+>
+> **Plain returns the authored id unchanged.** If every plain flint axe became a unique
+> instance the bag would end a run holding forty singleton stacks of identical icons and
+> stacking would be dead. Plain *is* the authored item, byte for byte, exactly as before.
+>
+> ### The fifteen hooks C4 already built
+>
+> `grep registerEffect` returns **fifteen live, already-consumed effect hooks** — `fire_aura`,
+> `lifesteal`, `chain_on_kill`, `dodge`, `gold_find`, `thorns_reflect` and the rest. They were
+> built in C4 to serve **five relics**, and fourteen were reachable from exactly one item each
+> in the entire game. The whole *suffix* half of the affix system is a data table over hooks
+> that already work and are already Gauntlet-covered.
+>
+> The *prefix* half writes to the four stat columns `ItemDef` already had, plus six named
+> multipliers read through `gearMod()` — each with a consumer wired in the same commit, because
+> an affix nothing reads is a dormant row and this project knows what those cost:
+>
+> | modifier | consumer |
+> |---|---|
+> | `moveSpeed` | `main.ts`, into the same product as the Loom / silt / omen multipliers |
+> | `swingSpeed` | `combat.ts` envelope, **inside** the existing `attackSpeedFloor` clamp |
+> | `vigorDecay` · `resolveDecay` | `vitals.ts` |
+> | `buildHp` | `build.ts`, scaled once at placement like the Loom multiplier above it |
+> | `soulXp` | `rules.awardSoulXp` |
+>
+> Tools count as carried gear in `gearMod()` and `activeEffects()`. They are never in `equip`
+> — `bestTool()` decides which axe is in your hands — so without that, every affix that rolled
+> onto a tool would have been dead on arrival.
+>
+> ### The wire decides what the world gives up
+>
+> One new `NET_GAME_MAP` row, `Fortune (Aperture · Fray)`, clamped 0.75–1.35 off two measured
+> kernel readings. A wide clean path tilts the rarity ladder up; a frayed one tilts it down
+> **but raises drop quantity**, so a bad connection is a different kind of run rather than a
+> strictly worse one. That distinction is the difference between a mapping and a punishment,
+> and it is the same lesson the Omens learned in N4.3. Neutral 1.0 whenever the deep wire is
+> silent (pillar 5).
+>
+> A rift now opens the `rift` band for 60 s — **the only route to a Riftborn item**. N4.3 gave
+> the rift its first working trigger on desktop; this gives it its first reason to want one.
+>
+> ### Measured, not asserted
+>
+> | | measured |
+> |---|---|
+> | common band (4000 draws) | plain 54.5% · touched 26.6% · woven 13.6% · hallowed 5.3% |
+> | → per 20-drop run | **2.8 Woven, 1.05 Hallowed** — the §4.2(a) target |
+> | lord band | hallowed 76% · **sovereign 23.9%** — the "~25% shot" target |
+> | Fortune 0.75 → 1.00 → 1.35 | hallowed 3.0% → 5.3% → 10.3%, monotone |
+> | a Hallowed blade, equipped | **17.74 damage vs a plain 9**, read back through `equippedWeaponDmg()` |
+> | a Swift chestplate | measured **×1.061** movement against a rolled ×1.06 |
+>
+> ### A4: shipping A1 without it would have shipped an invisible feature
+>
+> Before this commit there were **zero tooltips anywhere in the codebase**. The Bag set
+> `cell.title` — a browser tooltip that cannot be styled, cannot be coloured by tier, and
+> cannot show a green +3.4 against a red −2. A rolled item would have been a differently
+> coloured name with no way to interrogate it.
+>
+> `ui/rarity.ts` is the single place that knows what a tier looks like; six copies of a hex
+> value is five chances for the ladder to disagree with itself. Plus the comparison tooltip,
+> HP/Resolve orbs with Vigor as a ring (it is a rate, not a pool), loot beams gated at Woven,
+> rarity colour in the pickup toast and on the leaderboard trophy row, and a minimap —
+> `state.explored` has carried a `// future minimap` comment since it was written.
+>
+> ### Three defects found by live capture, not by reading the code
+>
+> 1. **The minimap silently vanished.** `new UI()` does `root.innerHTML = ''` on `#hud` at
+>    line 312, deleting the canvas appended at line 185. Now self-attaching like the tooltip
+>    host — immune to construction order instead of dependent on it.
+> 2. **The Vigor ring was not there at all.** It sits outside the orb's circle and the orb had
+>    `overflow: hidden`. The fill is now clipped by an inner `.bowl`.
+> 3. **The beams were invisible over daytime grass.** At normal blending a translucent shaft
+>    reads as a painted rectangle. Additive blending is what makes it read as light.
+>
+> This is why the capture happens before the commit and not after.
+>
+> ### The flake A1 shook loose, which was not A1's
+>
+> `testVigorStarve` went red 2 runs in 8 reporting *"vigor 49.88 after 5s"* against an expected
+> 0. **49.88 is the death scatter's 50/50 reset.** The test steps five seconds with night
+> hordes live and never cleared the field — while `testVitalsDecay`, *immediately above it in
+> the same file*, carries a comment describing that exact failure and guards against it with
+> god mode and a cleared field.
+>
+> A1 did not cause it: rolling loot consumes `Math.random()` on every gear drop, which shifts
+> the global RNG stream for every horde spawn and damage roll downstream, and that was enough
+> to move a latent flake into view. Guarded the same way its neighbour is — god mode lifted
+> for the starvation phase, which is the one that needs the player hurtable — plus a positive
+> guard asserting the player was never scattered mid-measurement, so it can never again pass
+> *or* fail silently. The diagnostic that found it is retained in the assertion message:
+> printing only the number could never have said the player died.
+>
+> ### Two balance items for the playtest verdict, deliberately not pre-tuned
+>
+> 1. **`heavy` rolls `+2–6` flat damage and can land at Touched**, so a lucky blue copper
+>    blade beats a plain iron one. That is the Diablo experience working as intended — it is
+>    what makes a low-tier drop worth reading — but it deliberately inverts the
+>    copper→iron→silver→star ladder.
+> 2. **A Riftborn weapon measured ×2.23 base damage** (9 → 20.08). ~0.35% of rift-band drops,
+>    always carrying a curse, and rift-band drops only happen for 60 s after a rift — but it
+>    is the largest single number A1 can produce.
+>
+> `CFG.loot.enabled = false` is a real escape hatch on the same terms as `CFG.drops.enabled`:
+> with it off, `rollItem()` returns the id it was handed and the game is byte-for-byte its
+> pre-A1 self.
+>
+> ## A3 — The ability bar, 2026-08-21 (branch `dev/night-build`, unmerged)
+>
+> The five Echoes keep their C1 autofire and gain an empowered active on keys 1–4, paid
+> for in Resolve. No mana bar was invented — Resolve is already a morale meter that decays
+> at night, near a lord, and while idle, and it already punishes at zero; spending it on
+> heroics is what it is *for*. Costs (14–22) sit against +12/kill and +30/dawn, so a night
+> fight pays for its own casts and a quiet run cannot afford them.
+>
+> The bar auto-slots in canonical order and the fifth lord is held but unbound — a choice at
+> the run's peak rather than an automatic upgrade. Casts refuse for free and say why (empty /
+> resolve / cooldown / the 0.25 s key-repeat lock); casting yourself to exactly zero Resolve
+> is allowed on purpose. `systems/abilities.ts` owns the bar and the refusals, `systems/echoes.ts`
+> owns what a cast does, and both share the one D5 damage law.
+>
+> Gauntlet 1778/1778 across 109 tests, typecheck clean on both configs. The open question
+> from A-arsenal §9.5 — *is Resolve the right cost?* — is now a playtest verdict, not a blocker.
+>
+> **Next: A2 (Elites)** — still gated on the N4.3 balance verdict.
+
+---
+
+> ## A5 — Sockets & Weaves, 2026-08-21 (branch `dev/night-build`, unmerged)
+>
+> Hero Siege's runewords, Veil-legal. Rolled gear now rolls **0–3 sockets by rarity** — a
+> 3-socket vessel only exists on Hallowed-and-up, so The Long Night is gated behind both its
+> threads *and* a worthy piece to hold them. **Threads** are five authored items (Rime /
+> Ember / Null / Tide / Thorn); they are not gear — no roll, no equip slot — and they socket
+> into rolled gear, in order. Slotting is append-only, which is the whole rule made mechanical:
+> a reorder breaks the weave, exactly like the Loom's no-respec.
+>
+> Three weaves, each with exactly one consumer wired:
+>
+> | Weave | Sequence | Bonus | Consumer |
+> |---|---|---|---|
+> | The Long Night | Rime · Rime · Ember | +25% damage at night | `combat.resolveHit` |
+> | Hollow Song | Null · Tide | kills restore 4 Resolve | the two kill paths |
+> | Ironwake | Thorn · Thorn | reflected melee damage also stuns | `combat.damagePlayer` |
+>
+> Threads drop from **domain lords** (2 per kill, matched to the lord's element) — the plan
+> said "from elites", but A2's elites are gated, so the lord is the interim source and a full
+> clear of five lords is ten threads: enough for Long Night plus Ironwake, or Hollow Song plus
+> spares. `systems/weaves.ts` owns the slotting and the typed bonus getters; `data/weaves.ts`
+> is pure data plus one matcher shared by the system and the tooltip, so the two can never
+> disagree about what is and is not a weave. The tooltip shows the socket row, the slotted
+> threads, and any completed weave.
+>
+> **The build found one dormant hook:** `thorns_reflect` was registered but never applied in
+> production — the Thornwarden relic and the "of the Thorn" suffix were placebo. Ironwake is
+> deliberately self-contained (its own reflect + stun) rather than built on a hook that does
+> not fire; wiring `thorns_reflect` is now a separate, small cleanup.
+>
+> Gauntlet **1859/1859 across 112 tests**, typecheck clean on both configs.
+
+---
+
+> ## Direction update (2026-08-21) — the Hero Siege yoink → Batch A "The Arsenal"
+>
+> User direction, verbatim: *"update our plan to yoink all the UI, gameplay, etc from hero
+> siege!"* Briefed as **Batch A — The Arsenal** (`docs/plans/A-arsenal.md`). Systems and
+> interaction patterns only — rarity ladders, rolled affixes, elite packs, an ability bar,
+> orbs, comparison tooltips, sockets, a gambler. No art, names, or copy, which costs nothing
+> here because pillar 1 means there is no asset pipeline to put borrowed art into.
+>
+> **The audit finding: we already have about two thirds of Hero Siege under other names.**
+> The Loom is a talent tree. Night hordes are waves. The five lords are act bosses. The
+> Armory is a relic system. B5 already puts loot on the floor and walks you over it. What is
+> genuinely missing is short and specific:
+>
+> | Gap | Status today |
+> |---|---|
+> | **Rarity tiers + rolled affixes** | none — 67 hand-authored items, a strictly linear copper→iron→silver→star ladder, zero rolls |
+> | **Elite / champion packs** | `EnemyBehavior` is per *type*, never rolled per *spawn* — every skeleton on night 6 is the same skeleton |
+> | **Active ability bar** | Echoes are auto-firing only; the bottom bar holds verbs (Interact/Attack/Ignite/Build), not powers |
+> | **Item tooltips** | **zero tooltips exist anywhere in the codebase** — so a rolled item would be invisible to the player |
+> | **A gold sink** | exactly one in the whole game (`hordes.ts:730`, scatter-cache) |
+>
+> ✅ **Why A1 is cheap:** `grep registerEffect` returns **fifteen live, working, already-
+> consumed effect hooks** (`fire_aura`, `lifesteal`, `chain_on_kill`, `dodge`, `gold_find`,
+> `thorns_reflect`, …). They were built in C4 to serve **five relics**, and fourteen of them
+> are reachable from exactly one item each. The entire *suffix* half of an affix system —
+> "of the Ember", "of the Leech", "of the Wisp" — is a data table over hooks that already
+> work and are already Gauntlet-covered. **A1 is mostly a `data/` edit.**
+>
+> ⚠️ **The collision, and it needs a decision:** Hero Siege is a forever-character game —
+> keep the hero, keep the loot, climb for a hundred hours. Pillar 3 forbids persistence and
+> pillar 8 caps a run at ~15 real minutes. Diablo-style drop rates inside that window would
+> ship six rarity tiers of which no player ever sees the top four — the same dormant-content
+> failure the Lens work spent two milestones stamping out. Three ways out, in A-arsenal §4.2;
+> **recommendation is (a) compress the ladder so it is traversable inside one run + (b) record
+> your best item as a trophy on the finished-run scorecard**, which pillar 3 already permits.
+> Option (c), a persistent stash, is buildable but changes what NIGHTWARD is — a conversation,
+> not a commit.
+>
+> **Classes are the one borrowed system the brief declines.** They are a retention mechanism;
+> the Loom already does build identity better inside our constraints, and picking an identity
+> *before* you know what the wire is doing that run is backwards for this game. Build the Loom
+> out instead — unless overruled.
+>
+> ⚠️ **A7 collides with N4.5 and must not become a second difficulty axis.** N4.5's data-budget
+> opt-in is already user-directed to double as the difficulty selector. A7 gives that one
+> control ARPG-shaped consequences (enemy scaling, a rising rarity floor, Riftborn gated to the
+> top two tiers). One selector, two vocabularies: the Veil calls it a covenant, the Lens calls
+> it a data budget.
+>
+> ⚠️ **A2 is gated on the outstanding N4.3 balance verdict.** Rolled enemy affixes multiply
+> against per-night scaling *and* the Fray mapping *and* a Surge omen, and Fray × Surge already
+> compounds to ×1.81 horde speed with no verdict in yet.
+>
+> **Suggested first cut: A1 + A4** (the roll, plus orbs / comparison tooltips / loot beams /
+> rarity colour / minimap). That is the whole Hero Siege loop — kill, see a coloured beam, walk
+> over, read a tooltip, feel the upgrade — and it touches neither combat balance nor the N4
+> file set, so it can run in parallel with N4.4+. Open questions in A-arsenal §9.
 
 > ## Direction update (2026-08-14) — playtest verdicts + a new milestone
 >
@@ -30,7 +1082,8 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 > berries, etc etc. need to drop on the floor and then we pick it up by walking over it. makes
 > it feel more real"* and *"when i kill a boss its gotta drop stuff, the random mobs as well."*
 > All three loot sources, not just gathering. Briefed as **B5 — Ground Drops**
-> (`docs/plans/B5-ground-drops.md`). It is cheap because all three sites are already the same
+> (`docs/plans/B5-ground-drops.md`, since retired — see the bottom of this file). It is cheap
+> because all three sites are already the same
 > `invAdd`/`acquireGear` loop over a `Stack[]`, and every item already has a 16×16 procgen icon
 > that doubles as its world sprite — **no new art, no render-pipeline change.**
 >
@@ -53,6 +1106,678 @@ Typecheck clean, build green, **Gauntlet 72/72 functions / 1249/1249 assertions 
 
 ---
 
+---
+
+> ## N4.3 — Omens, 2026-08-20 (branch `dev/night-build`, unmerged)
+>
+> The half of N4 that stops the Lens being a diagnostics panel bolted to a game. N4.2 shipped
+> the `ChronicleStore` and its change detection early; §7 assigned N4.3 the two things that
+> were still outstanding — **scheduled jittered probes**, and **wiring detected changes into
+> world events** (§5.3). Both now ship. **Gauntlet 1645/1645 across 100 tests, 12 runs green
+> out of 12** (a couple of probes branch on terrain, so a run can report 1640 or 1644).
+>
+> ### The probes were phase-locked to the day/night cycle, and it is exact arithmetic
+>
+> N4.0 jittered the DoH beacons and stated why: *"so probes never phase-lock."* Three of the
+> four schedulers were left on fixed periods, and one of them is a clean divisor:
+>
+> | scheduler | period | day/night cycle | result |
+> |---|---|---|---|
+> | DoH beacons | 6 s ±40% | 340 s | already jittered (N4.0) |
+> | **same-origin baseline** | **20 s fixed** | **340 s** | **340 / 20 = 17, exactly** |
+> | Cloudflare trace | 300 s fixed | 340 s | walks slowly, deterministic within a run |
+> | deep-wire (`cfL4`) | 45 s fixed | 340 s | walks, deterministic within a run |
+>
+> The baseline probe therefore sampled the **same seventeen phases of the cycle on every day
+> of every run, forever**. Anything that tracks the cycle — and the whole premise of this game
+> is that the network and the world move together — was structurally invisible to it. That is
+> not a politeness problem, it is a measurement-validity problem, and no number of assertions
+> about the *value* of a sample would ever have found it.
+>
+> All four now re-roll their next gap through one shared `jitteredGap()` in `data/network.ts`.
+> Measured over 300 simulated probes against 68 five-second phase buckets:
+>
+> | | fixed 20 s | jittered |
+> |---|---|---|
+> | phase buckets reached | **17 of 68** | **67 of 68** |
+> | mean gap | 20.000 s | 19.98 s over 2000 samples |
+>
+> Live off a running game, the four schedulers' next gaps read `beacon 6.84 s · baseline 14.01 s ·
+> trace 345.53 s · deep 56.79 s` — against base intervals of 6 / 20 / 300 / 45, all four now
+> off their nominal period and none of them the same twice.
+>
+> The mean is the load-bearing half of that table. Spreading probes out is fine; quietly
+> firing more of them is not, and N4.0 spent an entire phase getting this volume down. The
+> test asserts the mean stays within 2% of the configured interval, and the matched control
+> asserts `jitteredGap(20, 0)` returns exactly 20000 every time — so the spread above is
+> demonstrably the jitter and not the test.
+>
+> The jitter also multiplies **on top of** the deep wire's failure backoff, so two clients that
+> failed at the same moment no longer retry at the same moment.
+>
+> ### The Lens CHANGES panel has never once shown anything
+>
+> `main()` calls `chronicle.takeEvents()` at 1 Hz to turn detected steps into Feed lines. That
+> drained the same array `tabs.ts` reads for its CHANGES panel and `toJSON()` reads for the
+> export. So:
+>
+> - the CHANGES panel could only ever have shown something if a Lens refresh landed inside the
+>   same second as a detection — in practice, never;
+> - **every chronicle ever exported carried `"events": []`**, in a file whose entire purpose is
+>   to be evidence.
+>
+> Nothing went red. `testChronicleStore` builds its own store and never calls `takeEvents()`,
+> so the drain was invisible to it — the same shape as the four tautologies this suite has
+> already shipped. `events` is now the permanent record and a private `pending` queue is what
+> `takeEvents()` drains; the test asserts both halves, including the matched control that the
+> queue *does* still drain, because a `takeEvents()` that stopped draining would re-log and
+> re-raise the same omen once a second forever.
+>
+> ### Omens — a change on the wire becomes a change in the world
+>
+> §5.3 asks for three: a latency step-change is a rift, a retransmission burst is a surge, a
+> throughput collapse is a famine. `systems/omens.ts` is a table, so adding one is a row:
+>
+> | series · direction | Omen | effect | gate |
+> |---|---|---|---|
+> | `fray` ▲ | **Surge** | `hordeAggression` ×1.25 + the screen frays | 3σ |
+> | `flow` ▼ | **Famine** | `resourceYield` ×0.65 | 3.5σ |
+> | `flow` ▲ | **Bounty** | `resourceYield` ×1.30 | 3.5σ |
+> | `pulse` ▼ | **Quickening** | `moveSpeed` ×1.10 | 3σ |
+> | `silt` ▲ | **Miring** | `moveSpeed` ×0.88 | 3σ |
+> | `pulse` ▲ | **Rift** | fires the realm rift | 4.5σ |
+>
+> Three decisions in there were choices, not defaults, and are worth stating:
+>
+> **Omens go both ways.** §5.3 lists only bad ones. A system that can only ever punish teaches
+> a player to resent their own connection, and it makes the mapping a penalty box rather than a
+> mapping. A latency *drop* is a Quickening and a throughput *surge* is a Bounty.
+>
+> **A Famine lifts when the network recovers, not when a timer expires.** The plan says "yields
+> drop until it recovers" and that is the better mechanic: the player's route out is the
+> network coming back, which they can watch happen in the Lens. Recovery is measured against
+> the *pre-step baseline* with a 10% hysteresis band and is direction-dependent — a down-step
+> recovers by coming back up. The duration cap is a safety valve for a permanently degraded
+> link, not the primary exit, and the test distinguishes `recovered` from `expired`.
+>
+> **An omen is a STEP, not a level.** The `Horde Aggression (Fray)` mapping row already makes a
+> lossy link permanently harder. A Surge is what happens the moment it *starts* being lossy.
+> Steady-state hostility and a shock are not the same experience and they multiply separately.
+>
+> ### The rift system has been dead code on desktop since N2
+>
+> Its only trigger was a `connection.type` transition. **Desktop browsers do not report
+> `connection.type` at all** — the flash, the particles, the biome swap, the scoreboard counter,
+> all built and tested and unable to fire on the platform this game is played on. A hard latency
+> step is the trigger it always needed. `NetworkSystem.riftFromWire()` honours the same 30 s
+> cooldown as the transition path, and **returns false when the biome selector returns the realm
+> we are already in** — the realm holds and no rift is claimed. Reporting `Vale → Vale` would be
+> a lie in the one panel that is not allowed to lie, and the omen is asked-then-raised rather
+> than raised-then-asked so a refusal leaves nothing phantom behind.
+>
+> ### What the tests actually prove
+>
+> 61 new assertions across 5 tests. Two are worth naming, because both are the kind that would
+> have passed on a broken implementation:
+>
+> **Movement is measured, not read back.** The probe drives the input axis and measures the
+> distance the player covers. Reading `omens.mul()` back would pass while `main.ts` computed the
+> value and discarded it, which is exactly what shipped in G1 and in the Loom. Measured:
+> **1.100× for a Quickening and 0.880× for a Miring**, against configured values of 1.10 and 0.88.
+>
+> Getting that to three decimals took two goes, and the second one fixed a **pre-existing flake
+> in the Loom test**. The Loom's movement probe trials all four directions and keeps the longest
+> corridor — an idiom that was itself a flake fix. But *longest* is not *fair*: terrain speed
+> varies tile by tile, so a faster player ends up further along and can enter slow ground the
+> plain run never reached, and on a short corridor that noise is larger than the modifier. It
+> failed as `Deep Roots slows real movement: 28.4 → 29.2px` on a 28 px corridor, with nothing
+> wrong in the Loom at all — found while chasing the identical flake in my own probe.
+>
+> Both now use a shared `findUniformCorridor()`: a straight run of seven tiles that are all
+> standable **and all report the same `world.speedAt()`**. On uniform ground distance is exactly
+> proportional to the multiplier. The Loom probe consequently gained an assertion it could never
+> make before — that Deep Roots' advertised **−12% is 0.880×**, not merely "smaller".
+>
+> A third cause was underneath both: **a death respawn teleports the player to the hall
+> mid-measurement**, which measured 2934.8 px against an expected ~90 on 1 run in 10. Both probes
+> now clear the field, restore HP, and reject any run longer than the corridor it was walked down —
+> a distance that did not come from walking is not a movement measurement.
+>
+> **`recovered()` is asserted not to lift on the tick it was raised.** If that comparison were
+> inverted, every omen would lift immediately and the entire system would be a no-op that still
+> passed an "an omen can be raised" test.
+>
+> ### Two bugs in my own tests, both instructive
+>
+> **The stub inverted the thing it was pinning.** The yield thinning uses stochastic rounding —
+> `floor(x) + (random() < frac ? 1 : 0)` — and I copied the Loom probe's `Math.random = () => 0`.
+> But `0 < frac` is **true for every fractional part**, so the stub made the famine round *up*
+> every time and a 2-item harvest thinned to exactly 2. It read as missing wiring. `0.999`
+> floors instead, and `floor(n × 0.65) < n` for every `n ≥ 1`.
+>
+> **A test asked the detector to find a step against a baseline containing that step.** The
+> follow-up assertion pushed 60 s of the new level and then stepped back; `detect()` compares
+> `now-15..now` against `now-105..now-15`, so the baseline window straddled both levels, its
+> standard deviation was the size of the step, and sigma collapsed. The store was right and the
+> test was wrong.
+>
+> Also: the harvest probe took the first feature tile within 6 tiles without checking the player
+> could *work* it, got `-1`, and — because `ok()` throws — took the move-speed section down with
+> it, leaving `main.ts`'s wiring unverified. It now tries candidates until one actually starts.
+> That is the same silently-skipped-phase failure the waystone bug had, caught this time by the
+> guard written for it.
+>
+> ### Live, off a running game
+>
+> Raised through the real path — a step pushed into the Chronicle, drained by `main()`'s 1 Hz
+> tick, handed to `omens.consider()`. Nothing reached into `omens.active`:
+>
+> ```
+> raised:  ["Surge x1.25"]      hud chip: "Surge 73s"
+> active:  [{ kind: surge, target: hordeAggression, mul: 1.25, from: 0.5, to: 1.03, sigma: 21.3 }]
+> muls:    { horde: 1.25, yield: 1, move: 1 }
+> chronicle.events kept after the 1 Hz drain: 2
+> l4: { proto: TCP, minRtt: 1.519, lost: 3, retrans: 4, cwnd: 53 }   ← fray 0.75
+> ```
+>
+> **Two attempts at that capture failed, and both failures were the system working.** The first
+> raised a Surge and it lifted one second later — because the real reading is a Cloudflare edge
+> honestly reporting `lost=0`, so `recovered()` fired correctly. The second wrote to
+> `net.snap.fray` to hold it, which did nothing: `net.update()` recomputes the snapshot from
+> `deep` every frame, so that write is **the same transient-projection trap as writing to
+> `state.player`** — its seventh occurrence. The capture only worked once the *kernel dump* was
+> degraded, which is the only authoritative value in the chain.
+>
+> ### Two things for the playtest verdict
+>
+> Both are single numbers, flagged rather than pre-emptively tuned:
+>
+> - **The Surge screen effect may be too much.** `CFG.omens.surgeFxStrength` at 0.5 drives the
+>   vignette +0.22 and pushes the grade to `[255,120,120]` at 0.11 strength. In the gate shot it
+>   reads close to a damage flash that never ends. The plan asks for loss to be *frightening*;
+>   whether it is frightening or just loud is a feel call.
+> - **Fray and Surge compound to ×1.81 horde speed.** The Decoder Ring clamps `hordeAggression`
+>   at ×1.45 for a badly lossy link, and a Surge multiplies ×1.25 on top. That separation is
+>   deliberate — level and step are different experiences — but the product is the number that
+>   gets played.
+>
+> ### The `state.player` projection trap, occurrences eight through twelve
+>
+> The 12-run baseline went red once on `at least one productive action performed`, in the
+> **survival** playthrough. The line above it — `buildings exist at end (3 total)` — passed, so
+> the world had buildings but the playthrough had produced none of them. They came from setup.
+>
+> The cause is the one this project keeps rediscovering. `state.player` is a **projection**;
+> `main()` overwrites it from `nw.player` at the end of every sim tick. A write to it is not an
+> error, does not warn, and disappears on the next `nw.step()`. The survival playthrough's
+> gather loop did exactly this, so it never walked to anything and only gathered what happened
+> to be inside the 1.6-tile reach already. **It is the same bug I fixed in the *exhaustive*
+> playthrough's phase-1 loop yesterday, in a different function, and I did not check for
+> siblings.** Grepping `state.player.x = ` found four more:
+>
+> | site | what it silently did |
+> |---|---|
+> | survival playthrough, gather loop | never walked to a node — over 12 runs the playthrough went from **0 crafts and 0 builds** to a steady **12–19 gathers, 12–13 crafts, 8–9 builds** |
+> | survival playthrough, setup | "move player near hall" moved nobody |
+> | Loom gather-yield probe | only measured nodes already in reach |
+> | `testFireIgnite` | ignited from the original tile, not the flammable one |
+> | **`testCollisionWalls`** | **a tautology — see below** |
+>
+> **The wall test was a green light wired to nothing.** It wrote a position on the far side of
+> a Palisade, stepped, and asserted the player had not moved far. The player had not moved
+> *at all*, because the write was discarded — so `position blocked by Palisade wall` was true
+> for the same reason `1 === 1` is true. It would have passed with the wall deleted, with
+> collision disabled, with the building system removed entirely. **The fifth tautology found in
+> this suite.** It now stands on open ground west of the wall, drives the input axis east for 40
+> ticks, and asserts the player stops short of the wall's edge — measured `x=-1163.4` against an
+> edge at `-1152` — with a matched control that the player did move east at all, and a second
+> that an adjacent wall-free tile *is* standable so the refusal is the wall and not the terrain.
+>
+> Fixing those changed where the player stands during later tests, which exposed two more latent
+> flakes that had been masked by the trap: the Loom's yield probe hardcodes a +20px approach that
+> lands in water or in the trunk (it now tries each side and keeps the first node that actually
+> *starts*), and `wall placed near chained waystone` guarded its placement on `canPlaceAt()` and
+> then asserted unconditionally that the wall was there — the sibling search ten lines above it
+> already carries exactly that fix and its comment, and this one was missed.
+>
+> Twelve runs green out of twelve after all of it, against 11/12 before — and the one that was
+> red was red for a real reason.
+>
+> ### Budget
+>
+> No new outbound requests. The jitter changes *when* four existing schedulers fire, not how
+> often — asserted. N4.5 remains the only phase that will spend the player's data, and it stays
+> behind the opt-in that doubles as the difficulty selector.
+
+---
+
+> ## Night build 2026-08-19 — B5, B6, N4.1, N4.2 (branch `dev/night-build`, unmerged)
+>
+> ⚠️ **This branch is an INTEGRATION branch, not a feature branch.** It is
+> `main` + `fix/sound-rollback` + `feat/b-reachable-run` + `feat/g-terrain-depth`, and then
+> four new milestones on top. It exists so the whole queue can be playtested as one thing
+> instead of five. The individual branches still exist and are still the right unit to
+> review. **Nothing here has been merged to `main`.**
+>
+> Two conflicts in the stack, both trivial and both resolved as unions: `package.json`
+> (the `qa:*` scripts vs `gauntlet`) and `main.ts` (`__nw.sys.net` vs `__nw.input`).
+>
+> ### B5 — Ground Drops
+>
+> Loot lands on the floor and is walked over. All three loot sources — gathering, horde
+> kills, world-boss kills — ended in the same two lines (`invAdd` + `acquireGear`) and the
+> item teleported into the bag; B5 replaces that one seam at all three sites. Every
+> modifier upstream (mega-cluster area rolls, Loom double-yield, Granary, Battery Scarcity,
+> material yield) still runs first and still produces the final `Stack[]`. Only the
+> destination changed.
+>
+> Three beats, because skipping any one makes ground loot feel **worse** than instant
+> pickup: the toss (~0.45 s arc, the item visibly leaves the tree/corpse), the rest
+> (contact shadow, idle bob), the collect (walk near, it snaps to you).
+>
+> **Magnet radius 1.6 tiles, not a literal walk-over.** A pure hitbox overlap turns the
+> floor after a 43-foe night wave into a pixel hunt. `armDelaySec: 0.25` stops the magnet
+> firing before the arc finishes — without it, gathering at point-blank range collects
+> instantly and the entire feature is invisible.
+>
+> Two guards against this codebase's own documented failure modes:
+> - Pickup SFX hard-limited to one per 0.12 s. Pickup is high-frequency (43 foes a night,
+>   16 rolls per mega-cluster); an unguarded blip per stack is the `deathWhistle` mistake
+>   of 2026-08-14 repeated in a new system.
+> - Toasts moved from the loot roll to the pickup and aggregate over 0.4 s. The
+>   `log.push('gather', …)` entry **stays at the roll** — the event log records what the
+>   world produced, which is true whether or not the player walks over to collect it.
+>
+> `CFG.drops.enabled = false` restores the pre-B5 path exactly. That is the escape hatch if
+> the verdict is negative, and it is tested.
+>
+> **Known consequence, stated rather than hidden:** loot can now be abandoned. Materials
+> rot after 90 s; gear, tools and relics never do. Crafting and building can briefly lack
+> materials you "earned". That is intended, and it is a real change to flow.
+>
+> **⚠️ Collision note carried from G4 still applies and is now joined by this one:** a drop
+> is clamped to a standable tile when it lands, but drops do not block movement and are not
+> entities — they are not in `world`, only in `state.drops`.
+>
+> ### B6 — Level-Up Flourish
+>
+> Specced as OPTIONAL and needing a yes/no. **Built anyway, because it is cheap and was
+> directly asked for, and it is one config flag from off.** Consider this the prototype the
+> verdict is about, not a decision already taken.
+>
+> A level-up was a toast in the corner plus a sound at two of the seven call sites —
+> Firemaking and Combat levelled up in silence. Now: a `levelup` particle row (gold,
+> **negative** gravity, ~1 s — motes that rise read as an upgrade, motes that fall read as
+> debris), two rings racing outward with the second trailing the first, and a ground bloom,
+> ~0.65 s, drawn **on the character**. One shared `levelUpFlourish(ctx)` rather than seven
+> copies, because the seven sites had already drifted apart once.
+>
+> **Skill levels only.** Not soul-gear levels and not Loom points, both of which are
+> frequent: a flourish firing several times a minute stops reading as an achievement, which
+> is the same always-on-intensity failure that got the combat music rolled back.
+>
+> ### N4.1 — The Deep Wire
+>
+> Everything the game measured before this was an **inference**. `navigator.connection.rtt`
+> is quantised to 25 ms buckets; `downlink` is capped at 10 Mbps and absent outside
+> Chromium; "jitter" was a statistic derived from those buckets, so it was measuring the
+> quantiser as much as the network. **Packet loss was recorded in this file as impossible
+> from a browser. It is not.**
+>
+> A Cloudflare edge that terminates our TCP connection returns its own kernel socket
+> statistics in a `Server-Timing` header — `cfL4;desc="?proto=TCP&rtt=…&min_rtt=…&rtt_var=…
+> &lost=…&retrans=…&delivery_rate=…&cwnd=…"`. That is a `TCP_INFO` dump for our own socket,
+> in **microseconds**. `src/game/systems/deepwire.ts`:
+>
+> - `parseCfL4` / `parseServerTiming`, both defensive, both reading by key and never by
+>   position.
+> - A passive `PerformanceObserver` harvesting TAO-enabled resource waterfalls. **The TAO
+>   test is done on the ENTRY, never on a hostname allowlist** — a host can stop sending the
+>   header and a proxy can strip it. A zeroed `responseStart` means "no data", never "0 ms";
+>   inverting that would report a filtered network as the fastest ever seen.
+> - One **header-only** probe (`__down?bytes=1`) every 45 s through the existing `NetGate`,
+>   with backoff. The interesting data is in the headers; spending the player's bandwidth to
+>   read a kernel counter would be absurd. The real throughput test stays an opt-in verb
+>   (N4.5).
+> - Identity as a side effect: `cf-meta-ip/colo/country/city/asn` ride along on the same
+>   response — which is what let N4.0 retire `ipify` and `ipapi.co` without losing anything.
+>
+> **Live-verified**: `pulseBest 2.03 ms` (real `min_rtt`, sub-millisecond) and
+> `flowBest 17.03 Mbps` (real `delivery_rate`, above the 10 Mbps `downlink` cap) read off a
+> running game.
+>
+> Six measured metric rows — Fray, Silt, Aperture, Flow, Pulse, Flux — plus three
+> "effective" rows the sim consumes. **The measured rows deliberately do not overwrite
+> `rtt`/`downlink`/`jitter`**: those keep their documented estimated meaning so the Lens can
+> show measured and inferred side by side. Silently swapping one for the other would erase
+> the only evidence that the deep wire works.
+>
+> Two new modifiers that only exist because the kernel told us: **Fray** (loss + retrans)
+> drives horde aggression — packet loss should be frightening — and **Silt** (RTT above
+> *this path's own* `min_rtt`) drags movement. Silt is measured against the path's own floor
+> so a player who simply lives far from an edge is not punished for their geography.
+>
+> Every derived value sits at **neutral** when the wire is silent. A player behind a proxy
+> that blocks the endpoint gets a balanced game, not an easy or an impossible one.
+>
+> **Correction to record here:** the "What we CANNOT get from a browser" list in this file
+> is now wrong about packet loss for Cloudflare-terminated paths. ICMP, pcap, ARP, LAN
+> enumeration and WiFi dBm remain correct.
+>
+> **Not done:** the plan suggests depending on `@cloudflare/speedtest` rather than
+> hand-rolling. That package is a full throughput engine and this phase spends no bandwidth;
+> it belongs with N4.5, where it would actually earn its place as a dependency in an
+> otherwise pixi-only project.
+>
+> ### N4.2 — The Lens becomes a side cart, and gains a memory
+>
+> The Lens was a centred modal built by 115 lines of string concatenation in `main.ts`,
+> rebuilt wholesale every refresh. **It covered the game** — the wrong shape for a panel
+> whose entire premise is that these numbers are driving the world in front of you.
+>
+> Now a right-edge drawer (380 px; full-width sheet under 700 px). Non-modal: no scrim, no
+> input capture beyond its bounds, the game keeps rendering beside it. Animates on
+> `transform` only, so opening it never triggers layout during a 60 fps sim. Five tabs —
+> PULSE / PATHS / IDENTITY / VESSEL / THREADS — extracted to `src/game/ui/lens/`. Only the
+> **visible** tab is rebuilt, only while open, throttled to 4 Hz.
+>
+> **Honesty tags are the point of the refactor.** Every reading is tagged `measured` /
+> `reported` / `derived` / `unavailable`, and an unavailable row says **why** in plain
+> language — "unavailable" with no reason is indistinguishable from "broken". PULSE shows
+> the deep wire and the browser estimate side by side so the size of the 25 ms bucket is
+> visible. PATHS distinguishes TAO routes (full waterfall) from ones where the browser
+> zeroes every timing field. IDENTITY keeps a "what we cannot see" section — packet loss
+> used to be on it.
+>
+> **The Chronicle** (`systems/chronicle.ts`). What existed was three arrays of 60 numbers: a
+> one-minute sliding window, which cannot answer "what changed?" because by the time you
+> notice, the thing it changed *from* has been shifted off the front. Now one session-long
+> store, and two decisions carry it:
+> - **Aggregates, not decimation.** Old samples collapse into 10 s buckets keeping
+>   min/median/p95/max. "Keep every tenth sample" is simpler and throws away exactly what is
+>   worth keeping — **the outliers are the event**.
+> - **Every sample carries its provenance**, so the export cannot claim precision it never
+>   had.
+>
+> Change detection compares a short window against a longer baseline that **excludes** it,
+> in standard deviations rather than percent: a satellite link that always wobbles by 80 ms
+> should not fire every minute, and a fibre link that never moves should fire on 20 ms.
+> Steps become Feed lines now, and world events in N4.3.
+>
+> **Export** dumps every series, probe and derived inference as JSON, locally. The panel is
+> a data-collection instrument, so the data has to be able to leave it.
+>
+> Also deleted: `drawSparkline()`, 40 lines of canvas code that had **never once been
+> called**. The strip uses inline SVG, which survives `innerHTML` rebuilds.
+>
+> ### Evidence — including what went wrong
+>
+> Typecheck clean on both configs · build green · **Gauntlet 1553/1553 across 94 tests, 10 runs green out of 10**
+> (up from 1337/1337 across 85: 21 new assertions worth of B5/B6/N4 coverage plus rewrites).
+>
+> **A correction to my own first conclusion, recorded because the first version of this
+> entry was wrong.** I wrote that the intermittent redness was mine, on the strength of six
+> consecutive green runs at the pre-feature commit. Six runs is not a measurement of a
+> one-in-four event. A proper 8-run baseline at `e7a3ee3` came back **6 green / 2 red, both
+> reds on `5/12 systems exercised`** — so the suite already flaked at roughly one run in
+> four before any of this work existed. What my changes did was move *which* assertion
+> caught it. The two causes below were real and are fixed; they were not the whole story,
+> and claiming they were would have buried a pre-existing defect under a tidy narrative.
+>
+> Two causes that genuinely were mine, both in B5's own test changes:
+>
+> 1. `testBossDeathPaysOut` walks the player to a lord's corpse now, and restored the
+>    position through `state.player.x`. **That is the projection — `main()` overwrites it
+>    from `nw.player` every tick** — so the player stayed at the corpse. Two tests that run
+>    after it (waystone placement near the hall, the Loom movement probe) went red about one
+>    run in three, for reasons having nothing to do with either of them.
+> 2. Several new assertions read `state.drops.length` across hundreds of ticks of live sim,
+>    in which foes genuinely die and drop loot of their own. They watch planted UIDs now.
+>
+> Three more flakes surfaced while pinning B5 and **all three were real**: an unpinned toss
+> angle drifts a planted stack out of the radius it was planted inside; `state.player` vs
+> `nw.player` again, this time putting a stack 55 px from a player it was meant to be 31 px
+> from; and one N4.1 test went red because **the probe genuinely succeeded in CI** and
+> reported `cwnd 52`, making Aperture legitimately 1.25 — fixed by forcing the wire silent
+> for the neutrality assertions rather than by widening the band, since otherwise the
+> assertion measures whoever's network is running the suite.
+>
+> Three real product bugs were found by *writing* the tests rather than after shipping:
+> `stats()` walked backwards from the newest sample so the "baseline excluding the recent
+> window" swept it up anyway and the detector compared a window against itself; compacting
+> everything older than the fine window meant one sample aged out per push, so every
+> "bucket" held a single sample and a 900 ms spike reported `med=900`; and rewriting the tab
+> bar's `innerHTML` on every selection detached the node the click came from.
+
+> **A rendering bug that predates all four milestones, found by B6.** The level-up burst
+> drew its rings and none of its motes. The rings are `views.fx`, which lives inside the
+> camera-transformed container; `ParticleSystem` was parented to `app.stage`, which is
+> **screen space**. Every call site has always passed world pixels, so since G1
+> (2026-07-18) every particle in the game — embers, hit sparks, gather puffs — has been
+> drawn at its world coordinate treated as a screen coordinate. Correct only near the
+> origin, and wrong by exactly the camera offset everywhere else, which is why it never
+> looked broken so much as sparse. One line: `new ParticleSystem(stage.world, 400)`.
+> Verified in a 4× clipped capture, not by reasoning about it.
+
+> **And the 4× capture immediately found a second one.** Every stack count lying on the
+> ground was an unreadable smudge. `stage.world` is scaled 2× and Pixi renders `Text` into
+> a texture at **resolution 1**, so each label was a low-res bitmap linearly upscaled — a
+> thin glyph with a dark stroke blurs into grey mush. It presented as a *colour* bug, and
+> every property was already correct: fill cream, alpha 1, tint white, no filter anywhere
+> in the ancestor chain. What settled it was forcing the fill bright red and getting a dark
+> red smudge, which ruled the fill out and pointed at filtering. `resolution = 4`.
+>
+> Looking at the picture found two more things in the same 30 lines: the count was drawn at
+> `(0, 5)`, directly on top of its own contact shadow (an ellipse centred at `(0, 7)`, ry
+> 3), so the top half of every digit sat in the darkest pixels of the frame; and `fontSize
+> 9` with a **3 px** stroke leaves nothing, because Pixi draws the stroke *over* the fill
+> and centres it on the outline, eating 1.5 px inward from each side of a ~2 px stem.
+> `BuildingView`'s name label had the same resolution bug and is fixed with it. Floaters are
+> unaffected — they convert world→screen and live in an unscaled layer.
+>
+> **Both of these are the same lesson twice in one night: a renderer cannot be verified by
+> reading it.** Two bugs, both months old, both invisible to a suite of 1500 assertions,
+> both obvious within seconds of actually looking at a magnified frame. The gate
+> screenshots are not decoration for the report; they are the only instrument that catches
+> this class of defect.
+
+> **One more flake, and this one N4.1 caused.** The Night Market assertion is
+> `round(pop × goldMul × 1.4) > round(pop × goldMul)` with `pop = 2` — false for any
+> `goldMul` near 0.8, since `round(1.6)` and `round(2.24)` are both 2. It was stable before
+> because `goldRate` was a quantised `downlink` bucket; N4.1 made it a **continuous measured
+> value**, so it started landing in the dead band. That is the cost of measuring things
+> honestly, and the fix is on the test, not the feature: six huts put the base near 14,
+> where a 40% rise cannot round away.
+
+> **The fourth tautological test in this suite.** `testGatherEveryFeature` reported
+> "tested === found" and had **never gathered anything**. `world.activeFeatureAt` returns a
+> `FeatureDef` directly; the test read `f.def?.id`, which is `undefined` for every tile ever
+> scanned, so `found` stayed 0 and the assertion passed as `0 === 0`. Fixing that exposed a
+> second bug behind it (the same `state.player` projection write — it located 12 feature
+> types and moved to none of them) and a third (the fixture ran with flint tools and
+> leftover xp, so only 6 of 10 were reachable). With all three fixed it gathers **11 of 11**
+> located feature types. A test whose precondition never holds is not a weak test, it is a
+> **green light wired to nothing**, and this suite has now shipped four of them.
+>
+> **The pre-existing flake, chased to its root rather than documented as weather.** Eight
+> instrumented runs printing which systems each playthrough actually touched turned
+> `5/12 systems exercised` from a mystery into one line of code. `gather` and `crafting`
+> never dropped separately — they dropped **as a pair**, in 3 of the 6 runs that completed,
+> and phase 1 reported `0 gathers, 0 crafts` every time. They are a pair because phase 1
+> crafts from what phase 1 gathered.
+>
+> The cause is `state.player` versus `nw.player` **for the sixth time this session**. The
+> phase-1 gather loop scans ±3 tiles for a feature and walks to it by assigning
+> `state.player.x`. That is the projection, which `main()` overwrites from `nw.player` on
+> every sim tick, so the loop moved the player nowhere and could only ever harvest what was
+> already inside the 1.6-tile reach. A feature 3 tiles out at 96 px is unreachable, the
+> phase logs "13 feature(s) in reach" and gathers none of them, and on a run that also
+> happens to miss hordes/echoes/bosses the count lands on exactly 5. It now teleports
+> through `nw.player` and stands *beside* the node — a tree tile is not standable, and
+> teleporting into one silently leaves the player where they were.
+>
+> **This projection trap has now caused six bugs in one session and deserves a rule:** in
+> tests, read whatever is convenient, but *write* only to `nw.player`. A write to
+> `state.player` is not an error, does not warn, and disappears within one tick.
+>
+> The other 2 of 8 runs died on **`CDP timeout`** with no assertion having failed — a
+> harness limit, not a product signal. `cdpRecv` waited 30 s for the next message of any
+> kind, and the exhaustive playthrough is one long synchronous block that emits nothing
+> between phase logs, so a slow machine was indistinguishable from a hung page. Raised to
+> 120 s, which still catches a genuine hang.
+>
+> The `levelReq` diagnosis in the first draft of this entry was a real fragility and the
+> phase log still names gated features — but it was **not** what was firing. It was the
+> plausible explanation, and it survived because it was never tested against a measurement.
+
+> **Measured before and after, 8 runs each on the same machine and the same seed:**
+>
+> | | before | after |
+> |---|---|---|
+> | runs green | 6 of 8 (2 died on `CDP timeout`, 1 of the 6 red) | **8 of 8** |
+> | `gather` exercised | 3 of 6 completed runs | **8 of 8** |
+> | fewest systems exercised | **5** of 12 | **8** of 12 |
+> | `soulfeed` exercised | **0** of 8 | 6 of 8 |
+> | `waystones` exercised | **0** of 16 | exercised |
+>
+> The last row is the one that matters more than the flake. Soul-feed consumes gathered
+> materials, so a playthrough that never gathered could never reach it — the
+> "exhaustive" playthrough had been skipping an entire system every single run, and the
+> suite reported that as a passing test the whole time. Fixing one projection write did not
+> just stop a red light; it turned a third of the playthrough back on.
+
+> **Then the same instrument found a second silently-skipped system.** `waystones` was
+> unexercised in **16 of 16** runs. The phase looks up the hall to place waystones around,
+> and `exMark(m, 'waystones')` sits inside `if (hall)` — so when the hall dies the phase
+> does nothing and says nothing about it. And the hall does die: it is a 400 hp building
+> standing through several night waves, and the run log now confirms it in as many runs as
+> not. Phase 6 stands a new one up, because that phase exists to exercise waystones and
+> hall survival is phase 4's business.
+>
+> **Two of the twelve systems were quietly absent from every single run while the suite
+> reported green.** Neither was found by reading the test. Both were found by printing
+> which systems each run actually touched — the same move as the four tautologies: stop
+> trusting the pass, and make the test say what it did.
+
+> **A near-miss worth recording.** A Python patch script opened the 263 KB test file for
+> writing and then threw a `UnicodeEncodeError` mid-write on a malformed emoji escape.
+> Opening for write truncates immediately, so the source file was left at **zero bytes**,
+> and a 10-run measurement that was in flight at the time silently measured the wreckage
+> — 8 of its 10 runs were garbage. Recovered from `HEAD` in full. Every patch script now
+> encodes to bytes FIRST and writes through a temp file plus `os.replace`, so a bad encode
+> can never destroy the original. Worth stating plainly because for a few minutes the
+> failure looked like a real crash rate and was not.
+>
+> ### What is NOT done
+>
+> - **No playtest.** All four of these are feel changes; B5 changes how every loot event in
+>   the game feels. They land on the WORKFLOW playtest gate and **nothing here may merge to
+>   `main` without a verdict.**
+> - **No gate screenshots for B5/B6.** The relief gate shots at `qa/gate-batch-G/` are from
+>   the previous session and do not show ground drops.
+> - **No `cargo test` run** — no Rust changed, so it was not run rather than run and
+>   reported.
+> - **No Firefox / headed WebGPU / `pilgrim` lanes**, as before.
+> - **N4.2 partially covers N4.3.** The `ChronicleStore`, tiered retention and change
+>   detection shipped here because the strip and the export both needed a real backing
+>   store. N4.3 still owes the **scheduled jittered probes** (latency ~10 s, DNS ~30 s, STUN
+>   at boot and on rift) and the wiring of detected changes into **world events** rather
+>   than only Feed lines.
+> - **B5 Q2 (gold as physical coins) is still `goldDrops: false`**, and B5 Q4 (drops
+>   surviving the death scatter) is left as-is per the brief's recommendation.
+
+> ## Batch G "Depth" — SHIPPED 2026-08-19 (branch `feat/g-terrain-depth`, unmerged)
+>
+> ⚠️ **Naming collision, read this first.** There is an *already-shipped* `G1/G2 — Visual
+> Upgrade & Juice ✅` further down this file, dated 2026-07-18 — screen shake, the 9-kind
+> `ParticleSystem`, `BloomPass`, colour grading, vignette. That is a **different G1/G2**
+> from the Batch G milestones below, which came from `BG-batch-proposal.md` (since retired —
+> see the bottom of this file). Reading the
+> ✅ alone would wrongly suggest the terrain work was already done.
+>
+> **The problem this batch existed to fix:** the chunk baker painted colour and never lit
+> it, and the mountain ramp was *darker* than the grass beside it — so a peak read as a
+> pit. Terrain had structure at 1 px (dither) and at 32 px (the tile grid) and nothing in
+> between.
+>
+> **G1 — height-field relief lighting** (`src/game/world/relief.ts`, new). A continuous
+> height field is derived from the discrete material grid — **bilinear over tile centres**,
+> because sampling heightClass per pixel just reproduces the 32px staircase as a hard
+> shading edge — plus world-space fbm micro-relief. Normals come from a **3×3 Sobel** (a
+> 2-tap forward difference is one-sided and paints a directional seam along every step).
+> The result is a 66×66 greyscale texture per chunk, linear-filtered, **multiply**-blended.
+> Multiply can only DARKEN, and that is the deliberate trade: flat ground lands at exactly
+> 1.0 so G2's palette passes through untouched, and the form is read off the shadowed
+> faces. Light direction follows the world clock (east at dawn → west at dusk, altitude
+> peaking mid-phase, half strength at night); the sun is **capped below ~45°** because at
+> 90° every normal returns ~cos(slope) and relief flattens to nothing — the first
+> calibration shipped a near-vertical noon sun and shaded nothing at all.
+> **Toggle: `R` in game, or `?norelief` at boot.** The proposal's Option C, as recommended.
+>
+> **Cost:** ~1 ms per chunk, and it is built **off the bake path** (`RELIEF_BUILD_PER_FRAME`)
+> — a normal field costs about as much as the whole rest of a bake, so a teleport into
+> fresh terrain would otherwise stall on ~25 at once. Chunks arrive unlit and light up over
+> the next frames. Base bake measured at ~6 ms/chunk; **no pre-change baseline was taken**,
+> so the batch's total bake delta is unmeasured.
+>
+> **G2 — palette and value inversion.** All 24 material ramps re-cut from 3 stops to 5
+> (`makeTileVariants` now quantises by ramp length, so a 3-stop ramp behaves exactly as
+> before). Mountain and snow re-ramped light-on-top; the 8 realm-warped materials moved off
+> raw `#cc00cc`/`#00cccc`/`#cc9900`. Measured result: **mountain 165.5 > hill 129.9 >
+> grass 119.1** mean luminance off the baked canvas — monotone with height at last.
+> Two fixes fell out of this: every tile variant is now **re-centred on the same mean**
+> before quantising (each variant carrying its own average brightness is what made the
+> ground read as 32px wallpaper), and cliff shading moved from additive `darken()` to the
+> new proportional `scale()` — an additive −30 is a cliff face on slate and a **no-op on
+> snow**, which was painting "cliffs" lighter than the grass below them.
+>
+> **G3 — the floating planks.** The cliff pass no longer fires into `heightClass 0`; foam
+> already owns the shoreline, and a band there paints a plank of land on the sea. Genuine
+> faces widened (9 px one-step / 20 px steep) with per-column striation hashed on the
+> **world** pixel column and a top edge that undulates on smooth noise — per-pixel white
+> noise there reads as a comb of hair, not broken rock. Measured: shoreline darkens 4.6,
+> a real cliff darkens 71.6.
+>
+> **G4 — silhouette smoothing.** Corner-cut chamfers where two adjacent orthogonal
+> neighbours share a foreign material. The feather pass blends *texture* but never reshapes
+> the *outline*, which is why the staircase survived it. Drawn in three alpha layers like
+> `feather()` does: a single hard-clipped wedge is a **spike** at a high-contrast border
+> (dark water sawing into pale sand looked worse than the staircase it replaced).
+> ⚠️ Cosmetic only — collision still reads the tile grid, so a corner can look ~13 px
+> rounder than it walks.
+>
+> **G5 — verticality.** Mountain and snow appear in **no feature density table**, so the
+> peaks were flat texture fields with nothing standing on them. Added render-only rock
+> crags (never gameplay entities — both materials are impassable, so a real gatherable node
+> up there would be loot the player can never reach), cut from a **shaded-down** mountain
+> ramp: at full brightness a crag is the same value as the rock it stands on and reads as
+> an empty outline. Snow gets bare rock with a snow cap. Trees now build each variant at
+> its own size (0.72×–1.30×) at native resolution — uniform tree size was most of why a
+> forest read as wallpaper.
+>
+> **G6 — dead code.** Deleted the 174-line `bakeSubpix` path (`subpixFactor` had returned a
+> constant 1 since it landed) and the per-tile ambient-occlusion pass, which darkened whole
+> 32px squares and was a direct contributor to the tile grid the relief field now handles
+> properly.
+>
+> **Evidence.** Typecheck clean on both configs. **Gauntlet 1249/1249.** New
+> `qa/specs/relief.spec.ts` — 5/5, every assertion a **matched pair** with a positive
+> control, because a negative claim whose precondition never held is worthless. The
+> anti-tautology guard that matters: a flat grey tint over the whole world would sail
+> through a naive "boundaries are darker" check, so the overlay must reach a true 1.0
+> somewhere *and* average near it. Measured: level ground 0.984, height step 0.799,
+> darkest 0.549, brightest 1.000, overall mean 0.978; 94/221 samples move between dawn
+> and dusk. Two of these tests **failed first** and both failures were real — the cliff
+> control never fired under random wandering (now a directed search), and the
+> level-vs-slope split was reading tile *centres*, where a bilinear field's gradient is at
+> a minimum.
+>
+> **Smoke: 3/4.** The red one is the pre-existing drums-in-ordinary-combat regression —
+> **verified to fail identically on pristine `main`** this session, and fixed on the
+> unmerged `fix/sound-rollback`.
+>
+> **Gate screenshots** (relief noon/dawn/dusk vs flat, three biomes, seeds 1234/7777/4242):
+> `qa/gate-batch-G/` — on disk, gitignored, ~400 KB each. **Awaiting the user's verdict.**
 > ## Direction update (2026-08-17) — QA becomes a release gate
 >
 > **User direction, verbatim:** *"lets create test cases that is like an actual play through,
@@ -515,18 +2240,38 @@ what fallback the game uses when an API is missing.
 | `performance.getEntriesByType('navigation')` | ✅ | ✅ | ✅ | zeros | No ancestral memory bonuses |
 | `fetch()` (for endpoint timing) | ✅ | ✅ | ✅ | 30 ms | Moderate endpoint latency |
 | `Date.now()` | ✅ | ✅ | ✅ | — | Always works |
+| `Server-Timing` / `serverTiming` **(N4.1)** | ✅ | ✅ | ✅ | header absent | Loses `cfL4`; falls back to wall-clock RTT |
+| DoH over `fetch()` **(N4.1)** | ✅ | ✅ | ✅ | no resolution | No Scrying (N4.4) |
+| `RTCPeerConnection` (STUN) | ✅ | ✅ | ✅ | no candidates | No NAT/IPv6 traits |
+| `navigator.userAgentData` | ✅ | ❌ | ❌ | UA string | Coarser device flavour |
+| `PressureObserver` | ✅ | ❌ | ❌ | no pressure signal | No thermal/CPU flavour |
+| Long Animation Frames (LoAF) | ✅ | ❌ | ❌ | no long-frame data | No stutter flavour |
 
 **Design principle for degradation:** every fallback default is the *neutral* value — the one that
 produces a 1× multiplier or the "normal" game experience. This means unsupported browsers get a
 playable, balanced default game. Supported browsers get the live network-driven experience. No
 player is ever locked out.
 
+**Revised by N4.1 (2026-08-19).** The old reading of this table — *Chrome plays the live game,
+Firefox and Safari play a static one* — is now only half true. `navigator.connection` is still
+Chromium-only, but the **best** signals N4.1 added are universal: `Server-Timing` carries
+Cloudflare's `cfL4` (kernel `min_rtt`, `rtt_var`, `lost`, `retrans`, `cwnd`, `delivery_rate`) on
+every browser that can read a response header, and DoH is just `fetch`. A Firefox player now gets
+microsecond RTT and real packet loss; what they lose is the coarse, quantised
+`connection.*` family. That is close to an inversion of the original assumption.
+
 ### What we CANNOT get from a browser (deferred to optional local agent)
 - Raw packet capture (pcap), ARP table, LAN device enumeration, port scanning, firewall rules,
   WiFi signal strength (dBm), ICMP ping, process list, active services, DNS cache.
 - These require OS-level privileges not exposed to JavaScript. A future `nightward-agent`
   (tiny Rust binary, `ws://localhost:9734`) could expose them — but the game must ship complete
-  without it.
+  without it. See [`../GDD.md`](../GDD.md) §15, which is where deferred systems are tracked.
+- **Corrected by N4.1 (2026-08-19): packet loss is no longer on this list.** For any
+  Cloudflare-terminated path, `Server-Timing`'s `cfL4` hands us the kernel's own TCP state —
+  `lost`, `retrans`, `cwnd`, `min_rtt`, `rtt_var`, `delivery_rate` — on every browser, with no
+  agent and no extra request. Everything else in the first bullet remains correctly impossible.
+  Two milestone entries above recorded this correction; neither applied it, and the wrong list
+  outlived both by two days.
 
 ## Architectural decisions (carried forward + new)
 - **360° animation — SHIPPED THEN REVERTED (2026-07-07).** 4-direction baked frames are the
@@ -552,69 +2297,15 @@ player is ever locked out.
   runs on sensible fallback defaults — "local loopback mode" — which is still a playable game,
   just a static one.
 
-## Batch 5 success criteria (how we know we're done)
+## Batch 5 exit gates — met (2026-07-18)
 
-These are the exit gates for the entire Network batch — the conditions that must be true
-before we consider Batch 5 shipped and move on to whatever comes next.
-
-### Primary criteria (must-pass)
-1. **The network hook is legible.** A new player can look at the HUD, see "RTT 45ms | WiFi 4g,"
-   and understand that their connection is affecting the game. The cause→effect chain is visible.
-2. **Different connections = different experiences.** Ethernet (stable, fast sim, normal difficulty)
-   vs. throttled 3g (slow sim, hard enemies, scarce resources) vs. offline (static defaults) are
-   all playable AND feel distinct. Verified by playing the same `?seed=` on different networks.
-3. **Graceful degradation works.** Firefox and Safari produce the same playable game as Chrome —
-   just without the live network variance. No errors, no missing UI, no NaN/undefined anywhere.
-4. **All existing systems still work.** Gathering, crafting, building, combat, hordes, fire,
-   soul gear — the pre-N1 game loop is intact. Network params are multipliers, not replacements.
-5. **Live-tuning convention holds.** `window.NW.NET.mappings` is editable at runtime and changes
-   take effect next sim tick, same as `NW.CFG` and `NW.MATS`. No reload needed.
-
-### Secondary criteria (should-pass)
-6. **The "why" is interesting.** Watching RTT spike (jitter field activates, enemies wobble)
-   is more engaging than a static world. The network metrics produce *stories* — "my WiFi
-   dropped to 2g and suddenly the horde was 2× size" is a memorable moment.
-7. **Visual quality meets the bar.** Post-G1/G2, the game looks significantly better than the
-   current `v0.15.1` build. "Better" is defined by the user's playtest verdict — there is no
-   objective metric for pixel art.
-8. **No performance regression.** With network polling + SUBPIX rendering + post-processing +
-   particles, the game still holds 60fps on a mid-range laptop (integrated GPU, 8GB RAM).
-   WebGL fallback (`?gl`) must also hold 30fps.
-
-### Stretch criteria (nice-to-have)
-9. **The local agent (A1) proves the concept.** A tiny Rust binary serving `ws://localhost:9734`
-   with real ICMP ping + WiFi dBm. The game detects it and upgrades its data resolution. This
-   validates the two-tier architecture (browser-only baseline + optional native agent) without
-   making the agent a dependency.
-
-## Design hypotheses (what we're testing with this batch)
-
-Each hypothesis is falsifiable — if it turns out wrong, we adjust the design rather than
-pushing through.
-
-| # | Hypothesis | Test method | Falsification signal |
-|---|-----------|-------------|---------------------|
-| H1 | Network metrics produce more interesting emergent behavior than pure random seeds | Play same seed on Ethernet vs. throttled 3g; compare experiences | Both feel same-ish → network data is just noise |
-| H2 | "Bad connection = easier but weirder" is a fun tradeoff, not a frustration | Playtest on intentionally bad connection; ask: "was this fun?" | Player prefers to disable network features → mapping is wrong |
-| H3 | Real-time clock sync makes the day/night cycle feel more grounded | Play at different times of day; ask: "does this matter to you?" | Player doesn't notice or care → revert to fixed day length |
-| H4 | Connection-type "rift" events (N2) create memorable moments, not annoying resets | Trigger a type switch mid-session; observe reaction | Player says "that's annoying" → rifts need to be opt-in or rarer |
-| H5 | SUBPIX ×2/×4 + post-processing pushes the look from "lil survival game" to something the player is proud to show | Side-by-side screenshot comparison + user verdict | Player can't tell the difference → SUBPIPX isn't worth the complexity |
-
-**When a hypothesis fails:** don't ship that feature. The batch is modular — N1, N2, G1, G2, N3
-are independent enough that a failed hypothesis in one doesn't block the others. Remove the
-failing mapping/feature, document the lesson, move on.
-
-## Risk register
-
-| Risk | Likelihood | Impact | Mitigation |
-|------|-----------|--------|------------|
-| `navigator.connection` is removed or restricted by browsers (it's a Chrome-only API with privacy concerns) | Medium | High — core data source gone | Fallback defaults already designed; `fetch()` timing is universal and can replace RTT estimation |
-| Network polling causes perceptible jank (fetch() blocking, GC from snapshots) | Low | Medium | Polling is async + low-frequency (1–10s intervals); snap is mutated in-place; verify with profiler in N1 |
-| SUBPIX rendering tanks performance (4× tiles = 16× pixels per chunk) | Medium | High — could make G1 unshippable | Prototype gate BEFORE full migration; fall back to ×2 or skip SUBPIX entirely if perf budget blown |
-| The "network = world" metaphor doesn't land — players just see random difficulty changes | Medium | High — the whole concept fails | HUD legibility is the defense; if the mapping isn't visible, it's not working. Iterate on HUD + toast messages in N2 |
-| WebGPU not available on target hardware (older laptops, some Linux configs) | Medium | Medium | PixiJS v8 already has WebGL fallback (`?gl`); post-processing degrades gracefully (skip bloom/AO, keep basic rendering) |
-| Rust/wasm boundary becomes a bottleneck (52 bytes/frame is trivial, but future params could grow) | Low | Low | Current 13-float layout is fixed; if we need more params, use the same `pushMaterials` stride pattern — one upload, not per-entity |
-| OneDrive sync corrupts git worktrees (known issue from Batch 4) | Medium | Low — annoying but recoverable | Worktrees live outside OneDrive if possible; `git worktree prune` + `rm -rf` recover; documented in WORKFLOW.md gotchas |
+Batch 5 "The Wire" shipped in full. Its exit gates (the network hook is legible, different
+connections play differently, non-Chrome degrades gracefully, the pre-N1 loop survives, and
+`NW.NET.mappings` stays live-tunable) all hold today and are re-checked by the Gauntlet. The
+batch also carried a risk register and a table of falsifiable design hypotheses; both were
+resolved and are in git (`git log -p -- docs/plans/ROADMAP.md`). The one hypothesis that
+failed is worth keeping: **network jargon in the fiction was rejected on sight**, which is
+what produced the Veil/Lens split now in GDD §4.4 and pillar 7.
 
 ## Performance budget (per frame, target: 16.67ms @ 60fps)
 
@@ -636,33 +2327,6 @@ have tighter budgets in their briefs.
 **Profiling discipline:** after every milestone merge, run a 60-second profiled session at
 `?seed=1234` with the Chrome Performance tab. If any stage exceeds its budget by >50%, that
 becomes the top-priority fix before starting the next milestone.
-
-## Expanded milestone specifications
-
-Each milestone below includes: **dependencies** (what must be merged first), **entry criteria**
-(what must be true to start), **exit criteria** (what must be true to merge), **estimated effort**
-(rough, for sequencing), **sub-task breakdown** (implementation order), and **risks specific to
-that milestone**.
-
-### Milestone dependency graph
-
-```mermaid
-flowchart LR
-    M3.5["M3.5 — Action-Gated\nNetwork Discovery"] --> M3.6["M3.6 — Attack Speed\n← Probe RTT"]
-    M3.6 --> N1["N1 — Network Seed\n(data plumbing)"]
-    M3.6 --> N2["N2 — Wire Realm\n(content + theming)"]
-    M3.6 --> G1["G1 — Visual Upgrade\n(SUBPIX + post-processing)"]
-    N2 --> W6["W6 — Scoreboards\n(breather milestone)"]
-    G1 --> G2["G2 — Juice Pass\n(feel + feedback)"]
-    N2 --> N3["N3 — Living Network\n(sim integration)"]
-    G2 --> N3
-    N3 --> A1["A1 — Local Agent\n(stretch, optional)"]
-```
-
-M3.5/M3.6 are the new roots — the network discovery system and attack→RTT feedback loop
-must be solid before the broader N-batch work begins. They prove the core mechanic: your
-connection isn't just background data, it's something you *feel* when you swing. N2 and G1
-are parallelizable after M3.6 (content vs. visuals touch different files).
 
 ---
 
@@ -789,125 +2453,7 @@ are parallelizable after M3.6 (content vs. visuals touch different files).
 
 ---
 
-## Batch 5 — The Wire (N-batch: Network-driven world) — ACTIVE (2026-07-16)
-
-User verdict on the current state (2026-07-16): "it's just a lil survival 2D game. You can
-build a house which attracts bosses, can't really see beyond that." The core loop exists but
-lacks a hook that makes it *interesting to look at and think about*. The answer: **replace the
-dream-world theming entirely with live network metrics as the world's driving force.**
-
-This is not a "network hacking sim." It's a world simulator where your internet connection
-IS the physics. The Rust/wasm core (R0–R2) already has the machinery: live-uploadable params
-(`pushMaterials`, `pushFireParams`), a writable world with per-tile overrides, a cellular
-automaton, and an event system. Network metrics are just another data feed into the same
-pipes — `window.NW.NET` alongside `NW.CFG` and `NW.MATS`.
-
-**The design bet:** driving game parameters from real network conditions produces more
-interesting emergent behavior than pure random seeds, because network conditions are
-*structured* (geography, time of day, ISP routing, WiFi vs. Ethernet) and *personal*
-(your connection is different from everyone else's). Two players on the same world seed
-get totally different experiences — and that's the point.
-
-### Non-negotiables (this batch)
-- **Browser-native network data only.** `navigator.connection`, Performance API, `fetch()`
-  timing, `Date.now()`, WebRTC (local IP discovery). No native binaries — the game ships
-  as a static site on GitHub Pages. A local agent is a documented stretch goal (A1), not a
-  dependency.
-- **Graceful degradation.** Every network metric has a documented fallback default. If
-  `navigator.connection` is unavailable (Firefox), the game runs in "local loopback mode"
-  with sensible static defaults — still a playable game, just not live-driven.
-- **Network→game mappings are data rows.** `src/game/data/network.ts` is the single table.
-  Adding a new metric mapping is a row edit, never engine code. The mappings are live-
-  tweakable at runtime via `window.NW.NET`.
-- **No privacy leak.** No data leaves the browser except the implicit IP in HTTP requests
-  to the listed public endpoints (ipify.org, ipapi.co, cloudflare.com, and the favicon/CDN
-  endpoints in action echo pools); nothing is stored server-side. Identity probes (IP, city,
-  ISP, ASN) are gated behind the first `explore` action. A full endpoint disclosure is
-  logged to the browser console at boot and documented in README.md.
-- **Two-language rule stands.** Rust never sees network metrics directly — TS polls, packs
-  into a `Float32Array`, and uploads via `core.set_network_params()` (same pattern as
-  `set_materials` / `set_fire_params`).
-
-### Re-sequencing the queue
-- **Old W5–W8 and R3–R5 are shelved** (see "Shelved" section below). They were designed for
-  a dream-world survival RPG — the network pivot changes what's worth building.
-- **Old W5 (zoom/LOD)** is folded into G2 (SUBPIX + post-processing) since both touch the
-  render pipeline.
-- **W6 (scoreboards)** stays as an independent breather milestone, re-themed as "connection
-  age" leaderboards.
-- **G1 (graphics upgrade)** runs early — the user explicitly asked for better visuals
-  ("Legion TD 2 level" is the aspiration; realistic target is high-quality 2D with post-
-  processing, see the G1 brief).
-- **A1 (local agent)** is the last milestone — a stretch goal that only matters once the
-  browser-only experience is shipped and fun.
-
-### Brief convention (this batch)
-N-briefs follow the same implementation-grade standard as the R-briefs: exact file contents/
-contracts, Acceptance checklist at the bottom, single-eval verification at `?seed=`. G-briefs
-(visual) include a **prototype-first gate**: bake 2–3 representative samples, get the user's
-verdict, THEN build the full pipeline — the W1 lesson applied to art.
-
-### Milestones (one worktree each, in order)
-
-> **Note (2026-07-16):** Early G1 (particles, postprocess) and early N2 (biomes, rift plumbing)
-> are already in the tree as part of the N1-batch checkpoint (tagged `v0.16-n1-network-seed`).
-> G1's remaining scope is bloom/LUT/SUBPIX-prototype/drop-shadows. N2's remaining scope is
-> N2a (theming + rifts + realm HUD) and N2b (material effect hooks — real engine work).
-
----
-
-#### M3.6v2 — Sync RTT → Damage + Resonance Crits ✅ SHIPPED (2026-07-16)
-
-> **Brief:** `docs/plans/M3.5-action-network.md` (bottom section, recorded as M3.6v2)
-
-**Shipped as M3.6v2 — sync damage multiplier + resonance crits instead of attack-speed
-modulation. See deviation note in "Shipped milestones" above. Post-N1.5 cleanup applied
-(F1–F9, tagged `v0.16.1-n15-ground-truth`).**
-
----
-
-#### N1 — Network Seed (the data plumbing)
-
-> **Brief:** `docs/plans/N1-network-seed.md`
-
-**Dependencies:** none (builds on `v0.15.1-r2-fire-fix` baseline).
-
-**Entry criteria:**
-- `v0.15.1-r2-fire-fix` merged and tagged
-- `npm run typecheck` clean, `npm run build` green, `cargo test` passing on main
-
-**Exit criteria:**
-- All 12 acceptance checklist items pass at `?seed=1234`
-- `window.NW.NET` is live-tweakable (edit a mapping → next sim tick reflects it)
-- HUD readout toggles with `I` key, shows RTT/downlink/connection type + sim/gold/enemy multipliers
-- Day/night syncs to real clock (when enabled — toggled via `NW.NET.mappings` entry)
-- Sim speed, gold rate, enemy scale all respond to network data within 1 sim tick
-- Offline mode runs with fallback defaults — no errors, playable game
-- Firefox (no `navigator.connection`) runs identically to Chrome with defaults — no errors
-- `cargo test` passes (core accepts `set_network_params`, accessors return defaults)
-
-**Estimated effort:** 2–3 sessions.
-
-**Sub-tasks (implementation order):**
-1. Create `src/game/data/network.ts` — `NetworkSnapshot`, `NetMapping`, `NetGameMapping` interfaces + `NET_METRICS` (13 metric rows) + `NET_GAME_MAP` (6 system mapping rows)
-2. Create `src/game/systems/network.ts` — `NetworkSystem` class: constructor (fresh snapshot with fallbacks), `update(nowMs)` (poll cycle), `pollConnection()`, `pollEndpoint()`, `computeJitter()` (rolling window of 30 RTT samples, mean absolute deviation), `detectTransitions()` (debounced — don't fire on sub-second flaps), `get(key)`, `packForCore()` (13-float layout)
-3. Add `set_network_params(&[f32])` to Rust `Core` + `net_params: Vec<f32>` field + 13 accessor methods (`net_rtt()`, `net_downlink()`, etc.) — all return `f32`, all have fallback defaults
-4. Add `pushNetworkParams()` passthrough to `WorldCore` (`src/game/world/core.ts`)
-5. Wire into `main.ts`: construct `NetworkSystem` after system init, expose `NW.NET`, call `net.update(nowMs)` + `worldCore.pushNetworkParams()` in render loop, apply game mappings in sim step
-6. Add 3-line info HUD in `src/game/ui/ui.ts` — Press Start 2P at 8px, top-left, toggle with `I` key, shows RTT/downlink/type line + multipliers line
-7. Wire sim systems: `daynight.ts` (real clock sync), `economy.ts` (gold rate × downlink mapping), `hordes.ts` (enemy scale × effectiveType mapping), `rules.ts` or sim loop (sim speed × RTT mapping), `log.ts` (new `'network'` LogKind for transitions)
-8. Static verify: `npm run wasm` + `npm run typecheck` + `npm run build` green, `cargo test` green
-9. Live verify all 12 checklist items, fix forward on main, tag `v0.16-n1-network-seed`
-
-**Per-milestone risks:**
-- `fetch()` to `cloudflare.com/cdn-cgi/trace` may be blocked by corporate proxies or ad-blockers → fallback endpoint list (also try `google.com/generate_204`, `azure.com`); if ALL fail, endpointLatency stays at fallback (30ms)
-- `navigator.connection` may return `0` for RTT on some Chrome versions → treat 0 as "unknown," use fallback
-- Jitter computation on first few frames (not enough samples) → return fallback (5ms) until ≥3 samples accumulated
-- Real clock sync may feel weird if player expects fixed day length → make the `timeOfDay` mapping toggleable (set `transform` to return constant for fixed cycle)
-
----
-
-> ## Direction update (2026-07-16, evening — supersedes the queue order below)
+> ## Direction update (2026-07-16, evening — superseded the Batch 5 queue order)
 >
 > N2a SHIPPED (`v0.17-n2a-veil-lens` + hotfixes; verified scrub-clean, known gaps recorded
 > in `docs/plans/P1-platform-hardening.md`). User's direction after shipping:
@@ -1225,391 +2771,6 @@ not exist and require real engine work (N2b scope).
 
 ---
 
-#### G1 — Visual Upgrade (SUBPIX + post-processing)
-
-> **Brief:** `docs/plans/G1-visual-upgrade.md` (to be created)
-
-**Dependencies:** N1 merged (needs the HUD baseline — post-processing must not break it). Can run
-in parallel with N2 (touches different files: renderer vs. content).
-
-**Entry criteria:**
-- N1 merged and tagged (`v0.16-n1-network-seed`)
-- Current render pipeline understood and profiled (where does chunk baking spend its time?)
-- Prototype environment ready: ability to render a single chunk at ×1, ×2, and ×4 side-by-side
-
-**Exit criteria:**
-- **Prototype gate passed:** user has seen ×1/×2/×4 side-by-side comparison screenshots and given
-  a verdict on which SUBPIX factor to use (or whether to skip SUBPIX entirely)
-- Chunk baker migrated to the chosen SUBPIX factor (unless skipped): tile sprites rendered at
-  higher resolution, dual-grid autotile rules applied at the sub-pixel level, contact shadows
-  and cliff ledges scaled accordingly
-- WebGPU post-processing pipeline: **bloom** (threshold-based — fire glow, torches, tower beacons,
-  soul gear crits; Gaussian blur at 2 scales, additive blend), **ambient occlusion** (cheap SSAO
-  from `heightClass` — not a full depth pass, just darken tiles adjacent to higher-height-class
-  tiles), **color grading** (3D LUT — 16×16×16 identity LUT with network-condition-driven tint
-  shifts: warm for Ethernet, cool for WiFi, harsh for Cellular), **vignette** (darken screen
-  edges at night, intensify during low-bandwidth or offline)
-- Particle system: `ParticleContainer` with pool of 500 reusable particles. Particle types:
-  gather poof (brown dust, 8 particles), fire ember (orange, upward drift, 4 particles/sec from
-  burning tiles), slash trail (white arc, 12 particles along swing path), build spark (yellow,
-  6 particles on construction complete), night wisp (blue, slow drift, spawns during night near
-  player). Each particle: position, velocity, lifetime, color, alpha, scale — updated CPU-side
-  (not GPU), rendered as tinted 4×4 sprite
-- Entity directional drop shadows: replace current contact-blob approach with a dark 50%-opacity
-  ellipse offset 2px opposite the light source (light source = top-left for daytime, center for
-  night). Shadows rendered in a dedicated `Container` below the entity layer
-- All post-processing degrades gracefully under `?gl` (WebGL fallback): skip bloom, skip AO,
-  keep color grading (via tinted overlay instead of LUT shader), keep vignette, keep particles
-  (but cap at 200), keep drop shadows
-- Performance: 60fps on mid-range hardware with WebGPU; 30fps on WebGL fallback
-
-**Estimated effort:** 4–5 sessions (largest milestone in the batch).
-
-**Sub-tasks (implementation order):**
-1. **Prototype:** bake ONE chunk at ×2 and ×4. Render the same viewport at ×1 (current), ×2, and ×4
-   side-by-side. Take screenshots. Get user verdict. **Do not proceed past this step without
-   explicit approval.** If SUBPIX is rejected, skip to step 4 (post-processing only).
-2. **SUBPIX migration (if approved):** update `ChunkBaker` to render tiles at the chosen scale
-   factor. Update dual-grid autotile rules (adjacency checks still at sim-tile resolution, but
-   output sprites are scaled). Update contact shadow rendering. Update cliff ledge rendering.
-   Verify tile legibility at the new resolution — if individual tiles become hard to distinguish,
-   scale back. Profile chunk bake time at the new resolution; if >4ms per chunk, implement LOD
-   (distant chunks baked at 1×, near chunks at chosen SUBPIX factor).
-3. **Post-processing setup:** create `src/engine/postprocess.ts` — `PostProcessPipeline` class.
-   Bloom: render fire/torch/beacon layer to a separate render texture, apply two-pass Gaussian
-   blur (horizontal then vertical, 9-tap kernel), composite additively over main scene. AO:
-   sample neighboring tile `heightClass` values in a 1-tile radius, darken tile by 0–15% based
-   on neighbor height difference. Color grading: apply 3D LUT as a full-screen shader (identity
-   LUT at boot, tint-adjusted per network conditions). Vignette: multiply by radial gradient
-   (center-bright, edges-dark).
-4. **Particle system:** create `src/engine/particles.ts` — `ParticlePool` class with `spawn(type, x, y, count)` and `update(dt)`. Each particle type has a `ParticleDef` (lifetime range, velocity range, color, alpha curve, scale curve). Pool allocates 500 particles upfront (never grows). `spawn()` finds inactive particles and initializes them. `update()` steps position + lifetime + alpha, deactivates expired particles. Rendered as `ParticleContainer` with tinted sprites.
-5. **Directional drop shadows:** update `src/game/world/art.ts` — `drawShadow(entity, lightDir)`. For each entity, render a dark ellipse at `entity.pos + shadowOffset` where `shadowOffset` is opposite `lightDir`. Shadow container sits below entity container in the display list.
-6. **Integration:** wire post-processing after chunk render but before UI. Wire particle spawns into system hooks (gather complete → poof, fire ignite → embers, combat hit → slash trail, building placed → sparks, night tick → wisps). Wire drop shadows into entity render loop.
-7. **WebGL fallback:** detect WebGPU support at boot. If unavailable (or `?gl` flag), disable bloom, disable AO, replace LUT shader with tinted overlay, cap particles at 200, keep vignette and shadows.
-8. **Performance profiling:** 60-second session at `?seed=1234`, Chrome Performance tab, verify all pipeline stages within budget. If any stage exceeds budget by >50%, optimize before merge.
-9. **Playtest gate:** user verdict on the visual upgrade. Is the game no longer "just a lil survival 2D game"? Can they see the difference? This is a hard gate — if the visual upgrade doesn't land, we need to understand why before proceeding to G2.
-
-**Per-milestone risks:**
-- SUBPIX ×4 makes tiles unrecognizable (too much detail obscures the game grid) → prototype gate catches this early; fall back to ×2 or skip
-- Post-processing on WebGL fallback looks bad (tinted overlay is a poor substitute for LUT) → acceptable; WebGL users are on older hardware and expect degradation
-- Particle pool too small for intense scenes (boss fight + fire + multiple rifts) → cap at 500 with priority system: embers > slash trails > wisps > poofs > sparks; if pool exhausted, oldest low-priority particle is recycled
-- Bloom on integrated GPU may be expensive (two-pass blur on full render texture) → reduce blur kernel to 5-tap, reduce render texture to half-resolution, or skip bloom in the "low" quality preset
-
----
-
-#### W6 — Lifespan & Scoreboards (breather milestone)
-
-**Dependencies:** N2 merged (needs the re-themed terminology for scoreboard labels).
-
-**Entry criteria:**
-- N2 merged and tagged
-- Network theming is coherent (biomes, material names, log messages all use network terminology)
-
-**Exit criteria:**
-- HUD shows "connection uptime" (elapsed wall-clock since tab opened) in the info readout —
-  formatted as `12h 34m 56s`
-- Death screen (game over) shows a **run scorecard**:
-  - Connection age (how long the run lasted)
-  - Dominant connection type (ethernet/wifi/cellular — whichever had the most uptime)
-  - Rifts survived (count of connection-type transitions)
-  - Peak RTT / lowest downlink (network "low points" survived)
-  - Buildings constructed, enemies killed, soul gear leveled
-  - Final realm (the biome at time of death)
-- Local leaderboard stored in `localStorage`: top 10 runs by connection age. Each entry:
-  scorecard summary (the same fields as the death screen). Displayed on the title screen as
-  a scrollable list
-- Leaderboard data format is forward-compatible with a remote backend (each entry is a JSON
-  blob with a version field — `v: 1`). No remote backend is built in W6 — this is purely
-  about shaping the record format so a remote one slots in later
-- Leaderboard respects the no-persistence rule: run STATE is never saved (no resume), but
-  run OUTCOMES (the scorecard) may be persisted. Clear distinction: scorecard = historical
-  record, not game state
-
-**Estimated effort:** 1 session (breather — intentionally scoped small).
-
-**Sub-tasks (implementation order):**
-1. Add `connectionUptime` to `GameState` — increments by real dt each frame (not sim dt). Survives
-   death (reset only on page reload — the tab-is-the-character rule).
-2. Death screen: on game-over, capture a `RunScorecard` snapshot from current state + network
-   history. Render as a styled panel (RPGUI frame, Press Start 2P font, scrollable if content
-   overflows).
-3. Network history tracking: `NetworkSystem` accumulates a ring buffer of `{timestamp, type,
-   rtt, downlink}` entries (one per significant change — type switch, RTT spike >2×, downlink
-   drop >50%). Used to compute "dominant connection type" and "peak/low" stats on death.
-4. Local leaderboard: `localStorage.setItem('nw.leaderboard', JSON.stringify(entries))`. Read on
-   title screen, display top 10. Entries are `RunScorecard[]` with a max of 50 stored (prune
-   shortest runs when exceeding 50).
-5. Title screen integration: add "Leaderboard" tab/section below the start button. Shows
-   connection age, dominant realm, date of run.
-6. Verify: play a run, die, check death screen fields are populated. Reload page, check
-   leaderboard persists. Play another run, check leaderboard updates.
-
-**Per-milestone risks:**
-- `localStorage` quota exceeded (5–10MB typical) → 50 entries × ~500 bytes = ~25KB, well within
-  limits. If quota is somehow hit, prune to 25 entries.
-- Privacy: `localStorage` data never leaves the browser. The scorecard contains no PII — just
-  connection type names and numeric stats. Document this in the scorecard UI.
-
----
-
-#### G2 — Juice Pass (feel + feedback)
-
-> **Brief:** `docs/plans/G2-juice-pass.md` (to be created)
-
-**Dependencies:** G1 merged (post-processing pipeline must exist — juice builds on it). N2
-merged (network theming needed for ambient effects).
-
-**Entry criteria:**
-- G1 merged and tagged
-- N2 merged and tagged
-- Post-processing pipeline, particle system, and drop shadows are functional
-
-**Exit criteria:**
-- **Screen shake:** configurable per-event (heavy hit: 3px amplitude, 100ms; boss stomp: 8px,
-  300ms; building collapse: 5px, 200ms). Camera offset applied in render, not sim — doesn't
-  affect gameplay. Shake decays exponentially over duration. Multiple shakes compose (max
-  amplitude clamped at 12px to prevent nausea).
-- **Hit-stop:** on impactful hits (player crit, boss hit, building destroyed), freeze the render
-  for 50–100ms. Sim continues during freeze — only the camera/render is paused. Hit-stop
-  queue: if a second hit-stop triggers during an active one, extend by the longer duration
-  (don't stack).
-- **Entity knockback:** on melee hit, push the hit entity away from the attacker by 1–2 tiles
-  over 150ms (smooth lerp). Knockback is cosmetic — the entity's sim position snaps to the
-  final tile immediately, but the render position animates. Only applies to entities that
-  can be knocked back (enemies, not buildings or stationary nodes).
-- **Attack trails:** procgen slash arcs — on melee swing, spawn a fading arc sprite (white→transparent,
-  200ms) along the swing path. Arc shape is a quadratic bezier (start→mid→end) derived from
-  the attack direction + a slight random offset for variety. Rendered in the particle container
-  as a stretched/tinted 8×8 sprite.
-- **Building damage states:** buildings at 50% HP show cracked-wall overlay (tint toward gray,
-  add crack sprite — 2 variations, chosen deterministically from building position). At 25%
-  HP: add fire/smoke particles (embers, 1/sec). At 0 HP: collapse animation (particle burst
-  + screen shake + building sprite fades out over 500ms).
-- **Day→night transition:** not an instant tint change — twilight shader ramp over 5 real-world
-  seconds. The ambient tint lerps from day→night palette. Fire/torch glow intensity increases
-  inversely. Night wisps begin spawning. Transition trigger: when `dayPhase` crosses the
-  dusk threshold (configurable, default ~0.75 = 6pm in real-clock mode).
-- **Sound polish:** add 10+ new SFX recipe rows: rift tear (low rumble + white noise burst),
-  jitter spike (glitchy stutter), connection drop (descending tone), packet-loss zone enter
-  (muffled filter on ambient), bandwidth bloom (harmonic chime), hit-stop (brief silence +
-  bass hit), building crack (wood/stone crunch), day→night transition (slow chord shift).
-  Add "network hum" — a low continuous synth tone (sine wave, ~60Hz) whose pitch tracks RTT
-  (higher RTT = lower pitch). Hum is subtle (10% volume), can be toggled in settings.
-- All juice effects respect a **"juice level" setting** (0 = none, 1 = minimal (no shake/hit-stop),
-  2 = full). Default is 2. Setting persisted in `localStorage` (this is a preference, not game
-  state — consistent with the no-persistence rule's carve-out for non-state UI preferences).
-
-**Estimated effort:** 2–3 sessions.
-
-**Sub-tasks (implementation order):**
-1. Screen shake system: `Camera.shake(amplitude, durationMs)`. Shake state: current offset,
-   remaining duration, amplitude. Updated each render frame (not sim frame). Multiple shakes
-   compose by tracking max amplitude per axis. Rendered as a translate on the stage container.
-2. Hit-stop system: `HitStop.trigger(durationMs)`. Freeze the render timestamp for the duration —
-   `requestAnimationFrame` still fires, but the render pass checks `hitStop.active` and skips
-   scene update (only UI updates during hit-stop). Sim continues unaffected.
-3. Knockback animation: entity renderer stores `knockbackTarget` (world position) and
-   `knockbackRemaining` (ms). Each render frame, lerp render position toward target. When
-   remaining reaches 0, snap to sim position. Cosmetic-only: the entity's sim position is
-   never modified by knockback animation.
-4. Attack trails: on `combat.ts` swing event, emit a `{type: 'swing', origin, direction, weapon}`
-   event. Trail renderer spawns a bezier arc particle: compute start (attacker pos), end
-   (target pos + overshoot), mid (perpendicular offset × weapon weight). Arc rendered as
-   8×8 sprite stretched along bezier path, 200ms lifetime.
-5. Building damage states: update `world/art.ts` building renderer. Check `building.hp / building.maxHp`.
-   At ≤50%: apply gray tint + crack overlay (deterministic from `(building.x * 31 + building.y * 17) % 2`).
-   At ≤25%: add ember particles. At 0: trigger collapse sequence.
-6. Twilight transition: update `daynight.ts` to emit `'dusk-start'` and `'dawn-start'` events
-   when crossing thresholds. Renderer listens and applies a 5-second lerp on the ambient tint
-   uniform + fire glow intensity.
-7. Sound: add SFX rows to `src/game/data/config.ts` SFX table. Implement network hum in
-   `src/engine/audio.ts` — a `OscillatorNode` (sine, ~60Hz base) + `GainNode` (0.1 volume).
-   Pitch bends via `frequency.linearRampToValueAtTarget()` each frame based on `net.snap.rtt`.
-8. Juice level setting: add to `NW.CFG` (or new `NW.SETTINGS`). Read at boot from `localStorage`.
-   Systems check juice level before triggering effects. HUD toggle in settings panel (future
-   UI task — for G2, set via console: `NW.CFG.juiceLevel = 0`).
-9. Playtest gate: user verdict on feel. Are the effects satisfying? Is screen shake nauseating?
-   Is hit-stop disorienting? Adjust amplitude/duration/levels based on feedback.
-
-**Per-milestone risks:**
-- Screen shake may cause motion sickness → juice level setting is the escape hatch; default
-  amplitudes are conservative (3px for hits, 8px max)
-- Hit-stop may feel like a bug (game freezing) → ensure the HUD continues updating during
-  hit-stop so the player knows the game is still running. Hit-stop duration is capped at 150ms
-  (never longer than a blink)
-- Knockback animation desyncs if entity moves again before knockback completes → if a new
-  knockback triggers, overwrite the previous (don't stack). Snap to sim position on new knockback
-- Network hum may be annoying → very low volume (10%), toggleable, and the pitch range is
-  constrained (40–200Hz, never enters piercing territory)
-
----
-
-#### N3 — The Living Network (sim integration)
-
-> **Brief:** `docs/plans/N3-living-network.md` (to be created)
-
-**Dependencies:** N2 merged (realm theming needed for biome-driven sim params). G2 merged
-(visual juice for network-driven CA effects). All previous milestones merged — N3 is the
-capstone.
-
-**Entry criteria:**
-- N2, G1, W6, G2 all merged and tagged
-- Rust core has `net_params` field + 13 accessors (from N1 — reserved for N3)
-- Fire CA, wetness system, and wind system are functional (from R2)
-- Particle system and post-processing are functional (from G1)
-
-**Exit criteria:**
-- **Jitter → fire spread:** fire CA spread probability is multiplied by `1 + (jitter / 50)`.
-  High jitter = fire spreads more erratically (more rolls, but also more burnout). The "feel":
-  on WiFi, fires are unpredictable — they might fizzle or explode. On Ethernet, fires are
-  steady and controllable.
-- **Bandwidth → wetness diffusion:** the rate at which wetness spreads to neighboring tiles is
-  scaled by `downlink / 10`. High bandwidth = water flows faster. Low bandwidth = water pools
-  and stagnates. (Requires R4's wetness spread to be implemented — if not, this mapping is
-  deferred and documented.)
-- **Connection type → wind:** wind strength is set by realm: Ethernet = calm (0.2×), WiFi =
-  variable (0.5–1.5×, sinusoid over time), Cellular = gusty (1.5× with ±0.5 jitter). Wind
-  direction changes on rift events. Fire spread direction is wind-biased.
-- **Packet loss → dead zones:** when jitter > 50ms AND endpoint latency > 100ms, tiles within
-  a radius of the player have a chance (jitter/200 per tick) of becoming "dead zones" — sim
-  skips these tiles for one tick (no fire spread, no wetness diffusion, no entity movement).
-  Visually: dead-zone tiles flicker with a glitch particle. Dead zones clear when network
-  conditions improve.
-- **Data storm weather event:** when jitter > 80ms AND packet loss (dead zones) affects >10%
-  of active chunks, a "data storm" triggers. Visual: screen-wide particle storm (200+ particles,
-  harsh color palette), ambient tint shifts to harsh blue/white, all entities take 1 damage
-  per second (minor — storm is an atmospheric threat, not a killer). Storm ends when jitter
-  drops below 40ms for 10 consecutive seconds.
-- All network→CA mappings are data rows in `src/game/data/network.ts` (new `NetCAMapping`
-  interface), editable at runtime via `NW.NET.caMappings`. No hardcoded mappings in Rust —
-  the mapping values are uploaded as part of the network params pack and read by the CA
-  systems as config.
-- Rust `fire_step()` and (if implemented) `wetness_step()` read from `self.net_params` via
-  the accessors. The accessors return the TS-uploaded values (not hardcoded defaults). All
-  existing R2 fire tests still pass (network params default to neutral values that don't
-  change fire behavior).
-- Visual feedback for all CA changes: fire spread acceleration → ember particle burst;
-  wetness pooling → blue particle drip; dead zone → glitch flicker; data storm → full-screen
-  particle storm. All using the G1/G2 particle + post-processing pipeline.
-
-**Estimated effort:** 2–3 sessions.
-
-**Sub-tasks (implementation order):**
-1. Data: add `NetCAMapping` interface + `NET_CA_MAP` table to `src/game/data/network.ts`.
-   Each mapping: `netKey`, `caTarget` (fireSpread, wetnessRate, windStrength, deadZoneThreshold,
-   stormThreshold), `transform` function. Upload CA mappings to core via an extended
-   `packForCore()` that appends CA params after the 13 base fields.
-2. Rust: extend `net_params` layout from 13 to ~20 floats (add fireSpreadMul, wetnessRateMul,
-   windStrength, deadZoneThreshold, stormThreshold at the end). Update `set_network_params()`
-   to accept the longer array (backward-compatible — if only 13 floats sent, CA params default
-   to neutral). Add accessors: `net_fire_spread_mul()`, `net_wetness_rate_mul()`,
-   `net_wind_strength()`, `net_dead_zone_threshold()`, `net_storm_threshold()`.
-3. Rust: update `fire_step()` to read `self.net_fire_spread_mul()` and multiply spread
-   probability. Update wind to read `self.net_wind_strength()`. These are one-line
-   multiplications — the CA algorithm doesn't change, just its parameterization.
-4. TS: update `packForCore()` in `NetworkSystem` to pack 13 base + N CA params. Update
-   `WorldCore.pushNetworkParams()` to use the new length.
-5. TS: implement dead zone logic in `NetworkSystem` — each tick, check jitter + endpoint
-   latency against thresholds. If exceeded, compute dead-zone tiles (random subset of active
-   chunks, weighted by jitter). Push dead-zone list to core (as a new `set_dead_zones()`
-   method — a list of chunk indices + tile offsets, or skip if the overhead is too high
-   and keep dead zones purely TS-side).
-6. TS: implement data storm detection in `NetworkSystem` — track consecutive high-jitter
-   seconds. When threshold crossed, emit `'data-storm-start'` event. When jitter subsides
-   for 10s, emit `'data-storm-end'`. Visual system listens and triggers particles + tint.
-7. Visual: add CA-driven particle effects — fire spread acceleration emits embers at the
-   spread location; dead zones flicker with glitch particles; data storm triggers full-screen
-   particle storm. All through the existing G1 particle pool.
-8. Verify: `cargo test` — all existing fire tests pass with neutral network params. Manual
-   test: inject high jitter via `NW.NET.snap.jitter = 100` → fire spreads visibly faster
-   and more erratically. Inject low downlink → wetness pools (if implemented). Switch
-   connection type → wind changes.
-9. Playtest gate: user verdict on whether the network-driven CA feels alive and interesting.
-   Can they tell the difference between Ethernet fire and WiFi fire? Is the data storm cool
-   or annoying?
-
-**Per-milestone risks:**
-- Fire CA with high jitter may become uncontrollable (everything burns) → clamp fire spread
-  multiplier to 3× max; ensure burnout rate also scales with jitter so fires self-limit
-- Dead zones may be confusing (why can't I move here?) → visual indicator is critical
-  (glitch particles + tile tint). Dead zones should be rare (jitter >50ms is uncommon on
-  stable connections)
-- Data storm may trigger too often on genuinely bad connections → require sustained high
-  jitter (80ms+ for 30+ consecutive seconds before storm triggers); storm cooldown of
-  5 minutes
-- Rust `net_params` layout change must be backward-compatible → length check in
-  `set_network_params()`: if len < 20, CA params stay at defaults. This means N1→N3
-  upgrade doesn't break existing saves (not that we have saves — but it doesn't break
-  the running game if someone hot-reloads)
-
----
-
-#### A1 — Local Agent (stretch, optional)
-
-**Dependencies:** N3 merged (needs the full network→sim pipeline to be worthwhile). All
-previous milestones merged. This is a stretch goal — only build if the browser-only
-experience is shipped and fun.
-
-**Entry criteria:**
-- N3 merged and tagged
-- Browser-only experience is complete, fun, and playtested
-- User explicitly requests the local agent
-
-**Exit criteria:**
-- `rust/nightward-agent/` — a tiny Rust binary (separate from `nightward-core` — this is
-  a native binary, not wasm). Uses `tokio` + `tungstenite` for WebSocket server on
-  `ws://localhost:9734`. Shares the existing `stable-gnu` toolchain.
-- Agent serves a JSON message every 1 second: `{ "icmp_rtt": 12.5, "wifi_rssi": -45,
-  "tcp_connections": 34, "arp_table_size": 8, "interface_rx_bytes": 1234567,
-  "interface_tx_bytes": 987654 }`. ICMP ping via raw socket or system `ping` command
-  (platform-dependent — Windows: `ping -n 1`, Unix: `ping -c 1`). WiFi RSSI via
-  `netsh wlan show interfaces` (Windows) or `iwconfig`/`iw` (Linux) — parse CLI output.
-  TCP connections via `netstat -n` count. ARP table via `arp -a` count.
-- `src/game/systems/network.ts` — `LocalAgentClient` class: attempts WebSocket connection
-  to `ws://localhost:9734` on boot. If connection succeeds, the agent's metrics override
-  the browser-only equivalents (ICMP RTT replaces `navigator.connection.rtt`, WiFi RSSI
-  adds a new `wifiRssi` field, TCP count adds `lanDevices` field). If connection fails
-  or drops, gracefully falls back to browser-only metrics — no error, no interruption.
-- HUD shows an indicator when the agent is connected (small green dot + "AGENT" label
-  next to the RTT readout). Disconnected → dot goes gray.
-- Agent is ~200 lines of Rust. It's a separate cargo project in the workspace — shares
-  the same `Cargo.lock` but compiles to a native binary, not wasm. `cargo build` in
-  `rust/nightward-agent/` produces `target/release/nightward-agent.exe` (or platform
-  equivalent).
-- Agent is NOT required to play. The README documents it as an optional enhancement.
-  The game's GitHub Pages deployment doesn't include the agent binary — users who want
-  it clone the repo and `cargo build` themselves.
-
-**Estimated effort:** 1–2 sessions (only if pursued).
-
-**Sub-tasks (implementation order):**
-1. Create `rust/nightward-agent/` — `Cargo.toml` with `tokio` (full features for networking)
-   + `tungstenite` (WebSocket). Add to workspace `Cargo.toml` members.
-2. Implement WebSocket server: bind `127.0.0.1:9734`, accept one connection at a time,
-   send JSON metrics every 1 second. Handle connection drops gracefully (re-bind).
-3. Implement metric collectors: ICMP ping (spawn `ping` subprocess, parse output), WiFi
-   RSSI (spawn `netsh`/`iwconfig`, parse), TCP count (spawn `netstat`, count lines),
-   ARP table (spawn `arp`, count entries), interface bytes (platform-specific).
-   Each collector is a separate function with a 2-second timeout.
-4. Add `LocalAgentClient` to `src/game/systems/network.ts`: WebSocket connect on boot,
-   JSON parse, merge into snapshot. Handle disconnect/reconnect with exponential backoff
-   (1s, 2s, 4s, max 30s).
-5. HUD indicator: green/gray dot + "AGENT" label in the info readout.
-6. README: document the agent — what it provides, how to build, how to run, that it's
-   optional.
-
-**Per-milestone risks:**
-- Platform-specific metric collection is fragile (CLI output formats change between OS
-  versions) → parse defensively; if parsing fails, omit the metric rather than crashing
-- Raw sockets for ICMP may require admin/root on some systems → fall back to system `ping`
-  command (which is allowed without root on most systems)
-- WebSocket on `localhost:9734` may conflict with other applications → make the port
-  configurable via CLI arg or env var
-- Security: agent binds to `127.0.0.1` only (never `0.0.0.0`). No authentication —
-  localhost-only is the security boundary. Document this.
-
----
-
 ### Shelved (old W5, W7, W8, R3, R4, R5 — preserved for reference)
 
 These were designed for the dream-world survival RPG. They may be revisited, re-themed, or
@@ -1632,6 +2793,32 @@ User verdict on the current world: too few blocks, nothing reacts — "no room f
 skills." Root cause: terrain is a pure function of (seed, x, y); the only runtime-mutable world
 state is `depleted` + buildings. This batch makes the world **writable**, then **alive**, with a
 Rust→WebAssembly core (`rust/nightward-core`) doing the heavy lifting. Rust is a deliberate
+## Retired plan documents
+
+A plan that has shipped is a description of an intention; the code is a better description of
+the result, and the entries above are the record of what it cost. So implemented plans get
+**deleted, not archived** — git keeps every word of them. What git cannot do is tell you a file
+once existed, so the path and the sha live here.
+
+| document | what it covered | retrieve with |
+|---|---|---|
+| `docs/plans/BG-batch-proposal.md` (1933 lines) | Batch B "The Reachable Run" + Batch G "Depth" — the findings behind them, the full plan, and seven review logs | `git show d7a5cf6:docs/plans/BG-batch-proposal.md` |
+| `docs/plans/HANDOFF-B-implementer.md` (243) | the B0 → B4 → B1 implementer handoff | `git show 00ac111:docs/plans/HANDOFF-B-implementer.md` |
+| `docs/plans/B5-ground-drops.md` (452) | B5 ground drops, and the B6 level-up flourish | `git show ebe5a2a:docs/plans/B5-ground-drops.md` |
+
+Everything in them that was still load-bearing moved out first: the testing lessons from those
+seven review logs into [`WORKFLOW.md`](WORKFLOW.md) §"Testing doctrine", and the one design
+question nobody had answered (B5 Q2, `goldDrops`) into "Open and owed" at the top of this file.
+The rest was analysis of a version of the game that no longer exists — §3's xp-budget arithmetic
+describes a curve B1 replaced, §7's screenshots describe terrain Batch G relit.
+
+Cut from **this** file for the same reason, all retrievable with
+`git log -p -- docs/plans/ROADMAP.md`: Batch 5's success criteria, design hypotheses and risk
+register (met, and summarised above); the milestone dependency graph; the Batch 5 milestone
+queue; and the entry / exit / sub-task briefs for N1, G1, W6, G2 and N3. The unbuilt
+`nightward-agent` stretch brief went with them — [`../GDD.md`](../GDD.md) §15 records it as a
+deferred system, which is the right home for something nobody is building.
+
 ## Toolchain decisions (carried forward from Batch 4)
 - rustup **`stable-gnu`** host toolchain + `wasm32-unknown-unknown` target; **wasm-pack via npm**
   (prebuilt binary — never `cargo install` it).

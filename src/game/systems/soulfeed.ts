@@ -12,7 +12,7 @@
 
 import type { GameState } from '../state';
 import type { SoulSlot } from '../data/soulgear';
-import { ITEMS, type ItemDef } from '../data/items';
+import { itemDef, type ItemDef } from '../data/items';
 import { MATERIALS, type MaterialDef } from '../data/materials';
 import { CFG } from '../data/config';
 
@@ -52,7 +52,7 @@ function xpToNext(slot: SoulSlot, currentLevel: number): number {
 
 /** How much soul XP is one unit of this item worth? Returns 0 if not feedable. */
 export function itemSoulXp(itemId: string): number {
-  const def = ITEMS[itemId];
+  const def = itemDef(itemId);
   if (!def) return 0;
   // ItemDef.soulXp takes priority
   if (def.soulXp && def.soulXp > 0) return def.soulXp;
@@ -64,7 +64,7 @@ export function itemSoulXp(itemId: string): number {
 
 /** Get the soul affinity for a feedable item. */
 export function itemSoulAffinity(itemId: string): SoulSlot | undefined {
-  const def = ITEMS[itemId];
+  const def = itemDef(itemId);
   if (!def) return undefined;
   // Try to map to material affinity
   const mat = materialForItem(itemId);
@@ -73,7 +73,7 @@ export function itemSoulAffinity(itemId: string): SoulSlot | undefined {
 
 /** Map an item ID to its corresponding material, if any. */
 function materialForItem(itemId: string): MaterialDef | undefined {
-  const def = ITEMS[itemId];
+  const def = itemDef(itemId);
   if (!def) return undefined;
   // Heuristic: items that are raw resources often match material names
   const matName = itemId === 'stone' ? 'hill' // Runestone comes from hills

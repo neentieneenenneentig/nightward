@@ -3,7 +3,7 @@
 import { CFG } from '../data/config';
 import { BUILDINGS, type BuildingDef } from '../data/buildings';
 import { MATERIALS } from '../data/materials';
-import { invCount, invHasAll, invTakeAll } from '../rules';
+import { gearMod, invCount, invHasAll, invTakeAll } from '../rules';
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
 
@@ -29,7 +29,19 @@ export class BuildSystem {
    * Missing materials do NOT hide a blueprint — you can browse it, just not place. */
   private selectable(): BuildingDef[] {
     const { state } = this.ctx;
-    return BUILDINGS.filter((b) => !(b.unique && state.buildings.some((x: any) => x.type === b.id)));
+    return BUILDINGS.filter((b) => {
+      // A6's escape hatch, and N4.5's. The hub rows are the LAST entries in
+      // BUILDINGS, so dropping them here restores the pre-feature carousel in
+      // its original order rather than leaving a hole in the middle of it —
+      // the same reasoning A8 used for its two FEATURES rows. The Sounding
+      // Stone answers to its OWN flag: A6 off must not take N4.5 down with it.
+      if (b.hub === 'sounding') {
+        if (!CFG.n45.enabled) return false;
+      } else if (b.hub && !CFG.a6.enabled) {
+        return false;
+      }
+      return !(b.unique && state.buildings.some((x: any) => x.type === b.id));
+    });
   }
 
   /** B key / Build button: enter placement browsing where you left off. */
@@ -167,7 +179,22 @@ export class BuildSystem {
     const m = this.mode!;
     const { state, world, toast } = this.ctx;
     invTakeAll(state, m.def.cost);
-    const b = { uid: state.nextUid++, type: m.def.id, tx: m.tx, ty: m.ty, hp: m.def.hp };
+    // B3.a: buildingHpPct had no consumer and Deep Roots' "+50% building HP"
+    // was never wired, so Fortify, Stone Mason, Bulwark, Warden's Oath and the
+    // keystone itself were all placebo. Scaled once, at placement — a building
+    // keeps the ceiling it was raised with even if the weave changes later.
+    const hpMul = this.ctx.loom?.getBuildingHpMul?.() ?? 1;
+    // A1: 'Rooted'. Scaled once at placement, exactly like the Loom multiplier
+    // above it — a building keeps the ceiling it was raised with, so swapping
+    // gear later cannot retroactively weaken a wall you already paid for.
+    // N4.7b: 'The Warded Gate'. The NAT class the UDP walk measured, folded in
+    // at placement for exactly the reason the two multipliers above it are —
+    // a wall keeps the ceiling it was raised with. Carrying a laptop from a
+    // symmetric-NAT home network onto an open cafe wifi must not silently
+    // weaken the walls that are already standing.
+    const gate = this.ctx.net?.getGameValue?.('wardedGate') ?? 1;
+    const bHp = Math.round(m.def.hp * hpMul * gearMod(state, 'buildHp') * gate);
+    const b = { uid: state.nextUid++, type: m.def.id, tx: m.tx, ty: m.ty, hp: bHp, maxHp: bHp };
     state.buildings.push(b);
     world.reindexBuildings();
     this.ctx.views.addBuilding(b);

@@ -4,8 +4,9 @@
 import { CFG } from '../data/config';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
-import { armorDef, awardSoulXp, charmRegen, equippedWeaponDmg, hall, skillLevel } from '../rules';
-import { activeEffects } from './effects';
+import { AFFIX_POWER } from '../data/elites';
+import { armorDef, awardSoulXp, charmRegen, equippedWeaponDmg, gearMod, hall, playerMaxHp, skillLevel } from '../rules';
+import { activeEffects, applyVenom, tickVenom } from './effects';
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
 import type { Foe } from './hordes';
@@ -34,12 +35,86 @@ export class CombatSystem {
 
     const { state } = this.ctx;
     // daylight heals; night doesn't. X1: 'Charging Bonus' Lens mapping scales it.
-    if (!this.ctx.isNight() && state.player.hp < CFG.player.maxHp) {
+    const maxHp = playerMaxHp(state);
+    if (!this.ctx.isNight() && state.player.hp < maxHp) {
       const regenMul = this.ctx.net?.getGameValue?.('regenRate') ?? 1;
-      state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + (CFG.player.regenPerSec + charmRegen(state)) * regenMul * dt);
+      // B3.a: the Loom's regenPct ranks had no consumer — every 'Hearty' rank a
+      // player bought did nothing at all.
+      const loomRegenMul = this.ctx.loom?.getRegenMul?.() ?? 1;
+      // C4: 'regen_boost' — the Tideculler relic and the 'of Mending' suffix.
+      // Registered since C4, consumed by nothing until now: its handler returned
+      // a number and no caller existed to add it to anything.
+      const fxRegenMul = activeEffects(state).has('regen_boost')
+        ? 1 + CFG.itemEffects.regenBoostPct : 1;
+      state.player.hp = Math.min(maxHp, state.player.hp + (CFG.player.regenPerSec + charmRegen(state)) * regenMul * loomRegenMul * fxRegenMul * dt);
     }
+    this.updateVenom(dt);
+    this.updateAuras(dt);
     this.updateTowers(dt);
     this.updatePhase(dt);
+  }
+
+  /** A2 Venomous: the stacking bleed a Venomous foe leaves in you.
+   *
+   *  Deliberately NOT routed through damagePlayer(). Three reasons, and all
+   *  three are the difference between a DoT and a second attack:
+   *
+   *  1. Armour must not soften it. Venom is the affix that answers a heavily
+   *     armoured player, and a flat -armorDef() per tick would make it round to
+   *     the 1-damage floor against exactly the build it exists to threaten.
+   *  2. Dodge cannot slip it, thorns cannot reflect it, and soul-gear must not
+   *     level off it — there is nobody swinging.
+   *  3. It has to be able to kill you. So the death check below is the same one
+   *     damagePlayer runs, called explicitly rather than duplicated: venom that
+   *     took you to 0 and left you standing would be a bug you only find by
+   *     watching a corpse walk.
+   *
+   *  God mode is honoured, matching every other damage path. */
+  private updateVenom(dt: number) {
+    const { state } = this.ctx;
+    if (state.gameOver || state.god) return;
+    const tick = tickVenom(state, dt);
+    if (tick <= 0) return;
+    state.player.hp -= tick;
+    this.ctx.views?.addHitFlash?.(state.player.x, state.player.y - 10);
+    if (state.player.hp <= 0) {
+      this.ctx.log?.push('death', 'The venom finishes what it started', state.clock);
+      this.fall();
+    }
+  }
+
+  /** C4: 'fire_aura' — the Cindermaw relic and the 'of the Ember' suffix.
+   *
+   *  Deliberately a standing tick rather than something bolted to the swing: an
+   *  aura you have to attack to benefit from is not an aura, and the fiction
+   *  ("the ground near you smoulders") is about presence. Damage is rolled once
+   *  per tick, not per foe, so a tick against six foes is one roll and one
+   *  number — the same rule the Echo patches follow. */
+  private auraT = 0;
+  private updateAuras(dt: number) {
+    const { state } = this.ctx;
+    if (state.gameOver) return;
+    if (!activeEffects(state).has('fire_aura')) { this.auraT = 0; return; }
+    this.auraT += dt;
+    if (this.auraT < CFG.itemEffects.fireAuraSec) return;
+    this.auraT = 0;
+    const px = state.player.x, py = state.player.y;
+    const r = CFG.itemEffects.fireAuraTiles * TILE;
+    const dmg = Math.max(1, Math.round(CFG.itemEffects.fireAuraDmg));
+    let struck = 0;
+    for (const f of [...(this.ctx.hordes?.foes ?? [])] as Foe[]) {
+      if (f.hp <= 0) continue;
+      if (Math.hypot(f.x - px, f.y - py) > r + f.def.art.size / 2) continue;
+      // tower rule: no combat xp (you did not swing), but it feeds vitals —
+      // the same terms the Echoes fire on
+      this.ctx.hordes.hurt(f, dmg, false, true);
+      this.ctx.views?.addHitFlash?.(f.x, f.y);
+      struck++;
+    }
+    if (struck) {
+      this.ctx.views?.addPulseRing?.(px, py, r, 0xc85a2e);
+      this.ctx.particles?.spawn?.('ember', px, py - 6, 3);
+    }
   }
 
   /** Windup/active/recovery durations, sped up by the weapon's soul level (floored)
@@ -49,7 +124,12 @@ export class CombatSystem {
     const { attackSpeedPerSoulLevel: k, attackSpeedFloor: floor } = CFG.combat;
     const loomMods = this.ctx.loom?.ensureMods?.();
     const loomMul = loomMods ? (1 + (loomMods.swingSpeedPct ?? 0) / 100) : 1;
-    const mult = Math.max(floor, 1 / ((1 + lvl * k) * loomMul));
+    // A1: 'Heavy' trades swing speed for flat damage; 'of Frailty' is a curse.
+    // Multiplies INTO the same denominator as the soul level and the Loom, so
+    // the attackSpeedFloor still caps the whole stack — an affix cannot open a
+    // hole in a clamp that three other systems respect.
+    const gearMul = gearMod(this.ctx.state, 'swingSpeed');
+    const mult = Math.max(floor, 1 / ((1 + lvl * k) * loomMul * gearMul));
     return {
       windup: CFG.combat.windupSec * mult,
       active: CFG.combat.activeSec * mult,
@@ -169,10 +249,11 @@ export class CombatSystem {
     const loomMods = this.ctx.loom?.ensureMods?.();
     if (loomMods) {
       const floorAdd = loomMods.dmgRollFloor ?? 0;
-      if (loomMods.glassEcho) {
-        // Glass Echo: remap roll from [0.3, 1.5] to [0.9, 1.5]
-        dmgMul = 0.90 + (dmgMul - 0.30) * (0.60 / 1.20);
-      }
+      // B3.a: this used to carry its own copy of the Glass Echo remap, identical to
+      // loom.getDmgRollTransform() — which nothing called. Two copies of one rule
+      // is the shape that produced the levelOf drift bug (§17): the copies agreed
+      // right up until one of them was edited.
+      dmgMul = this.ctx.loom.getDmgRollTransform(dmgMul);
       // dmgRollFloor: shift the floor up (additive to D5 band minimum)
       dmgMul = Math.max(0.30, Math.min(1.50, dmgMul + floorAdd));
     }
@@ -182,7 +263,10 @@ export class CombatSystem {
     const baseDmg = CFG.player.baseDmg + equippedWeaponDmg(state) + Math.floor(skillLevel(state, 'combat') / CFG.combat.dmgBonusPerLevel);
     // C3: Loom melee damage modifier and arc width
     const loomDmgMul = loomMods ? (1 + (loomMods.meleeDmgPct ?? 0) / 100) : 1;
-    const dmg = Math.round(baseDmg * totalMul * loomDmgMul);
+    // A5: The Long Night weave — flat +25%, but only after dusk. The getter
+    // returns 1 by day, so a daylight swing is bit-identical to pre-A5.
+    const weaveDmgMul = this.ctx.weaves?.nightDmgMul?.() ?? 1;
+    const dmg = Math.round(baseDmg * totalMul * loomDmgMul * weaveDmgMul);
     const loomArcMul = loomMods ? (1 + (loomMods.arcWidthPct ?? 0) / 100) : 1;
     const arc = (CFG.combat.arcDeg * Math.PI * loomArcMul) / 180;
     // hit math anchors at the feet — same anchor as foe positions, so point-blank
@@ -257,8 +341,8 @@ export class CombatSystem {
     }
     if (landed) {
       // X1: lifesteal — Void gear drinks a share of the damage dealt
-      if (fx.has('lifesteal') && dealtTotal > 0 && state.player.hp < CFG.player.maxHp) {
-        state.player.hp = Math.min(CFG.player.maxHp, state.player.hp + dealtTotal * 0.12);
+      if (fx.has('lifesteal') && dealtTotal > 0 && state.player.hp < playerMaxHp(state)) {
+        state.player.hp = Math.min(playerMaxHp(state), state.player.hp + dealtTotal * 0.12);
       }
       Sound.play('hit');
       const net = this.ctx.net;
@@ -330,8 +414,14 @@ export class CombatSystem {
           shrineRange = Math.max(shrineRange, s.rangeAdd);
         }
       }
-      const range = (def.tower.rangeTiles + auraRangeAdd + shrineRange) * TILE;
-      const dmg = Math.round(def.tower.dmg * auraDmgMul) + shrineDmg;
+      // B3.a: towerDmgPct and towerRange had no consumers, so Siege Engineer,
+      // Longshot, Keep Lord and Stone Mason were placebo — and Deep Roots' "towers
+      // +1 range" was never wired at all. Both fold in here, the one place range
+      // and damage are computed for every tower role below.
+      const loomRangeAdd = this.ctx.loom?.getTowerRangeAdd?.() ?? 0;
+      const loomDmgMul = this.ctx.loom?.getTowerDmgMul?.() ?? 1;
+      const range = (def.tower.rangeTiles + auraRangeAdd + shrineRange + loomRangeAdd) * TILE;
+      const dmg = Math.round((Math.round(def.tower.dmg * auraDmgMul) + shrineDmg) * loomDmgMul);
 
       // C5: sniper towers prefer highest-HP target (execute priority)
       if (def.towerRole === 'sniper') {
@@ -441,8 +531,10 @@ export class CombatSystem {
     }
   }
 
-  /** Enemy → player damage, plus death handling. */
-  damagePlayer(dmg: number, source?: string) {
+  /** Enemy → player damage, plus death handling. `sourceFoe` is the melee
+   *  attacker, when one exists — Ironwake reflects only against a body, not a
+   *  fire or a hurled bolt. */
+  damagePlayer(dmg: number, source?: string, sourceFoe?: Foe) {
     const { state, player, toast } = this.ctx;
     if (state.gameOver) return;
     if (state.god) { this.ctx.log?.push('combat', `${source ?? 'Something'} hits you for 0 (god mode)`, state.clock); return; }
@@ -453,12 +545,18 @@ export class CombatSystem {
     }
     let taken = Math.max(1, dmg - armorDef(state)); // armor softens, never fully negates
     // S1: resolve-zero = +50% damage taken
-    taken = Math.round(taken * (this.ctx.vitals?.getDmgTakenMult?.() ?? 1.0));
+    // B3.a: ...and the Loom's armorPct ranks soften it, diminishing so they can
+    // never reach immunity. This key had no consumer, so 'Iron Resolve' and
+    // 'Bulwark' were both placebo.
+    taken = Math.round(taken
+      * (this.ctx.vitals?.getDmgTakenMult?.() ?? 1.0)
+      * (this.ctx.loom?.getIncomingDmgMul?.() ?? 1.0));
+    taken = Math.max(1, taken);   // the floor survives the multipliers
     state.player.hp -= taken;
     player.flash();
     Sound.play('hurt');
     this.ctx.cam.shake?.(Math.min(11, 3 + taken * 0.25));
-    this.ctx.log?.push('combat', `${source ?? 'Something'} hits you for ${taken} (${Math.max(0, Math.ceil(state.player.hp))}/${CFG.player.maxHp} hp left)`, state.clock);
+    this.ctx.log?.push('combat', `${source ?? 'Something'} hits you for ${taken} (${Math.max(0, Math.ceil(state.player.hp))}/${playerMaxHp(state)} hp left)`, state.clock);
     // M3.5: Action-gated network probe — taking damage routes through the shield network
     this.ctx.net?.probeAction?.('damage');
     // M3.6: Passive effectiveType snapshot — connection tier at hit time, zero HTTP
@@ -471,18 +569,79 @@ export class CombatSystem {
       const lvl = awardSoulXp(state, 'amulet', CFG.soulgear.amuletXpPerHit);
       if (lvl) { toast(`Your amulet hums — soul level ${lvl}!`, 'good'); this.ctx.log?.push('level', `Amulet reached soul level ${lvl}`, state.clock); }
     }
-    if (state.player.hp > 0) return;
+    // C4: 'thorns_reflect' — the Thornwarden relic and the 'of the Thorn' suffix.
+    // The ONLY implementation of thorns lived inside the registered handler, and
+    // nothing ever dispatched it, so both were placebo from C4 until now. A5's
+    // Ironwake was written self-contained rather than on top of it; the two now
+    // stack deliberately, and each is announced separately in the log so a
+    // playtest can tell which one is doing the work.
+    if (sourceFoe && taken > 0 && activeEffects(state).has('thorns_reflect')) {
+      const back = Math.max(1, Math.round(taken * CFG.itemEffects.thornsPct));
+      this.ctx.hordes?.hurt?.(sourceFoe, back, false, true);
+      this.ctx.views?.addHitFlash?.(sourceFoe.x, sourceFoe.y);
+      this.ctx.log?.push('combat', `Thorns bite back for ${back}`, state.clock);
+    }
+    // A5: Ironwake — melee attackers take a share of their own hit back, and the
+    // reflected damage stuns them. Applied before the death check so a lethal hit
+    // still exchanges. Reads the weave so a run without it pays only a null check.
+    const reflect = this.ctx.weaves?.reflect?.();
+    if (reflect && sourceFoe && taken > 0) {
+      const back = Math.max(1, Math.round(taken * reflect.pct));
+      sourceFoe.hp -= back;
+      const ef = sourceFoe as any;
+      ef._stunnedUntil = Math.max(ef._stunnedUntil ?? 0, state.clock + reflect.stunSec);
+      this.ctx.log?.push('weave', `Ironwake — ${back} back at ${sourceFoe.def?.name ?? 'the attacker'}, stunned for ${reflect.stunSec}s`, state.clock);
+    }
 
+    // ---- A2: the two affixes that fire on a landed hit --------------------
+    //
+    // Both hang off `sourceFoe`, and both are read AFTER `taken` is final, so
+    // they compose with armour, the Resolve multiplier and the Loom rather than
+    // with the raw number the foe swung. A Leeching foe heals for a share of
+    // what it actually took off you — which means armour is a counter to
+    // Leeching, and that is the correct answer to "what do I do about it".
+    const eAff = (sourceFoe as any)?.elite?.has as Set<string> | undefined;
+    if (eAff && taken > 0) {
+      if (eAff.has('leeching')) {
+        const back = Math.max(1, Math.round(taken * AFFIX_POWER.leechPct));
+        const healed = Math.min(back, sourceFoe!.maxHp - sourceFoe!.hp);
+        if (healed > 0) {
+          sourceFoe!.hp += healed;
+          this.ctx.views?.addPulseRing?.(sourceFoe!.x, sourceFoe!.y, 14, 0xc85a7a);
+          this.ctx.log?.push('combat', `${sourceFoe!.def.name} drinks ${healed} back`, state.clock);
+        }
+      }
+      if (eAff.has('venomous')) applyVenom(state);
+    }
+
+    if (state.player.hp > 0) return;
+    this.fall();
+  }
+
+  /** You went down. Extracted from damagePlayer() when A2's venom needed to be
+   *  able to kill without being an attack: the alternative was calling
+   *  damagePlayer(0), and damagePlayer floors every hit at 1 — so "check if the
+   *  venom finished me" would itself have dealt a point of damage, and rolled
+   *  dodge, and fired thorns at nobody. */
+  private fall() {
+    const { state, player, toast } = this.ctx;
     // down — drop gold and the connection scatters you far into the wilds
     const lost = Math.floor(state.player.gold * CFG.player.deathGoldLossPct);
     state.player.gold -= lost;
-    state.player.hp = CFG.player.maxHp;
+    state.player.hp = playerMaxHp(state);
     const spot = this.randomRespawn();
     state.player.x = spot.x;
     state.player.y = spot.y;
     player.teleport(spot.x, spot.y);
     // S1: death scatters your vitals too — reset to 50/50
     this.ctx.vitals?.onRespawn?.();
+    // A2: and it clears the venom. Respawning at full hp while still carrying
+    // five stacks would mean the affix follows you across a death and a
+    // teleport to the far side of the map, which is not attrition, it is a
+    // punishment with no counterplay left in it.
+    state._venomStacks = 0;
+    state._venomUntil = 0;
+    state._venomAcc = 0;
     toast(lost > 0
       ? `The thread snaps — you're scattered, ${lost} gold gone. Find your way home.`
       : 'The thread snaps — you are cast into distant lands…', 'bad');
@@ -496,9 +655,15 @@ export class CombatSystem {
     const cx = h ? (h.tx + 0.5) * TILE : this.ctx.spawnPoint.x;
     const cy = h ? (h.ty + 0.5) * TILE : this.ctx.spawnPoint.y;
     const { respawnMinTiles: mn, respawnMaxTiles: mx } = CFG.player;
+    // N4.7 Homeward: how far the thread throws you is how good your route is at
+    // putting packets where it meant to. The scatter was always the connection
+    // dropping you somewhere else — speed-of-light efficiency is finally a
+    // number for how badly. 1.0 wherever the reading is absent, so a colo that
+    // is not in the table plays the authored distance exactly.
+    const homeward = this.ctx.net?.getGameValue?.('homeward') ?? 1;
     for (let i = 0; i < 80; i++) {
       const ang = Math.random() * Math.PI * 2;
-      const dist = (mn + Math.random() * (mx - mn)) * TILE;
+      const dist = (mn + Math.random() * (mx - mn)) * TILE * homeward;
       const x = cx + Math.cos(ang) * dist, y = cy + Math.sin(ang) * dist;
       if (world.canStand(x, y)) return { x, y };
     }

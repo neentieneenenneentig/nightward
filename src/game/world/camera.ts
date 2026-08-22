@@ -9,8 +9,23 @@ export class Camera {
 
   constructor(private app: Application, private world: Container) {}
 
+  /** N4.6: 0..1, from `prefers-reduced-motion`. At 0 the camera does not shake
+   *  at all.
+   *
+   *  This is the one read in the whole Deep Vessel that we HONOUR rather than
+   *  merely display. Every other local probe becomes flavour or a difficulty
+   *  scalar; a person who has asked their operating system to stop moving
+   *  things has not asked for a game stat, they have asked for the screen to
+   *  hold still, and a screen shake is the single most literal violation of
+   *  that request this codebase contains.
+   *
+   *  Scaled rather than switched, because the setting is also read for a milder
+   *  vestibular preference and because a scalar leaves room for a slider later
+   *  without changing any of the ten call sites. */
+  motionScale = 1;
+
   /** Kick the camera — decays over the next few frames. */
-  shake(mag: number) { this.shakeMag = Math.max(this.shakeMag, mag); }
+  shake(mag: number) { this.shakeMag = Math.max(this.shakeMag, mag * this.motionScale); }
 
   /** Center on world-pixel (fx, fy); pixel-snapped so art never shimmers. */
   follow(fx: number, fy: number) {

@@ -85,6 +85,16 @@ html, body, #nw-observatory, .nw-pbody {
   color: var(--ink);
   white-space: nowrap;
 }
+/* A8 + N4.3, split 2026-08-22: boons used to share the omen plaque, which
+   could hold six chips at once (3 omens + 3 boons) and forced the player to
+   read the whole strip to find either. Two plaques now, and this one is marked
+   so the difference survives a glance rather than needing the tooltip: an omen
+   is the world acting on you, a boon is you carrying something. The left edge
+   is the tell — same plaque, one gold rule. */
+.nw-boons {
+  border-left: 2px solid var(--gold);
+  box-shadow: inset 0 0 0 1px var(--metal-lo), inset 6px 0 10px -8px var(--gold), 0 2px 8px rgba(0,0,0,.4);
+}
 .nw-title { font-family: var(--font-display); font-size: max(11px, calc(13px * var(--scale))); color: var(--accent);
   font-weight: 700; letter-spacing: 3px; text-transform: uppercase; }
 .nw-hpwrap { min-width: calc(108px * var(--scale)); }
@@ -215,6 +225,91 @@ html, body, #nw-observatory, .nw-pbody {
   letter-spacing: 1px;
 }
 .nw-actions .nw-btn { position: relative; }
+
+
+/* ---- A3: the ability bar -------------------------------------------------
+   Its own full-width line inside .nw-actions, so it stacks above the verb
+   buttons and inherits their wrap/scale behaviour instead of needing a second
+   set of bottom-offset arithmetic that drifts the first time the row wraps. */
+.nw-abilrow {
+  flex-basis: 100%;
+  display: flex; justify-content: center; gap: calc(6px * var(--scale));
+  margin-bottom: calc(4px * var(--scale));
+}
+.nw-abil {
+  --ab: #6b6357;                 /* the socketed echo's colour, set per frame */
+  --cd: 0;                       /* 0 = ready, 1 = just cast */
+  pointer-events: auto; position: relative;
+  width: max(38px, calc(44px * var(--scale)));
+  height: max(38px, calc(44px * var(--scale)));
+  display: grid; place-items: center;
+  background: radial-gradient(circle at 50% 32%, #1b1510, #0d0a07 78%);
+  border: 1px solid #000; border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--metal-lo), inset 0 2px 6px rgba(0,0,0,.65);
+  user-select: none; overflow: hidden;
+  transition: box-shadow .12s, filter .12s;
+}
+.nw-abil:hover { box-shadow: inset 0 0 0 1px var(--ab), 0 0 8px color-mix(in srgb, var(--ab) 45%, transparent); }
+.nw-abil:active { transform: translateY(1px); }
+.nw-abil:focus-visible { outline: 2px solid var(--metal-hi); outline-offset: 1px; }
+
+/* ready AND affordable: the rim takes the echo's colour and breathes. This is
+   the only "you can press this right now" signal on the bar, so it is the one
+   state allowed to animate. */
+.nw-abil.ready { box-shadow: inset 0 0 0 1px var(--ab), 0 0 10px color-mix(in srgb, var(--ab) 40%, transparent); }
+/* held but unaffordable: the icon greys out and the rim goes to the bad colour.
+   Deliberately NOT hidden -- "I cannot afford this" and "I do not have this"
+   are different facts and the bar has to say which. */
+.nw-abil.poor { box-shadow: inset 0 0 0 1px rgba(200,70,60,.5), inset 0 2px 6px rgba(0,0,0,.65); }
+.nw-abil.poor .ab-icon { filter: grayscale(1) brightness(.55); }
+.nw-abil.poor .ab-cost { color: var(--bad); }
+.nw-abil.empty { opacity: .45; }
+.nw-abil.empty::after {
+  content: ''; position: absolute; width: 40%; height: 40%;
+  border: 1px dashed rgba(147,121,74,.35); border-radius: 2px;
+}
+
+.nw-abil .ab-icon {
+  font-size: max(16px, calc(20px * var(--scale)));
+  font-family: 'Segoe UI Emoji', 'Apple Color Emoji', sans-serif;
+  filter: sepia(.2) saturate(.9);
+  line-height: 1; pointer-events: none;
+}
+/* the cooldown sweep: one conic-gradient driven by --cd. No canvas, no assets,
+   no per-frame layout -- the only thing that changes is a background angle. */
+.nw-abil .ab-sweep {
+  position: absolute; inset: 0; pointer-events: none;
+  background: conic-gradient(from 0deg, rgba(4,3,2,.78) calc(var(--cd) * 360deg), transparent 0);
+}
+.nw-abil .ab-lv {
+  position: absolute; top: 1px; left: 3px;
+  font-family: var(--font-display); font-size: max(7px, calc(8px * var(--scale)));
+  color: var(--ab); text-shadow: 0 1px 2px #000; pointer-events: none;
+}
+.nw-abil .ab-cost {
+  position: absolute; top: 1px; right: 3px;
+  font-family: var(--font-display); font-size: max(7px, calc(8px * var(--scale)));
+  color: #c9a86a; text-shadow: 0 1px 2px #000; pointer-events: none;
+}
+.nw-abil .k {
+  position: absolute; bottom: 1px; right: 2px;
+  font-size: max(7px, calc(8px * var(--scale)));
+  font-family: var(--font-display); color: var(--ink-dim);
+  text-shadow: 0 1px 2px #000; letter-spacing: 1px; pointer-events: none;
+}
+/* the refusal. Short, red, and it moves -- a colour change alone reads as a
+   state the socket was already in rather than an answer to the key you pressed. */
+.nw-abil.deny { animation: nw-deny .3s ease-out; }
+@keyframes nw-deny {
+  0%   { transform: translateX(0);    box-shadow: inset 0 0 0 2px rgba(224,65,62,.9); }
+  25%  { transform: translateX(-3px); }
+  55%  { transform: translateX(3px); }
+  100% { transform: translateX(0);    box-shadow: inset 0 0 0 1px var(--metal-lo), inset 0 2px 6px rgba(0,0,0,.65); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nw-abil { transition: none; }
+  .nw-abil.deny { animation: none; box-shadow: inset 0 0 0 2px rgba(224,65,62,.9); }
+}
 
 /* ---- build placement banner ---- */
 .nw-buildbar {
@@ -398,6 +493,118 @@ html, body, #nw-observatory, .nw-pbody {
   font-size: 12px; color: var(--ink-dim); padding: 4px 2px 12px; }
 .nw-tools .hd { color: var(--ink-dim); letter-spacing: 1px; text-transform: uppercase; font-size: 10px; }
 .nw-cell.worn { box-shadow: inset 0 0 0 2px var(--good); }
+
+/* ---- A4: rarity ---------------------------------------------------------
+   The tier ring is drawn with --rar, set per cell from data/rarity.ts, so
+   there is exactly ONE place in the codebase that decides what Hallowed looks
+   like. A ring rather than a fill: the icon is the item, and a coloured wash
+   over it would fight the procgen palette every icon is already drawn in. */
+.nw-cell.rolled { box-shadow: inset 0 0 0 2px var(--rar), 0 0 10px -2px var(--rar); }
+.nw-cell.rolled.worn { box-shadow: inset 0 0 0 2px var(--good), 0 0 0 2px var(--rar), 0 0 10px -2px var(--rar); }
+.nw-cell.rolled::after {
+  content: ''; position: absolute; inset: auto 2px 2px auto;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--rar);
+  box-shadow: 0 0 6px var(--rar);
+}
+
+/* ---- A4: the item tooltip ----------------------------------------------
+   The thing that makes A1 visible. Positioned by script (clamped to the
+   viewport), never by CSS anchoring — the rightmost bag column would open
+   off-screen, and the bag fills left to right so those are the newest items. */
+#nw-tip {
+  position: fixed; z-index: 60; pointer-events: none;
+  min-width: 168px; max-width: 268px;
+  padding: 8px 10px 9px;
+  background: linear-gradient(180deg, #1b160f 0%, #100c08 100%);
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--metal), 0 6px 18px rgba(0,0,0,.6);
+  font-size: 11px; line-height: 1.45; color: var(--ink);
+}
+.nw-tip-name { font-weight: 700; font-size: 12.5px; letter-spacing: .2px; }
+.nw-tip-sub { color: var(--ink-dim); font-size: 10px; margin-top: 1px; }
+.nw-tip-body { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(147,121,74,.28); }
+.nw-tip-stat { color: var(--ink-bright); font-weight: 600; }
+.nw-tip-affix { margin-top: 2px; }
+.nw-tip-affix.cursed { color: #e0413e; }
+.nw-tip-line { margin-top: 2px; color: var(--ink); }
+.nw-tip-line:first-child { margin-top: 0; color: var(--ink-dim); }
+.nw-tip-cmp { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(147,121,74,.28); }
+.nw-tip-vs { color: var(--ink-dim); font-size: 10px; }
+.nw-tip-delta { font-weight: 700; margin-top: 1px; }
+.nw-tip-delta.up { color: #7fd6a0; }
+.nw-tip-delta.down { color: #e07a6e; }
+.nw-tip-delta.same { color: var(--ink-dim); }
+
+/* ---- A5: sockets & weaves in the tooltip --------------------------------- */
+.nw-tip-sockets { margin-top: 3px; display: flex; align-items: center; gap: 4px; }
+.nw-socket {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 3px;
+  background: #14100b; box-shadow: inset 0 0 0 1px var(--metal);
+  font-size: 10px; line-height: 1;
+}
+.nw-socket.empty { color: var(--ink-dim); box-shadow: inset 0 0 0 1px rgba(147,121,74,.35); }
+.nw-tip-socklabel { color: var(--ink-dim); font-size: 10px; margin-left: 3px; }
+.nw-tip-weave { margin-top: 2px; color: #e8c34a; }
+.nw-tip-thread { margin-top: 2px; color: #9ec7a6; }
+
+/* ---- A4: the orbs -------------------------------------------------------
+   HP bottom-left, Resolve bottom-right, Vigor as a ring around HP. Pure
+   radial gradients and a clip-path fill — no images, pillar 1 intact.
+
+   They sit BESIDE the existing top-bar readouts rather than replacing them:
+   the bar tells you a number, the orb tells you a state at a glance while
+   you are looking at the middle of the screen, which is where a fight is. */
+.nw-orb {
+  position: fixed; bottom: 86px; width: 66px; height: 66px; z-index: 12;
+  pointer-events: none; border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, #2a2118 0%, #14100b 62%, #0a0806 100%);
+  box-shadow: inset 0 0 0 2px var(--metal-lo), inset 0 0 12px rgba(0,0,0,.8),
+              0 0 0 1px rgba(0,0,0,.6), 0 4px 12px rgba(0,0,0,.5);
+}
+.nw-orb .bowl { position: absolute; inset: 0; border-radius: 50%; overflow: hidden; }
+.nw-orb.hp { left: 14px; }
+.nw-orb.res { right: 14px; }
+.nw-orb .liq {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 100%;
+  transform-origin: 50% 100%;
+  transition: transform .22s ease-out;
+}
+.nw-orb.hp .liq { background: linear-gradient(180deg, #d8524a 0%, #8e2b28 60%, #5a1a18 100%); }
+.nw-orb.res .liq { background: linear-gradient(180deg, #7ea8e0 0%, #3f5f9a 60%, #26385e 100%); }
+.nw-orb .gloss {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle at 34% 26%, rgba(255,255,255,.22) 0%, rgba(255,255,255,0) 46%);
+}
+.nw-orb .num {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 15px; font-weight: 700; color: var(--ink-bright);
+  text-shadow: 0 1px 0 #000, 0 0 6px rgba(0,0,0,.9);
+}
+/* Vigor is a ring around the HP orb rather than a third globe: it is a rate,
+   not a pool, and giving it equal visual weight to HP would say otherwise. */
+.nw-orb .vig {
+  position: absolute; inset: -6px; border-radius: 50%;
+  /* starts at 12 o'clock and runs clockwise, so a draining ring reads the same
+     way a clock does rather than starting from the 3 o'clock default */
+  background: conic-gradient(from -90deg, #e2b155 var(--vig, 100%), rgba(20,16,11,.75) 0);
+  -webkit-mask: radial-gradient(circle at 50% 50%, transparent 0 33px, #000 34px);
+  mask: radial-gradient(circle at 50% 50%, transparent 0 33px, #000 34px);
+  filter: drop-shadow(0 0 3px rgba(226,177,85,.35));
+}
+.nw-orb.low .liq { animation: nw-orb-pulse .9s ease-in-out infinite; }
+@keyframes nw-orb-pulse { 0%,100% { filter: brightness(1); } 50% { filter: brightness(1.5); } }
+
+/* the run's best find, carried on its leaderboard row */
+.nw-lb-trophy { grid-column: 1 / -1; font-size: 10px; opacity: .95; }
+
+/* ---- A4: the minimap ---------------------------------------------------- */
+#nw-map {
+  position: fixed; right: 12px; top: 96px; z-index: 12; pointer-events: none;
+  border-radius: 3px; background: rgba(10,8,6,.72);
+  box-shadow: inset 0 0 0 1px var(--metal-lo), 0 3px 10px rgba(0,0,0,.5);
+  image-rendering: pixelated;
+}
 .nw-cell .tag.on { color: #05060a; background: var(--good); padding: 0 3px; left: 2px; top: 2px; border-radius: 2px; }
 
 /* ---- skills ---- */
@@ -420,6 +627,37 @@ html, body, #nw-observatory, .nw-pbody {
 .nw-xpbar { height: 9px; background: var(--bg-deep); overflow: hidden;
   border: 1px solid #000; border-radius: 3px; box-shadow: inset 0 1px 2px rgba(0,0,0,.5); }
 .nw-xpfill { height: 100%; background: #5a8fc0; }
+
+/* ---- the Loom (B3.b) ---- */
+.nw-loombank { text-align: center; padding: 6px 0 10px; color: var(--ink-dim); font-size: 12px; }
+.nw-loombank b { font-family: var(--font-display); font-size: 17px; color: var(--gold); letter-spacing: 1px; }
+.nw-loombank .none { font-style: italic; }
+.nw-loomcols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; align-items: start; }
+.nw-loomhead { font-family: var(--font-display); font-size: 12px; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--metal-hi); text-align: center;
+  padding-bottom: 6px; border-bottom: 1px solid var(--metal-lo); margin-bottom: 8px; }
+.nw-loomnode { padding: 6px 8px; margin-bottom: 6px; border: 1px solid #000; border-radius: 3px;
+  background: linear-gradient(180deg, #120e08, #0c0906);
+  box-shadow: inset 0 0 0 1px var(--metal-lo); opacity: .5; }
+.nw-loomnode .nm { color: var(--ink-bright); font-size: 12px; display: flex;
+  align-items: baseline; gap: 6px; }
+.nw-loomnode .ef { color: var(--ink-dim); font-size: 10px; line-height: 1.35; margin-top: 2px; }
+.nw-loomnode .ef i { font-style: normal; opacity: .6; }
+.nw-loomnode .ft { display: flex; justify-content: space-between; align-items: baseline;
+  margin-top: 4px; font-size: 10px; }
+.nw-loomnode .rk { color: var(--gold); font-variant-numeric: tabular-nums; }
+.nw-loomnode .wy { color: var(--ink-dim); font-style: italic; }
+.nw-loomnode .ks { font-size: 8px; letter-spacing: 1px; text-transform: uppercase;
+  color: #c9b6e6; border: 1px solid #c9b6e655; border-radius: 3px; padding: 0 4px; }
+.nw-loomnode.taken { opacity: 1; box-shadow: inset 0 0 0 1px var(--metal); }
+.nw-loomnode.maxed .wy { color: var(--good); }
+.nw-loomnode.keystone { border-color: #3a2c52; }
+.nw-loomnode.keystone.taken { box-shadow: inset 0 0 0 1px #6b53a0, 0 0 12px rgba(140,110,200,.25); }
+.nw-loomnode.can { opacity: 1; cursor: pointer; }
+.nw-loomnode.can .wy { color: var(--gold); font-style: normal; }
+.nw-loomnode.can:hover { background: linear-gradient(180deg, #1c1610, #100c08);
+  box-shadow: inset 0 0 0 1px var(--metal), 0 3px 12px rgba(0,0,0,.5); }
+.nw-loomnode.can:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ---- event log ---- */
 .nw-logrow { display: flex; align-items: baseline; gap: 8px; padding: 5px 6px;
@@ -539,6 +777,52 @@ html, body, #nw-observatory, .nw-pbody {
   font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
 }
 
+/* ---- A6: the hub (Reliquary + Forge-Warden) ----------------------------- */
+.nw-hub-purse { display: flex; justify-content: space-between; align-items: baseline;
+  padding: 6px 8px; margin-bottom: 8px; border-bottom: 1px solid var(--metal-lo);
+  font-family: var(--font-display); }
+.nw-hub-purse b { color: var(--gold); font-size: 1.15em; }
+.nw-hub-purse .lack { color: var(--bad); }
+/* the slot chooser — the half of a purchase you DO decide */
+.nw-hub-slots { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 10px; }
+.nw-hub-slot { padding: 5px 10px; border: 1px solid var(--metal-lo); background: var(--bg-deep);
+  color: var(--ink-dim); cursor: pointer; font-family: var(--font-display); font-size: .95em; }
+.nw-hub-slot.on { color: var(--accent); border-color: var(--metal); background: var(--bg-lift); }
+.nw-hub-slot:hover { color: var(--ink); }
+/* one seal, one price */
+.nw-seal .name { font-family: var(--font-display); }
+.nw-seal .band { color: var(--gold); }
+.nw-seal .price { color: var(--gold); font-family: var(--font-display); margin-right: 8px; }
+.nw-seal .price.lack { color: var(--bad); }
+.nw-hub-stock { display: flex; gap: 3px; margin-top: 4px; flex-wrap: wrap; }
+.nw-hub-stock img { width: 20px; height: 20px; image-rendering: pixelated; opacity: .8; }
+/* Bases above this seal. Greyed and dimmed rather than hidden, because the
+   gap between what a seal reaches and what it does not IS the price
+   difference between the three seals, and it is unreadable if the excluded
+   half is simply absent. Kept at .28 rather than lower so the silhouette is
+   still identifiable — a player should be able to see WHICH blade they are
+   not buying. */
+.nw-hub-stock img.off { opacity: .28; filter: grayscale(1); }
+/* the bench */
+.nw-bench { border: 1px solid var(--metal-lo); background: var(--bg-deep); margin-bottom: 10px; }
+.nw-bench-hd { display: flex; align-items: center; gap: 8px; padding: 7px 8px;
+  border-bottom: 1px solid var(--metal-lo); background: var(--bg-lift); }
+.nw-bench-hd img { width: 30px; height: 30px; image-rendering: pixelated; }
+.nw-bench-hd .nm { flex: 1; min-width: 0; font-family: var(--font-display); }
+.nw-bench-hd .cost { font-size: .9em; color: var(--gold); white-space: nowrap; }
+.nw-bench-hd .cost.lack { color: var(--bad); }
+.nw-bench-worn { font-size: .8em; color: var(--ink-dim); }
+.nw-bench-worn b { color: var(--gold); font-weight: 400; }
+.nw-affix { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 6px 8px; background: none; border: 0; border-top: 1px solid rgba(51,41,26,.5);
+  color: var(--ink); font: inherit; cursor: pointer; }
+.nw-affix:first-of-type { border-top: 0; }
+.nw-affix:hover:not(:disabled) { background: var(--bg-lift); color: var(--ink-bright); }
+.nw-affix:disabled { opacity: .5; cursor: default; }
+.nw-affix .txt { flex: 1; min-width: 0; }
+.nw-affix .rew { font-size: .82em; color: var(--accent); white-space: nowrap; }
+.nw-affix.cursed .txt { color: var(--bad); }
+
 /* ---- mobile / touch device adaptions ---- */
 /* Touch devices: collapse action bar to right-side vertical stack */
 [data-touch] .nw-actions {
@@ -601,6 +885,11 @@ html, body, #nw-observatory, .nw-pbody {
     grid-template-columns: 1fr;
   }
   /* item grid: fewer columns, bigger tap targets */
+  .nw-orb { width: 52px; height: 52px; bottom: 74px; }
+  .nw-orb .vig { -webkit-mask: radial-gradient(circle at 50% 50%, transparent 0 26px, #000 27px);
+                 mask: radial-gradient(circle at 50% 50%, transparent 0 26px, #000 27px); }
+  .nw-orb .num { font-size: 12px; }
+  #nw-map { display: none; }
   .nw-grid {
     grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
     gap: 6px;

@@ -3,12 +3,14 @@
 // chunk — the rest of the world doesn't notice.
 import { Container, Sprite, Texture } from 'pixi.js';
 import { hash2 } from '../../engine/rng';
-import { darken, lighten, type RGB } from '../../engine/procgen/palette';
+import { valueNoise } from '../../engine/noise';
+import { darken, lighten, scale, type RGB } from '../../engine/procgen/palette';
 import { TILE, MEGA_SCAN, type MegaCluster } from './worldgen';
 import { M, MATERIALS } from '../data/materials';
 import { CFG } from '../data/config';
 import type { World } from './world';
 import type { WorldArt } from './art';
+import { buildReliefField, shadeInto, sunAt, RELIEF_N, RELIEF_PAD, RELIEF_DIM, type ReliefField, type SunDir } from './relief';
 
 export const CHUNK = 16;               // tiles per chunk side
 export const CHUNK_PX = CHUNK * TILE;
@@ -32,7 +34,28 @@ interface Foam { view: Sprite; texs: Texture[] }
  * cadence" pattern foam pioneered — but re-rendered live from the fuel/burn fields every tick
  * instead of swapping between 3 pre-baked frames, since fire's footprint actually changes. */
 interface Glow { view: Sprite; tex: Texture; canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D }
-interface Chunk { sprite: Sprite; tex: Texture; foam: Foam | null; glow: Glow | null }
+/** G1: the relief overlay — a 66×66 greyscale texture stretched over the chunk
+ * with linear filtering and multiplied onto it. Same "chunk owns a secondary
+ * overlay" pattern as foam and glow; the normals are baked once and only the
+ * shade pass reruns as the sun moves. */
+interface Relief { view: Sprite; tex: Texture; ctx: CanvasRenderingContext2D; img: ImageData; field: ReliefField }
+interface Chunk { sprite: Sprite; tex: Texture; foam: Foam | null; glow: Glow | null; relief: Relief | null }
+
+const RELIGHT_COS = Math.cos((2 * Math.PI) / 180); // re-shade once the sun has moved ~2°
+const RELIGHT_PER_FRAME = 3;                       // chunks re-shaded per frame — amortises a relight
+const RELIEF_BUILD_PER_FRAME = 3;                  // NEW normal fields per frame (~1ms each) — amortises streaming
+const RELIEF_OVER = (RELIEF_PAD / RELIEF_N) * CHUNK_PX; // px the overlay hangs past the chunk
+
+const SPIRE_ROCK = 0.11;  // per-tile chance of a spire on mountain (G5)
+const SPIRE_SNOW = 0.09;  // sparser on snow — the caps read better half-bare
+
+/** G4 chamfer, widest+faintest first — see the corner-cut pass. */
+const CORNER_LAYERS: [number, number][] = [[13, 0.3], [9, 0.5], [5, 0.8]];
+/** the four (x,y) diagonal directions, as sign pairs */
+const CORNERS: [number, number][] = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+
+const CLIFF_BAND = 9;         // px of ledge on a one-step drop (hill → ground)
+const CLIFF_BAND_STEEP = 20;  // px of real rock face on a two-step drop (mountain → ground)
 
 const GLOW_RADIUS = 20; // px — bleeds a few px past the 32px tile so neighboring flame reads as one glow
 
@@ -41,29 +64,40 @@ export class ChunkMap {
   private foamFrame = -1;
   private lastGlowMs = -1;
 
-  // G1: SUBPIX LOD — player position for distance-based resolution
-  private playerX = 0;
-  private playerY = 0;
+  // G1 relief lighting
+  private reliefOn: boolean;
+  private reliefSeed: number;
+  private sun: SunDir = sunAt(0);
+  private relightQueue: string[] = [];
+
 
   constructor(
     private world: World,
     private art: WorldArt,
     private layer: Container,
-  ) {}
-
-  /** G1: Update player position for SUBPIX LOD distance calculation. */
-  setPlayerPos(x: number, y: number) {
-    this.playerX = x;
-    this.playerY = y;
+    opts: { relief?: boolean; seed?: number } = {},
+  ) {
+    this.reliefOn = opts.relief !== false;
+    this.reliefSeed = (opts.seed ?? 0) ^ 0x5e11ef;
   }
 
-  /** G1: Get SUBPIX factor for a chunk based on distance from player.
-   *  SUBPIX disabled for now — needs proper micro-sprite generation from
-   *  the procgen art pipeline, not just flat color blending.
-   *  Near (≤3 chunks): ×4  |  Mid (3–6): ×2  |  Far (>6): ×1 */
-  private subpixFactor(_cx: number, _cy: number): number {
-    return 1; // SUBPIX disabled — revert to ×1 procgen tile art
+  /** G1 gate switch: turn relief lighting on/off live so the two looks can be
+   *  compared side by side without a reload. Rebuilds every loaded chunk's
+   *  overlay, or tears them all down. */
+  setRelief(on: boolean) {
+    if (on === this.reliefOn) return;
+    this.reliefOn = on;
+    for (const [key, c] of this.chunks) {
+      if (c.relief) { c.relief.view.destroy(); c.relief.tex.destroy(true); c.relief = null; }
+      if (!on) continue;
+      // the gate wants both looks the instant the key is pressed, so eat the stall
+      const [cx, cy] = key.split(',').map(Number);
+      c.relief = this.makeRelief(cx, cy);
+    }
   }
+
+  get reliefEnabled() { return this.reliefOn; }
+
 
   /** Keep chunks loaded around world-pixel (px, py) for a view of viewW×viewH. */
   ensureAround(px: number, py: number, viewW: number, viewH: number) {
@@ -75,8 +109,7 @@ export class ChunkMap {
       for (let cx = ccx - r; cx <= ccx + r; cx++) {
         const key = cx + ',' + cy;
         if (!this.chunks.has(key)) {
-          const sf = this.subpixFactor(cx, cy);
-          this.chunks.set(key, sf > 1 ? this.bakeSubpix(cx, cy, sf) : this.bake(cx, cy));
+          this.chunks.set(key, this.bake(cx, cy));
         }
       }
     }
@@ -156,6 +189,37 @@ export class ChunkMap {
     }
   }
 
+  /** G1: move the sun and re-shade. A relight is queued only once the light
+   *  has actually swung a couple of degrees (~4s of world clock), and the
+   *  queue is drained a few chunks per frame — so the cost is a handful of
+   *  64×64 dot-product passes spread over a quarter second, never a spike. */
+  tickRelief(clock: number) {
+    if (!this.reliefOn) return;
+    const s = sunAt(clock);
+    const moved = s.x * this.sun.x + s.y * this.sun.y + s.z * this.sun.z < RELIGHT_COS;
+    if (moved || s.gain !== this.sun.gain) {
+      this.sun = s;
+      this.relightQueue = [...this.chunks.keys()];
+    }
+    for (let n = 0; n < RELIGHT_PER_FRAME && this.relightQueue.length; n++) {
+      const c = this.chunks.get(this.relightQueue.pop()!);
+      if (c?.relief) this.paintRelief(c.relief);
+    }
+
+    // Building a normal field costs about as much as the whole rest of a chunk
+    // bake (a 68² Sobel over three octaves of fbm), so it deliberately does NOT
+    // happen inside bake() — a teleport into fresh terrain would stall on 25 of
+    // them at once. Chunks arrive unlit and pick up their overlay over the next
+    // few frames, which at the screen edge nobody ever sees.
+    let built = 0;
+    for (const [key, c] of this.chunks) {
+      if (c.relief) continue;
+      const [cx, cy] = key.split(',').map(Number);
+      c.relief = this.makeRelief(cx, cy);
+      if (++built >= RELIEF_BUILD_PER_FRAME) break;
+    }
+  }
+
   // ---- test-only debug hooks (acceptance checklist) -----------------------
 
   /** Sample one pixel from a loaded chunk's baked canvas at tile-local pixel
@@ -168,6 +232,23 @@ export class ChunkMap {
     const lx = ((tx % CHUNK) + CHUNK) % CHUNK, ly = ((ty % CHUNK) + CHUNK) % CHUNK;
     const d = canvas.getContext('2d')!.getImageData(lx * TILE + offX, ly * TILE + offY, 1, 1).data;
     return [d[0], d[1], d[2], d[3]];
+  }
+
+  /** G1: the relief shade multiplier (0..1) at tile-local pixel offset
+   *  (offX,offY) (default: tile centre). 1 means the surface is flat there and
+   *  the bake shows through untouched. null if the chunk isn't loaded or relief
+   *  is off. NOTE the gradient of a bilinear height field peaks BETWEEN tile
+   *  centres, so sampling only centres systematically under-reads the shading.
+   *  Same offset convention as debugPixel. */
+  debugRelief(tx: number, ty: number, offX = 16, offY = 16): number | null {
+    const cx = Math.floor(tx / CHUNK), cy = Math.floor(ty / CHUNK);
+    const r = this.chunks.get(cx + ',' + cy)?.relief;
+    if (!r) return null;
+    const lx = ((tx % CHUNK) + CHUNK) % CHUNK, ly = ((ty % CHUNK) + CHUNK) % CHUNK;
+    const per = RELIEF_N / CHUNK_PX;   // texels per world pixel
+    const i = RELIEF_PAD + Math.min(RELIEF_N - 1, Math.max(0, Math.floor((lx * TILE + offX) * per)));
+    const j = RELIEF_PAD + Math.min(RELIEF_N - 1, Math.max(0, Math.floor((ly * TILE + offY) * per)));
+    return r.img.data[(j * RELIEF_DIM + i) * 4] / 255;
   }
 
   hasFoam(tx: number, ty: number): boolean {
@@ -217,6 +298,41 @@ export class ChunkMap {
       c.glow.view?.destroy();
       c.glow.tex?.destroy(true);
     }
+    if (c.relief) {
+      c.relief.view?.destroy();
+      c.relief.tex?.destroy(true);
+    }
+  }
+
+  /** G1: build a chunk's relief overlay. The normal field is computed once
+   *  here and cached; the texture hangs RELIEF_PAD texels past the chunk on
+   *  every side so linear filtering interpolates against real neighbour data
+   *  instead of clamping, which would leave a flat band at every seam. */
+  private makeRelief(cx: number, cy: number): Relief {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = RELIEF_DIM;
+    const ctx = canvas.getContext('2d')!;
+    const img = ctx.createImageData(RELIEF_DIM, RELIEF_DIM);
+    const field = buildReliefField(
+      cx * CHUNK, cy * CHUNK, CHUNK, this.reliefSeed,
+      (tx, ty) => MATERIALS[this.world.materialAt(tx, ty)].heightClass,
+    );
+    const tex = Texture.from(canvas);
+    tex.source.scaleMode = 'linear';   // the whole point — 8px texels blur into a gradient
+    const view = new Sprite(tex);
+    view.blendMode = 'multiply';
+    view.position.set(cx * CHUNK_PX - RELIEF_OVER, cy * CHUNK_PX - RELIEF_OVER);
+    view.setSize(CHUNK_PX + RELIEF_OVER * 2, CHUNK_PX + RELIEF_OVER * 2);
+    this.layer.addChild(view);
+    const r: Relief = { view, tex, ctx, img, field };
+    this.paintRelief(r);
+    return r;
+  }
+
+  private paintRelief(r: Relief) {
+    shadeInto(r.img, r.field, this.sun);
+    r.ctx.putImageData(r.img, 0, 0);
+    r.tex.source.update();
   }
 
   /** Lazily create a chunk's fire glow overlay — additive-blended, drawn on top of everything
@@ -258,8 +374,7 @@ export class ChunkMap {
     const c = this.chunks.get(key);
     if (!c) return; // not loaded — will bake fresh when scrolled into view
     this.destroyChunk(c);
-    const sf = this.subpixFactor(cx, cy);
-    this.chunks.set(key, sf > 1 ? this.bakeSubpix(cx, cy, sf) : this.bake(cx, cy));
+    this.chunks.set(key, this.bake(cx, cy));
   }
 
   private isShoreTile(tx: number, ty: number): boolean {
@@ -299,43 +414,83 @@ export class ChunkMap {
       }
     }
 
-    // cliff pass — a darker south-edge strip + a light top lip wherever height
-    // drops toward the viewer; painter's-algorithm depth, zero geometry
+    // G4: corner cut. The feather pass blends TEXTURE across an edge but never
+    // reshapes the OUTLINE, which is why a 32px staircase survives it intact.
+    // Wherever two adjacent orthogonal neighbours are the same foreign
+    // material, knock the corner off with a clipped triangle of that
+    // material's own texture — the outline turns 90° steps into 45° chamfers.
+    // Purely cosmetic: collision still reads the tile grid, so a corner can
+    // look ~10px rounder than it walks.
+    for (let ty = 0; ty < CHUNK; ty++) {
+      for (let tx = 0; tx < CHUNK; tx++) {
+        const gtx = cx * CHUNK + tx, gty = cy * CHUNK + ty;
+        const m = this.world.materialAt(gtx, gty);
+        const px0 = tx * TILE, py0 = ty * TILE;
+        for (const [sx, sy] of CORNERS) {
+          const a = this.world.materialAt(gtx + sx, gty);
+          if (a === m || a !== this.world.materialAt(gtx, gty + sy)) continue;
+          const ex = px0 + (sx > 0 ? TILE : 0), ey = py0 + (sy > 0 ? TILE : 0);
+          const src = this.art.tile(a, gtx + sx, gty);
+          // layered like feather(): a single hard-clipped wedge is a SPIKE at a
+          // high-contrast border (dark water sawing into pale sand reads worse
+          // than the staircase it replaced). Wide-and-faint to narrow-and-solid
+          // makes the same chamfer read as a soft rounding.
+          for (const [depth, alpha] of CORNER_LAYERS) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(ex - sx * depth, ey);
+            ctx.lineTo(ex, ey);
+            ctx.lineTo(ex, ey - sy * depth);
+            ctx.closePath();
+            ctx.clip();
+            ctx.globalAlpha = alpha;
+            ctx.drawImage(src, px0, py0);
+            ctx.restore();
+          }
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
+
+    // cliff pass — a rock FACE on the south edge wherever height drops toward
+    // the viewer: per-column striation and a jittered top lip so it reads as
+    // stone rather than a painted stripe. A drop into water (heightClass 0) is
+    // the shoreline's job — foam already owns it, and a band there paints a
+    // plank of land floating on the sea (G3).
     for (let ty = 0; ty < CHUNK; ty++) {
       for (let tx = 0; tx < CHUNK; tx++) {
         const gtx = cx * CHUNK + tx, gty = cy * CHUNK + ty;
         const m = this.world.materialAt(gtx, gty);
         const hT = MATERIALS[m].heightClass;
         const hS = MATERIALS[this.world.materialAt(gtx, gty + 1)].heightClass;
-        if (hT <= hS) continue;
+        if (hT <= hS || hS === 0) continue;
         const steep = hT - hS >= 2;
-        const band = steep ? 10 : 7;
+        const band = steep ? CLIFF_BAND_STEEP : CLIFF_BAND;
         const ramp = MATERIALS[m].art.ramp;
-        const px0 = tx * TILE, py0 = ty * TILE + TILE - band;
-        ctx.fillStyle = css(darken(ramp[0], steep ? 45 : 35));
-        ctx.fillRect(px0, py0, TILE, band);
-        ctx.fillStyle = css(lighten(ramp[2], 30));
-        ctx.fillRect(px0, py0, TILE, 2);
+        // proportional, never additive: snow's darkest stop is (185,196,214),
+        // so an additive −30 paints a cliff face LIGHTER than the grass below it
+        const face = scale(ramp[0], steep ? 0.55 : 0.76);
+        const lip = lighten(ramp[ramp.length - 1], 12);
+        const deep = steep ? 10 : 5, mid = steep ? 4 : 2;
+        const px0 = tx * TILE, base = ty * TILE + TILE;
+        for (let x = 0; x < TILE; x++) {
+          // everything hashes on the WORLD pixel column, so a cliff striates
+          // continuously along its length instead of repeating every tile
+          const wx = gtx * TILE + x;
+          // the top edge undulates on SMOOTH noise (~7px wavelength). Per-pixel
+          // white noise here reads as a comb of hair, not as broken rock.
+          const top = base - band + Math.round((valueNoise(wx / 7, gty * 3.7, 0x5c1f) - 0.5) * 4);
+          // grooves run in 3px columns for the same reason
+          const g = hash2((wx / 3) | 0, gty, 0x5c20);
+          const groove = g < 0.26 ? deep : g < 0.58 ? mid : 0;
+          ctx.fillStyle = css(darken(face, groove));
+          ctx.fillRect(px0 + x, top, 1, base - top);
+          ctx.fillStyle = css(groove ? darken(lip, 10) : lip);
+          ctx.fillRect(px0 + x, top, 1, 2);
+        }
       }
     }
 
-    // G1: ambient occlusion — darken tiles adjacent to higher-height-class
-    // neighbors. Baked once per chunk (zero per-frame cost). Max 15% darker.
-    for (let ty = 0; ty < CHUNK; ty++) {
-      for (let tx = 0; tx < CHUNK; tx++) {
-        const gtx = cx * CHUNK + tx, gty = cy * CHUNK + ty;
-        const hHere = MATERIALS[this.world.materialAt(gtx, gty)].heightClass;
-        let ao = 0;
-        for (const [dx, dy] of EDGES) {
-          const hN = MATERIALS[this.world.materialAt(gtx + dx, gty + dy)].heightClass;
-          if (hN > hHere) ao += 0.03;
-        }
-        if (ao <= 0) continue;
-        const capped = Math.min(ao, 0.15);
-        ctx.fillStyle = `rgba(0,0,0,${capped})`;
-        ctx.fillRect(tx * TILE, ty * TILE, TILE, TILE);
-      }
-    }
 
     // features — one per tile, plus mega-clusters drawn as ONE big chunky
     // sprite each. Both kinds anchor their feet to a row's south edge, so a
@@ -377,6 +532,23 @@ export class ChunkMap {
       if (ty < 0 || ty > CHUNK) continue;
       for (let tx = 0; tx < CHUNK; tx++) {
         const gtx = cx * CHUNK + tx, gty = cy * CHUNK + ty;
+
+        // G5: spires on the peaks. Render-only, so they ride the same
+        // row-ordered walk (a spire further south covers the one behind it)
+        // without ever entering the feature or collision tables.
+        const sm = this.world.materialAt(gtx, gty);
+        if (sm === M.MOUNTAIN || sm === M.SNOW) {
+          if (hash2(gtx, gty, 0x5915) < (sm === M.SNOW ? SPIRE_SNOW : SPIRE_ROCK)) {
+            const img = this.art.spire(sm === M.SNOW, gtx, gty);
+            const jx = ((hash2(gtx, gty, 0x5916) * 13) | 0) - 6;
+            const dx = tx * TILE + ((TILE - img.width) >> 1) + jx;
+            const dy = ty * TILE + TILE - img.height;
+            this.art.shadow(ctx, dx + img.width / 2, dy + img.height - 1, img.width * 0.55, img.width * 0.2, 0.3);
+            ctx.drawImage(img, dx, dy);
+          }
+          continue;
+        }
+
         if (this.world.megaClusterAt(gtx, gty)) continue;
         const f = this.world.featureAt(gtx, gty);
         if (!f) continue;
@@ -404,6 +576,7 @@ export class ChunkMap {
     const sprite = new Sprite(tex);
     sprite.position.set(cx * CHUNK_PX, cy * CHUNK_PX);
     this.layer.addChild(sprite);
+
 
     // shoreline foam overlay — only for chunks that actually border water,
     // so most of the map (deep ocean, inland) pays nothing extra
@@ -439,181 +612,7 @@ export class ChunkMap {
 
     // fire glow overlay is created lazily by tickGlow — fire state changes independently of
     // terrain bakes (a chunk can catch/lose fire between bakes without a rebake happening)
-    return { sprite, tex, foam, glow: null };
+    return { sprite, tex, foam, glow: null, relief: null };
   }
 
-  // ---- G1: SUBPIX rendering (×2 / ×4 micro-tile resolution) ----------------
-
-  /** Bake a chunk at SUBPIX resolution with smooth edge blending.
-   *  factor: 2 or 4 — how many micro-tiles per sim-tile per axis. */
-  private bakeSubpix(cx: number, cy: number, factor: number): Chunk {
-    const MT = TILE / factor; // micro-tile pixel size
-    const CPX = CHUNK_PX * factor; // chunk canvas pixels
-    const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = CPX;
-    const ctx = canvas.getContext('2d')!;
-
-    // Pre-fetch material colors for blending
-    const matColor = (matId: number): [number, number, number] => {
-      const ramp = MATERIALS[matId]?.art?.ramp;
-      if (ramp && ramp[1]) return ramp[1]; // mid-tone from palette ramp
-      return [100, 100, 100]; // fallback gray
-    };
-
-    // Render each micro-tile
-    for (let mty = 0; mty < CHUNK * factor; mty++) {
-      for (let mtx = 0; mtx < CHUNK * factor; mtx++) {
-        const gtx = cx * CHUNK + Math.floor(mtx / factor);
-        const gty = cy * CHUNK + Math.floor(mty / factor);
-        const subX = mtx % factor; // 0..factor-1 within sim tile
-        const subY = mty % factor;
-
-        const here = this.world.materialAt(gtx, gty);
-        const col = matColor(here);
-
-        // Blend toward neighboring materials at edges for smooth transitions
-        let r = col[0], g = col[1], b = col[2];
-        let blendWeight = 0;
-
-        // Check N/S/E/W neighbors — blend if different material and at tile edge
-        const neighbors: [number, number, number][] = [
-          [0, -1, subY],       // N: blend strength = how close to top edge
-          [0, 1, factor - 1 - subY], // S
-          [-1, 0, subX],       // W
-          [1, 0, factor - 1 - subX], // E
-        ];
-
-        for (const [dx, dy, edgeDist] of neighbors) {
-          if (edgeDist <= 0) continue; // not at this edge
-          const nm = this.world.materialAt(gtx + dx, gty + dy);
-          if (nm === here) continue;
-          const ncol = matColor(nm);
-          const w = (factor - edgeDist) / factor; // 1 at edge, 0 at center
-          if (w <= 0) continue;
-          r = r * (1 - w) + ncol[0] * w;
-          g = g * (1 - w) + ncol[1] * w;
-          b = b * (1 - w) + ncol[2] * w;
-          blendWeight += w;
-        }
-
-        // Clamp blend
-        if (blendWeight > 1) {
-          const s = 1 / blendWeight;
-          r = col[0] + (r - col[0]) * s;
-          g = col[1] + (g - col[1]) * s;
-          b = col[2] + (b - col[2]) * s;
-        }
-
-        // Add subtle micro-variation (noise) for texture
-        const noise = ((hash2(gtx * 1000 + mtx, gty * 1000 + mty, 0x7f3d) - 0.5) * 12) | 0;
-        ctx.fillStyle = `rgb(${(r + noise).toFixed(0)},${(g + noise).toFixed(0)},${(b + noise).toFixed(0)})`;
-        ctx.fillRect(mtx * MT, mty * MT, MT, MT);
-      }
-    }
-
-    // Cliff shadows — at micro-tile level
-    for (let mty = 0; mty < CHUNK * factor; mty++) {
-      for (let mtx = 0; mtx < CHUNK * factor; mtx++) {
-        const gtx = cx * CHUNK + Math.floor(mtx / factor);
-        const gty = cy * CHUNK + Math.floor(mty / factor);
-        const m = this.world.materialAt(gtx, gty);
-        const hT = MATERIALS[m].heightClass;
-        const hS = MATERIALS[this.world.materialAt(gtx, gty + 1)].heightClass;
-        if (hT <= hS) continue;
-        const subY = mty % factor;
-        if (subY < factor - 1) continue; // only bottom row of micro-tiles
-        const steep = hT - hS >= 2;
-        const band = steep ? 10 : 7;
-        const ramp = MATERIALS[m].art.ramp;
-        ctx.fillStyle = css(darken(ramp[0], steep ? 45 : 35));
-        ctx.fillRect(mtx * MT, mty * MT + MT - band, MT, band);
-        ctx.fillStyle = css(lighten(ramp[2], 30));
-        ctx.fillRect(mtx * MT, mty * MT + MT - band, MT, 2);
-      }
-    }
-
-    // AO — darken micro-tiles adjacent to higher neighbors
-    for (let mty = 0; mty < CHUNK * factor; mty++) {
-      for (let mtx = 0; mtx < CHUNK * factor; mtx++) {
-        const gtx = cx * CHUNK + Math.floor(mtx / factor);
-        const gty = cy * CHUNK + Math.floor(mty / factor);
-        const hHere = MATERIALS[this.world.materialAt(gtx, gty)].heightClass;
-        let ao = 0;
-        const subX = mtx % factor, subY = mty % factor;
-        // Only check sim-tile-level neighbors
-        if (subX === 0 || subX === factor - 1 || subY === 0 || subY === factor - 1) {
-          for (const [dx, dy] of EDGES) {
-            const hN = MATERIALS[this.world.materialAt(gtx + dx, gty + dy)].heightClass;
-            if (hN > hHere) ao += 0.03;
-          }
-        }
-        if (ao <= 0) continue;
-        ctx.fillStyle = `rgba(0,0,0,${Math.min(ao, 0.15)})`;
-        ctx.fillRect(mtx * MT, mty * MT, MT, MT);
-      }
-    }
-
-    // Features — same y-ordered walk as the main bake, scaled by the subpix
-    // factor. Mega clusters draw as one big sprite here too.
-    const MMs = MEGA_SCAN + 2;
-    const megaRootsS: MegaCluster[] = [];
-    for (let ty = -MMs; ty <= CHUNK + MMs; ty++) {
-      for (let tx = -MMs; tx < CHUNK + MMs; tx++) {
-        const gtx = cx * CHUNK + tx, gty = cy * CHUNK + ty;
-        const mega = this.world.megaClusterAt(gtx, gty);
-        if (mega && mega.rootTx === gtx && mega.rootTy === gty) megaRootsS.push(mega);
-      }
-    }
-    for (let ty = -MMs; ty <= CHUNK + MMs; ty++) {
-      for (const mega of megaRootsS) {
-        if (mega.rootTy + mega.size - 1 - cy * CHUNK !== ty) continue;
-        const depleted = this.world.isDepleted(mega.rootTx, mega.rootTy);
-        if (depleted && mega.def.depleted !== 'stump') continue;
-        const img = depleted
-          ? this.art.megaStump(mega.size)
-          : this.art.megaFeature(mega.def.id, mega.rootTx, mega.rootTy, mega.size);
-        const w = img.width * factor, h = img.height * factor;
-        const dx = ((mega.rootTx + mega.size / 2) * TILE - cx * CHUNK_PX) * factor - w / 2;
-        const dy = ((mega.rootTy + mega.size) * TILE - cy * CHUNK_PX) * factor - h;
-        ctx.fillStyle = 'rgba(0,0,0,0.3)';
-        ctx.fillRect(dx + 2, dy + 2, w, h);
-        ctx.drawImage(img, dx, dy, w, h);
-      }
-
-      if (ty < 0 || ty > CHUNK) continue;
-      for (let tx = 0; tx < CHUNK; tx++) {
-        const gtx = cx * CHUNK + tx, gty = cy * CHUNK + ty;
-        if (this.world.megaClusterAt(gtx, gty)) continue;
-        const f = this.world.featureAt(gtx, gty);
-        if (!f) continue;
-        let img: HTMLCanvasElement;
-        if (this.world.isDepleted(gtx, gty)) {
-          if (f.depleted !== 'stump') continue;
-          img = this.art.stump;
-        } else {
-          img = this.art.feature(f.id, gtx, gty);
-        }
-        const jx = ((hash2(gtx, gty, 0x1a17) * 7) | 0) - 3;
-        const jy = (hash2(gtx, gty, 0x9b3) * 4) | 0;
-        // Scale features to fit the subpix tile grid
-        const dx = tx * TILE * factor + ((TILE * factor - img.width) >> 1) + jx * factor;
-        const dy = ty * TILE * factor + TILE * factor - img.height + jy * factor;
-        // Simple drop shadow
-        ctx.fillStyle = 'rgba(0,0,0,0.3)';
-        ctx.fillRect(dx + 2, dy + 2, img.width, img.height);
-        ctx.drawImage(img, dx, dy);
-      }
-    }
-
-    const tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
-    const sprite = new Sprite(tex);
-    // Scale sprite down so it covers the same world area as a ×1 chunk
-    sprite.position.set(cx * CHUNK_PX, cy * CHUNK_PX);
-    sprite.setSize(CHUNK_PX, CHUNK_PX); // scale to fit CHUNK_PX×CHUNK_PX world space
-    this.layer.addChild(sprite);
-
-    // SUBPIX chunks skip foam/glow overlays for now — the higher res compensates
-    return { sprite, tex, foam: null, glow: null };
-  }
 }

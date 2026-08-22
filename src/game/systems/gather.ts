@@ -1,14 +1,17 @@
 // RS-style gathering: stand near a node, interact, wait out the (tool-scaled)
 // timer, collect loot + xp. Moving cancels. Depleted nodes respawn on a clock.
 import { CFG } from '../data/config';
-import { ITEMS } from '../data/items';
+import { itemName } from '../data/items';
 import { SKILLS } from '../data/skills';
 import type { FeatureDef } from '../data/features';
-import { acquireGear, addXp, awardSoulXp, bestTool, invAdd, rollLoot, skillLevel, soulStat } from '../rules';
+import { addXp, awardSoulXp, bestTool, rollLoot, skillLevel, soulStat } from '../rules';
 import { BUILDINGS } from '../data/buildings';
 import type { SoulSlot } from '../data/soulgear';
 import { TILE, type MegaCluster } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
+import { levelUpFlourish } from './flourish';
+import { rollBoon } from '../data/boons';
+import { grantBoon } from './effects';
 
 // a couple of alternates per skill so gathering doesn't sound identical every hit
 const GATHER_SFX: Record<string, string[]> = {
@@ -19,9 +22,14 @@ const GATHER_SFX: Record<string, string[]> = {
 const pickSfx = (names: string[]) => names[(Math.random() * names.length) | 0];
 
 const SKILL_NAME = Object.fromEntries(SKILLS.map((s) => [s.id, s.name]));
-export const VERB: Record<string, string> = {
+const VERB: Record<string, string> = {
   woodcutting: 'Chop', mining: 'Mine', foraging: 'Gather',
 };
+
+/** The word on the interact prompt. A8's two features ride this system without
+ *  being resource nodes, and "Mine Cairn" / "Gather Wardstone" would describe
+ *  the wrong action — so a FeatureDef may name its own verb. */
+export const verbFor = (def: FeatureDef) => (def as any).verb ?? VERB[def.skill] ?? 'Gather';
 
 export interface GatherTarget { tx: number; ty: number; def: FeatureDef }
 
@@ -107,6 +115,33 @@ export class GatherSystem {
     this.active = { ...t, progress: 0, need: t.def.gatherSec * (mega ? mega.size : 1) / speed, megaScale, mega: mega ?? undefined };
   }
 
+  /** A8: roll one Boon off the Wardstone and hang it on the player.
+   *
+   *  Everything about what a boon DOES lives in data/boons.ts and in the
+   *  effect hooks it names; this method only decides what the player is told.
+   *  The three outcomes are worth distinguishing out loud — a refresh that
+   *  read as a fresh grant would teach the player that touching two Wardstones
+   *  in a row stacks, which it deliberately does not. */
+  private grantWardstone(a: GatherTarget) {
+    const { state, toast } = this.ctx;
+    const def = rollBoon();
+    const g = grantBoon(state, def);
+    const secs = Math.round(g.boon.until - state.clock);
+    if (g.how === 'refreshed') {
+      toast(`${def.name} renewed — ${secs}s`, 'good', def.color);
+    } else {
+      toast(`${def.name} — ${def.blurb}`, 'good', def.color);
+    }
+    if (g.displaced) {
+      toast(`${g.displaced.name} gives way`, 'bad');
+      this.ctx.log?.push('resonance', `${g.displaced.name} gives way to ${def.name}`, state.clock);
+    }
+    this.ctx.log?.push('resonance',
+      `${a.def.name}: ${def.name} — ${def.effects.join(', ')} for ${secs}s`, state.clock);
+    this.ctx.particles?.spawn?.('wisp', (a.tx + 0.5) * TILE, (a.ty + 0.4) * TILE, 18);
+    Sound.play('discover');
+  }
+
   update(dt: number, moved: boolean) {
     this.findTarget();
     const a = this.active;
@@ -154,12 +189,32 @@ export class GatherSystem {
         d.n = Math.max(0, Math.floor(scaled) + (Math.random() < scaled % 1 ? 1 : 0));
       }
     }
+    // N4.3: Famine thins the land, Bounty fattens it. Applied with the same
+    // stochastic rounding as the scarcity modifier above, so a 0.65x famine on a
+    // single-item drop is a 35% chance of nothing rather than a guaranteed
+    // floor(0.65) = 0 that would make every small node worthless.
+    const omenYield = this.ctx.omens?.mul?.('resourceYield') ?? 1;
+    if (omenYield !== 1) {
+      for (const d of drops) {
+        const scaled = d.n * omenYield;
+        d.n = Math.max(0, Math.floor(scaled) + (Math.random() < scaled % 1 ? 1 : 0));
+      }
+    }
     // N2b: material effect — Verdant Bloom tiles boost gather yield
     const matYieldMul = this.ctx.matFx?.mods?.gatherYieldMult ?? 1;
     if (matYieldMul !== 1) {
       for (const d of drops) d.n = Math.max(1, Math.round(d.n * matYieldMul));
     }
-    for (const d of drops) { if (d.n > 0) { invAdd(state, d.id, d.n); acquireGear(state, d.id); } }
+    // B5: the yield leaves the node and lands on the floor. Every modifier above
+    // has already run — this only changes WHERE the finished Stack[] goes. A
+    // mega-cluster spreads wider so up to 16 rolls read as a field, not a pile.
+    // A8: a Cairn rolls on its own LOOT_BAND. `band` is undefined for every
+    // resource node, and drops.spawn() already defaults to `common`, so this is
+    // one word here rather than a branch — and it lands at the same single seam
+    // B5 funnelled all three loot sources through, which is why A8 needs no new
+    // roll site to forget about.
+    this.ctx.drops.spawn(drops.filter((d) => d.n > 0), (a.tx + 0.5) * TILE, (a.ty + 0.5) * TILE,
+      { spread: a.megaScale > 1 ? 2.2 : a.def.wake ? 2.0 : 1, band: a.def.band });
     // N2b: material XP multiplier (Azure Vein etc.)
     const matXpMul = this.ctx.matFx?.mods?.xpMult ?? 1;
     const scaledXp = Math.round(a.def.xp * matXpMul);
@@ -191,6 +246,21 @@ export class GatherSystem {
       toast(`The great ${a.def.name.toLowerCase()} falls!`, 'good');
     }
 
+    // A8: the Wardstone's blessing, and the Cairn's price. Both sit AFTER
+    // deplete() on purpose — the stone is spent either way, so a pack that
+    // fails to place or a boon table that somehow rolls nothing cannot leave a
+    // node the player can farm in a loop.
+    if (a.def.boon) this.grantWardstone(a);
+    if (a.def.wake && CFG.a8.cairnWake) {
+      const woke = this.ctx.hordes?.wake?.(
+        (a.tx + 0.5) * TILE, (a.ty + 0.5) * TILE, a.def.wake.count, a.def.wake.radiusTiles);
+      if (woke) {
+        toast(`The ${a.def.name.toLowerCase()} was not empty — ${woke} wake`, 'bad');
+        this.ctx.log?.push('spawn', `Opening the ${a.def.name} woke ${woke} of what it buried`, state.clock);
+        Sound.play('bossRoar');
+      }
+    }
+
     // S1: gathering feeds vigor and marks non-idle action
     this.ctx.vitals?.markAction?.();
     this.ctx.vitals?.onGather?.();
@@ -200,8 +270,14 @@ export class GatherSystem {
     this.ctx.particles?.spawn?.('poof', px, py, a.megaScale > 1 ? 20 : 8);
 
     Sound.play(pickSfx(GATHER_SFX[a.def.skill] ?? ['forage']));
-    const got = drops.map((d) => `+${d.n} ${ITEMS[d.id].name}`).join('  ');
-    toast(`${got}   (+${scaledXp} ${SKILL_NAME[a.def.skill]} xp)`);
+    const got = drops.map((d) => `+${d.n} ${itemName(d.id)}`).join('  ');
+    // B5: the yield line moved to the pickup (drops.ts aggregates it); only the
+    // xp stays here, because xp really is earned at the swing. The log entry below
+    // keeps `got` — the event log records what the WORLD produced, which is still
+    // true at roll time even if the player never walks over to collect it.
+    toast(CFG.drops.enabled
+      ? `+${scaledXp} ${SKILL_NAME[a.def.skill]} xp`
+      : `${got}   (+${scaledXp} ${SKILL_NAME[a.def.skill]} xp)`);
     const s = this.ctx.net?.snap;
     this.ctx.log?.push('gather', `${got || 'Gathered nothing'} from ${a.def.name}`, state.clock);
 
@@ -217,7 +293,8 @@ export class GatherSystem {
     }
 
     if (newLevel) {
-      Sound.play('levelup'); toast(`${SKILL_NAME[a.def.skill]} reached level ${newLevel}!`, 'good');
+      levelUpFlourish(this.ctx);   // B6 (plays the sound too)
+      toast(`${SKILL_NAME[a.def.skill]} reached level ${newLevel}!`, 'good');
       this.ctx.log?.push('level', `${SKILL_NAME[a.def.skill]} reached level ${newLevel}`, state.clock);
     }
   }
