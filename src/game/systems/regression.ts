@@ -5610,6 +5610,443 @@ async function testScryingProbeDiscipline(nw: any) {
 
 
 // ---------------------------------------------------------------------------
+// A6 — The Hall becomes a hub
+//
+// Four tests over two counters. The shape of all four is the same argument the
+// suite keeps having with itself: driving `hub.buy()` proves `hub.buy()` works
+// and nothing else (WORKFLOW rule 3), so each one ends somewhere a player would
+// actually look — the build carousel, the interact key routed through main()'s
+// own hook, the bag, the worn weapon's live damage.
+// ---------------------------------------------------------------------------
+
+/** Place one hub counter on a known tile, replacing any already standing.
+ *  Returns the building row so a test can move it around. */
+function placeHub(nw: any, type: string, tx: number, ty: number) {
+  const { state } = nw;
+  state.buildings = state.buildings.filter((b: any) => b.type !== type);
+  const b = { uid: state.nextUid++, type, tx, ty, hp: 240 };
+  state.buildings.push(b);
+  return b;
+}
+
+async function testHubRowsAndHatch(nw: any) {
+  const { state } = nw;
+  const { BUILDINGS, HUB_BUILDINGS } = await import('../data/buildings');
+  const { CFG } = await import('../data/config');
+  const { SEALS, sealPrice, reforgePrice, baseWorth } = await import('../data/hub');
+  const { ITEMS } = await import('../data/items');
+  const savedBuildings = state.buildings.slice();
+  try {
+
+  // ---- 1. the rows themselves ------------------------------------------
+  const hubs = BUILDINGS.filter((b: any) => b.hub);
+  eq(hubs.length, 2, 'two hub counters exist in the building table');
+  for (const h of hubs) {
+    ok(h.unique, `${h.name} is unique — a second one would add nothing but territory`);
+    ok(h.cost.length > 0 && h.territory > 0,
+      `${h.name} costs materials to raise and territory to keep (${h.territory})`);
+    eq(HUB_BUILDINGS[h.hub!]?.id, h.id, `HUB_BUILDINGS resolves '${h.hub}' to ${h.id}`);
+  }
+  // The two rows must be LAST, because that is what makes the escape hatch a
+  // restoration rather than a hole in the middle of the carousel.
+  const tail = BUILDINGS.slice(-2).map((b: any) => b.id).sort().join(',');
+  eq(tail, 'forge_warden,reliquary', 'both hub rows are the last entries in BUILDINGS');
+
+  // ---- 2. the escape hatch, measured ------------------------------------
+  const sel = () => (nw.sys.build as any).selectable().map((b: any) => b.id);
+  const withHub = sel();
+  ok(withHub.includes('reliquary') && withHub.includes('forge_warden'),
+    'both counters are browsable in the build carousel');
+  const savedFlag = CFG.a6.enabled;
+  try {
+    CFG.a6.enabled = false;
+    eq(sel().join('|'), withHub.filter((i: string) => i !== 'reliquary' && i !== 'forge_warden').join('|'),
+      'CFG.a6.enabled = false removes exactly the two hub rows and reorders nothing else');
+    // The hatch has to reach the interaction too, or a counter raised before
+    // the flip would go on trading in a world that had disabled the feature.
+    placeHub(nw, 'reliquary', Math.floor(state.player.x / 32), Math.floor(state.player.y / 32));
+    eq(nw.sys.hub.near(), null, 'and a Reliquary already standing stops answering');
+  } finally {
+    CFG.a6.enabled = savedFlag;
+  }
+
+  // ---- 3. the price tables are arithmetic, not literals ------------------
+  for (const s of SEALS) {
+    eq(sealPrice(s), Math.round(s.gold * CFG.a6.priceMul),
+      `${s.name} is priced through CFG.a6.priceMul (${sealPrice(s)}g)`);
+    ok(s.stockFloor >= 0 && s.stockFloor < 1, `${s.name}'s stock floor is a fraction (${s.stockFloor})`);
+  }
+  ok(sealPrice(SEALS[0]) < sealPrice(SEALS[1]) && sealPrice(SEALS[1]) < sealPrice(SEALS[2]),
+    `the seals climb in price with the tier they promise (${SEALS.map(sealPrice).join(' < ')})`);
+  const flat = reforgePrice('woven', 2, 0).gold;
+  const once = reforgePrice('woven', 2, 1).gold;
+  eq(once, Math.round(flat * CFG.a6.reforgeEscalation),
+    `a second rework on the same piece costs ${CFG.a6.reforgeEscalation}× the first (${flat} → ${once})`);
+
+  // ---- 4. baseWorth ranks the sidegrades where they belong ---------------
+  //
+  // The Void Blade is 8 damage against the Copper Blade's 6 and steals life on
+  // top. Ranking on the stat column alone would put every elemental sidegrade
+  // at the bottom of the ladder and lock all four out of the seal that ought to
+  // sell them — so the effect term is not decoration, it is the reason the
+  // stock cut works at all.
+  ok(baseWorth(ITEMS.sword_void) > baseWorth(ITEMS.sword_copper),
+    `a Void Blade outranks a Copper Blade (${baseWorth(ITEMS.sword_void)} > ${baseWorth(ITEMS.sword_copper)})`);
+  ok(baseWorth(ITEMS.sword_star) > baseWorth(ITEMS.sword_fire),
+    'and Star-Metal still outranks a Fire Brand — the effect term tilts the ladder, it does not invert it');
+  } finally {
+    state.buildings = savedBuildings;
+  }
+}
+
+async function testHubReach(nw: any) {
+  const { state } = nw;
+  const hub = nw.sys.hub;
+  const { CFG } = await import('../data/config');
+  const { TILE } = await import('../world/worldgen');
+
+  const savedBuildings = state.buildings.slice();
+  const savedX = state.player.x, savedY = state.player.y;
+  const savedPanel = (nw.ui as any).panel;
+  // The dispatch defers to a gather ALREADY in progress, which is the correct
+  // rule and would make the assertions below read as a broken hook. The suite
+  // shares one live world, so whether one is running is not this test's to
+  // assume either way.
+  const savedActive = nw.sys.gather.active;
+  nw.sys.gather.active = null;
+  try {
+    state.buildings = savedBuildings.filter((b: any) => b.type !== 'reliquary' && b.type !== 'forge_warden');
+    const ptx = Math.floor(state.player.x / TILE), pty = Math.floor(state.player.y / TILE);
+
+    // A measured boundary needs a known start point, so the player is parked on
+    // a tile centre for it. `state.player.x` is a PROJECTION that main()
+    // overwrites from `nw.player` on every sim tick — this test never steps, so
+    // the write stands for its duration, and the finally puts it back anyway.
+    state.player.x = (ptx + 0.5) * TILE;
+    state.player.y = (pty + 0.5) * TILE;
+
+    const rel = placeHub(nw, 'reliquary', ptx + 40, pty);
+    eq(hub.near(), null, 'a Reliquary forty tiles off is not a counter you are standing at');
+
+    rel.tx = ptx;
+    eq(hub.near()?.kind, 'reliquary', 'standing on it, the counter answers');
+
+    // WORKFLOW rule 3. Everything above drives the system. THIS drives the hook
+    // main() actually wired to the interact key, and asks the UI which panel it
+    // opened — the only assertion here that would fail if the dispatch in
+    // main.ts were deleted.
+    (nw.ui as any).hooks.interact();
+    eq((nw.ui as any).panel, 'reliquary',
+      'pressing interact at the counter opens the Reliquary — main() routes it, not the system');
+    nw.ui.close();
+
+    // Nearest wins, with no rule needed: two counters side by side is an
+    // ordinary base layout.
+    const forge = placeHub(nw, 'forge_warden', ptx, pty);
+    rel.tx = ptx + 2;
+    eq(hub.near()?.kind, 'forge', 'with both in reach, the nearer counter answers');
+    (nw.ui as any).hooks.interact();
+    eq((nw.ui as any).panel, 'forge', 'and interact opens that one');
+    nw.ui.close();
+
+    // ---- the boundary, in the design's units ---------------------------
+    //
+    // Player and counter both on tile centres, so k tiles apart is exactly
+    // k × TILE pixels. The counter must answer out to CFG.a6.reachTiles and
+    // not one tile further.
+    state.buildings = state.buildings.filter((b: any) => b.type !== 'reliquary');
+    let lastInside = -1;
+    for (let k = 0; k <= 6; k++) { forge.tx = ptx + k; if (hub.near()) lastInside = k; }
+    eq(lastInside, Math.floor(CFG.a6.reachTiles),
+      `the counter answers out to ${CFG.a6.reachTiles} tiles and stops (last tile in reach: ${lastInside})`);
+
+    // The tie-break the whole dispatch rests on. Stated as the inequality
+    // rather than as two numbers, because it is the RELATION that keeps a
+    // Reliquary raised beside a tree from stealing the chop.
+    ok(CFG.a6.reachTiles < CFG.gather.reachTiles,
+      `a counter's reach is tighter than a node's (${CFG.a6.reachTiles} < ${CFG.gather.reachTiles})`);
+  } finally {
+    state.buildings = savedBuildings;
+    state.player.x = savedX; state.player.y = savedY;
+    nw.sys.gather.active = savedActive;
+    if (savedPanel) nw.ui.open(savedPanel); else nw.ui.close();
+  }
+}
+
+async function testReliquary(nw: any) {
+  const { state } = nw;
+  const hub = nw.sys.hub;
+  const { CFG } = await import('../data/config');
+  const { SEALS, sealPrice } = await import('../data/hub');
+  const { rolledOf } = await import('../data/items');
+  const { LOOT_BANDS, rarityIndex } = await import('../data/rarity');
+  const { rollRarity } = await import('./loot');
+  const { TILE } = await import('../world/worldgen');
+
+  const savedBuildings = state.buildings.slice();
+  const savedGold = state.player.gold;
+  const savedInv = { ...state.player.inv };
+  const savedMul = CFG.a6.priceMul;
+  const savedToast = nw.ctx.toast, savedLog = nw.ctx.log;
+  try {
+    placeHub(nw, 'reliquary', Math.floor(state.player.x / TILE), Math.floor(state.player.y / TILE));
+
+    // ---- 1. the stock cut is a real cut ---------------------------------
+    const lesser = SEALS[0], lords = SEALS[2];
+    const wide = hub.stock('weapon', lesser);
+    const fine = hub.stock('weapon', lords);
+    ok(wide.length > fine.length,
+      `a Lord's Seal draws from a narrower shelf than a Lesser (${fine.length} of ${wide.length} blades)`);
+    ok(fine.every((id: string) => wide.includes(id)),
+      "and every blade it can hand you is one the Lesser Seal could too — it is a cut, not a different table");
+    ok(!fine.includes('sword_copper'),
+      "a Lord's Seal cannot hand you the blade you started the run with");
+    ok(wide.includes('sword_copper'), 'CONTROL: the Lesser Seal still can');
+
+    // ---- 2. a refusal costs nothing -------------------------------------
+    state.player.gold = 10;
+    const invKeysBefore = Object.keys(state.player.inv).length;
+    const broke = hub.buy('weapon', lesser.id);
+    ok(!broke.ok, `ten gold does not break a ${sealPrice(lesser)}-gold seal`);
+    eq(state.player.gold, 10, 'and the purse is untouched by the refusal');
+    eq(Object.keys(state.player.inv).length, invKeysBefore, 'and nothing entered the bag');
+
+    // ---- 3. the charge is exact and the item is real ---------------------
+    state.player.gold = 5000;
+    const bought = hub.buy('weapon', lesser.id);
+    ok(bought.ok, `a ${sealPrice(lesser)}-gold seal breaks with 5000 in the purse`);
+    eq(state.player.gold, 5000 - sealPrice(lesser),
+      `and it charges exactly its price (5000 → ${state.player.gold})`);
+    ok((state.player.inv[bought.id!] ?? 0) >= 1, 'the sealed relic is in the bag');
+    ok(!!rolledOf(bought.id!)?.affixes.length, 'and it carries at least one rolled line');
+
+    // ---- 4. priceMul reaches the real bill -------------------------------
+    //
+    // A retune knob nothing reads is the dormant-row sin with a comment on it.
+    CFG.a6.priceMul = 2;
+    state.player.gold = 5000;
+    const dear = hub.buy('weapon', lesser.id);
+    ok(dear.ok, 'the same seal at double the multiplier still breaks');
+    eq(state.player.gold, 5000 - lesser.gold * 2,
+      `CFG.a6.priceMul reaches the till (charged ${5000 - state.player.gold} for a ${lesser.gold}-gold seal)`);
+    CFG.a6.priceMul = savedMul;
+
+    // ---- 5. the sweep: every draw inside its band, off its own shelf -----
+    //
+    // Toast and log are stubbed for the sweep. Four hundred purchases would
+    // otherwise bury the HUD and rewrite the Chronicle, and the Chronicle is
+    // something other tests read.
+    nw.ctx.toast = () => {};
+    nw.ctx.log = null;
+    state.player.gold = 10_000_000;
+    const counts: Record<string, number> = {};
+    let offShelf = 0, outOfBand = 0, riftborn = 0, draws = 0;
+    for (const seal of SEALS) {
+      const band = LOOT_BANDS[seal.band];
+      const lo = rarityIndex(band.floor ?? 'plain'), hi = rarityIndex(band.ceiling ?? 'hallowed');
+      for (const slot of ['weapon', 'armor', 'charm'] as const) {
+        const shelf = hub.stock(slot, seal);
+        for (let i = 0; i < 45; i++) {
+          const r = hub.buy(slot, seal.id);
+          if (!r.ok) continue;
+          draws++;
+          const roll = rolledOf(r.id!);
+          if (!roll) { outOfBand++; continue; }
+          const idx = rarityIndex(roll.rarity);
+          if (idx < lo || idx > hi) outOfBand++;
+          if (!shelf.includes(roll.base)) offShelf++;
+          if (roll.rarity === 'riftborn') riftborn++;
+          counts[roll.rarity] = (counts[roll.rarity] ?? 0) + 1;
+        }
+      }
+    }
+    ok(draws > 380, `${draws} seals broken across three seals and three shapes`);
+    eq(outOfBand, 0, 'every single draw landed inside the band its seal promised');
+    eq(offShelf, 0, 'and every base came off that seal\'s own shelf');
+
+    // The promise data/rarity.ts makes: the rift band is "the sole route to
+    // Riftborn". A shop that sold the top rarity would quietly retire that
+    // sentence, so it is asserted over the whole sweep rather than trusted to
+    // the table.
+    eq(riftborn, 0, `no seal at any price reaches Riftborn (${draws} draws)`);
+    // NEGATIVE CONTROL: the roller CAN produce one — the "never" above is a
+    // property of the seals, not of a Riftborn that is unreachable everywhere.
+    let riftPossible = 0;
+    for (let i = 0; i < 4000; i++) if (rollRarity(LOOT_BANDS.rift, 1) === 'riftborn') riftPossible++;
+    ok(riftPossible > 0, `CONTROL: the rift band still reaches Riftborn (${riftPossible} in 4000)`);
+
+    ok(Object.keys(counts).length >= 3,
+      `the sweep spread across ${Object.keys(counts).length} tiers: ${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(', ')}`);
+  } finally {
+    CFG.a6.priceMul = savedMul;
+    nw.ctx.toast = savedToast; nw.ctx.log = savedLog;
+    state.buildings = savedBuildings;
+    state.player.gold = savedGold;
+    state.player.inv = savedInv;
+  }
+}
+
+async function testForgeWarden(nw: any) {
+  const { state } = nw;
+  const hub = nw.sys.hub;
+  const { CFG } = await import('../data/config');
+  const { rolledOf, itemDef } = await import('../data/items');
+  const { rollItem } = await import('./loot');
+  const { CURSES } = await import('../data/affixes');
+  const { equippedWeaponDmg, invAdd } = await import('../rules');
+  const { TILE } = await import('../world/worldgen');
+
+  const savedBuildings = state.buildings.slice();
+  const savedGold = state.player.gold;
+  const savedInv = { ...state.player.inv };
+  const savedEquip = { ...state.player.equip };
+  const savedSockets = JSON.parse(JSON.stringify(state.sockets ?? {}));
+  const savedReforged = { ...(state.reforged ?? {}) };
+  const savedToast = nw.ctx.toast, savedLog = nw.ctx.log;
+  try {
+    placeHub(nw, 'forge_warden', Math.floor(state.player.x / TILE), Math.floor(state.player.y / TILE));
+    nw.ctx.toast = () => {};
+    nw.ctx.log = null;
+
+    // ---- 1. one affix, not all -------------------------------------------
+    const uid = rollItem('sword_iron', { forceRarity: 'hallowed' });
+    ok(uid.includes('#'), 'a forced Hallowed blade rolled into a unique piece');
+    invAdd(state, uid, 1);
+    state.sockets = state.sockets ?? {};
+    state.sockets[uid] = ['rime', 'ember'];       // A5: a rework must not unpick a weave
+
+    const roll = rolledOf(uid)!;
+    ok(roll.affixes.length >= 3, `it carries ${roll.affixes.length} lines`);
+    const target = 1;
+    const othersBefore = JSON.stringify(roll.affixes.filter((_: any, i: number) => i !== target));
+
+    // The bill climbs 1.8× per rework and this test does a dozen of them, so
+    // the purse is absurd on purpose — the escalation is what is under test,
+    // not whether a real run could afford it.
+    state.player.gold = 50_000_000;
+    for (const m of ['iron_bar', 'silver_bar', 'star_bar']) invAdd(state, m, 400);
+
+    const q1 = hub.quote(uid)!;
+    const r1 = hub.reforge(uid, target);
+    ok(r1.ok, `the Forge-Warden reworks line ${target + 1}: ${r1.before} → ${r1.after}`);
+    const after = rolledOf(uid)!;
+    eq(after.affixes.length, roll.affixes.length, 'the piece still has the same number of lines');
+    eq(JSON.stringify(after.affixes.filter((_: any, i: number) => i !== target)), othersBefore,
+      'and every OTHER line is byte-for-byte what it was — one affix, not all');
+    eq(JSON.stringify(state.sockets[uid]), JSON.stringify(['rime', 'ember']),
+      'the threads stay socketed, in order — you reworked the metal, not the weaving');
+    eq(state.reforged[uid], 1, 'the piece remembers it has been through the forge once');
+
+    // ---- 2. the price climbs ---------------------------------------------
+    const q2 = hub.quote(uid)!;
+    eq(q2.gold, Math.round(q1.gold * CFG.a6.reforgeEscalation),
+      `the second rework costs ${CFG.a6.reforgeEscalation}× the first (${q1.gold} → ${q2.gold}) — `
+      + 'what makes this a repair rather than a slot machine you feed until it is perfect');
+
+    // ---- 3. the GAME sees it ----------------------------------------------
+    //
+    // Everything above reads the registry. This wears the blade and measures
+    // the player's own damage across a run of reworks: if the merged def never
+    // reached `equippedWeaponDmg`, the number below never moves and every
+    // assertion in this test is about a data structure nobody consults.
+    // Through main()'s own equip hook, not by writing `equip.weapon`: a worn
+    // stat is soul-leveled, and `wornStat()` reads `soulItems[slot]`, which
+    // only `toggleEquip()` binds. Setting the slot by hand leaves the binding
+    // empty and every damage read comes back 0 — which is exactly what the
+    // first version of this test measured, and why the assertion below is
+    // written against the number rather than against the registry.
+    (nw.ui as any).hooks.equip(uid);
+    eq(state.player.equip.weapon, uid, 'the reworked blade is worn');
+    // The bench lists bag gear too, so it has to SAY which piece is in a slot.
+    eq(hub.bench().find((v: any) => v.uid === uid)?.worn, true,
+      'and the bench says so — a player holding three blades must not have to guess');
+    const lines = rolledOf(uid)!.affixes.length;
+    const seen = new Set<number>();
+    seen.add(+equippedWeaponDmg(state).toFixed(3));
+    // Round-robin across every line rather than hammering one. WHICH line
+    // carries the damage is a roll, not a fact — on one seed line 2 came up
+    // 'of Resonance', and a suffix that only names an effect hook can be
+    // reworked forever without `weaponDmg` moving a decimal. That version of
+    // this assertion was true and measured nothing.
+    for (let i = 0; i < 12 && seen.size < 2; i++) {
+      if (!hub.reforge(uid, i % lines).ok) break;
+      seen.add(+equippedWeaponDmg(state).toFixed(3));
+    }
+    ok(seen.size >= 2,
+      `reworking a worn blade moves the damage the player actually swings with (${[...seen].join(' → ')})`);
+
+    // CONTROL: an untouched piece does not drift. Without this, "the number
+    // changed" could be the ambient world moving rather than the forge.
+    const other = rollItem('sword_iron', { forceRarity: 'hallowed' });
+    invAdd(state, other, 1);
+    const otherDmg = itemDef(other)!.weaponDmg;
+    hub.reforge(uid, target);
+    eq(itemDef(other)!.weaponDmg, otherDmg,
+      'CONTROL: the piece that was NOT reworked is unchanged by someone else\'s rework');
+
+    // ---- 4. a curse stays a curse ------------------------------------------
+    //
+    // data/rarity.ts rule 2: Riftborn always costs something. Letting gold turn
+    // the curse into a blessing would make the Forge-Warden a laundry for the
+    // one rule that keeps the top of the ladder honest.
+    const curseIds = new Set(CURSES.map((c: any) => c.id));
+    const rift = rollItem('sword_iron', { forceRarity: 'riftborn' });
+    invAdd(state, rift, 1);
+    const rr = rolledOf(rift)!;
+    const cursedAt = rr.affixes.findIndex((a: any) => a.cursed);
+    ok(cursedAt >= 0, `a Riftborn blade carries its price on line ${cursedAt + 1} (${rr.affixes[cursedAt]?.name})`);
+    let stayedCursed = 0, laundered = 0;
+    for (let i = 0; i < 6; i++) {
+      if (!hub.reforge(rift, cursedAt).ok) break;
+      const a = rolledOf(rift)!.affixes[cursedAt];
+      if (a.cursed && curseIds.has(a.id)) stayedCursed++; else laundered++;
+    }
+    ok(stayedCursed >= 4, `${stayedCursed} reworks of a cursed line all came back cursed`);
+    eq(laundered, 0, 'gold can change WHICH curse you carry — never that you carry one');
+    // CONTROL: the ordinary lines on that same Riftborn are not forced cursed,
+    // so the rule above is about the cursed SLOT and not about the item.
+    const plainAt = rr.affixes.findIndex((a: any) => !a.cursed);
+    let blessings = 0;
+    for (let i = 0; i < 6; i++) {
+      if (!hub.reforge(rift, plainAt).ok) break;
+      if (!rolledOf(rift)!.affixes[plainAt].cursed) blessings++;
+    }
+    ok(blessings >= 4, `CONTROL: its ordinary lines rework to ordinary lines (${blessings} of 6)`);
+
+    // ---- 5. a refusal changes nothing -------------------------------------
+    const before = JSON.stringify(rolledOf(uid)!.affixes);
+    const priorCount = state.reforged[uid];
+    state.player.gold = 0;
+    const denied = hub.reforge(uid, target);
+    ok(!denied.ok && !!denied.why, `an empty purse is refused out loud: "${denied.why}"`);
+    eq(state.player.gold, 0, 'and nothing was charged');
+    eq(JSON.stringify(rolledOf(uid)!.affixes), before, 'and the piece is exactly as it was');
+    eq(state.reforged[uid], priorCount, 'and the rework count did not tick');
+
+    // Materials are checked too, not just gold — otherwise a rich player with
+    // an empty forge would be charged and handed nothing.
+    state.player.gold = 50_000_000;
+    for (const m of ['iron_bar', 'silver_bar', 'star_bar']) delete state.player.inv[m];
+    const noMats = hub.reforge(uid, target);
+    ok(!noMats.ok, `and so is an empty forge: "${noMats.why}"`);
+    eq(state.player.gold, 50_000_000, 'the purse survives a refusal for materials as well');
+
+    // ---- 6. plain gear has nothing to rework -------------------------------
+    ok(!hub.reforge('sword_iron', 0).ok,
+      'an authored, unrolled blade has no lines and is refused');
+  } finally {
+    nw.ctx.toast = savedToast; nw.ctx.log = savedLog;
+    state.buildings = savedBuildings;
+    state.player.gold = savedGold;
+    state.player.inv = savedInv;
+    state.player.equip = savedEquip;
+    state.sockets = savedSockets;
+    state.reforged = savedReforged;
+  }
+}
+
+
+// ---------------------------------------------------------------------------
 // N4.2 — The Lens side cart, and the Chronicle behind it
 // ---------------------------------------------------------------------------
 // The existing UI smoke test asserted "Lens panel exists in DOM" and then
@@ -5946,6 +6383,10 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Scrying - DoH answers parse adversarially, IPv6 latches', fn: testScryingDohParser },
   { name: 'Scrying - the radar actually widens and narrows, measured in pixels', fn: testScryingRadar },
   { name: 'Scrying - PTR reads, the floor holds, a refused host is retried', fn: testScryingProbeDiscipline },
+  { name: 'Hub - two rows, one flag, and prices that are arithmetic', fn: testHubRowsAndHatch },
+  { name: 'Hub - the counter answers at a measured distance, and E opens it', fn: testHubReach },
+  { name: 'Hub - the Reliquary charges exactly, bands honestly, never reaches the rift', fn: testReliquary },
+  { name: 'Hub - the Forge-Warden reworks one line, and the curse survives it', fn: testForgeWarden },
 ];
 
 
@@ -8237,7 +8678,27 @@ async function testWardstoneBoons(nw: any) {
 
       const live = activeBoons(state);
       ok(live.length === 1, `touching it granted exactly one boon: ${live.map((b) => b.name).join(', ')}`);
-      ok(state.drops.length === 0, 'and dropped nothing — a Wardstone pays in a blessing, not in loot');
+      // The claim is that the STONE paid no loot. `state.drops.length === 0`
+      // said something much larger — that nothing anywhere in the world dropped
+      // anything during the eight game-seconds this harvest takes — and it went
+      // red about one run in five, naming the Wardstone for a drop the Wardstone
+      // had nothing to do with. A shared live world keeps running while a test
+      // holds a button down (WORKFLOW rule 11: pin the precondition, measure the
+      // thing). So: measure at the stone, and say what landed if anything did.
+      const WX = (wtx + 0.5) * 32, WY = (wty + 0.5) * 32;
+      const atStone = () => state.drops.filter((d: any) => Math.hypot(d.x - WX, d.y - WY) < 3 * 32);
+      const spilled = atStone();
+      ok(spilled.length === 0,
+        'and dropped nothing — a Wardstone pays in a blessing, not in loot'
+        + (spilled.length ? ` (found ${spilled.map((d: any) => `${d.n}x ${d.id}`).join(', ')})` : ''));
+      // CONTROL: that filter can SEE a drop at the stone. Without this, the
+      // assertion above would also pass with the radius set to zero.
+      sys.drops.spawn([{ id: 'stone', n: 1 }], WX, WY);
+      eq(atStone().length, 1, 'CONTROL: a drop at the stone IS visible to that measurement');
+      state.drops.length = 0;
+      // And the design's own claim, stated where a new loot row would break it.
+      const wardDef = (await import('../data/features')).FEATURES.find((f: any) => f.id === 'wardstone')!;
+      eq(wardDef.loot.length, 0, 'because the Wardstone row carries no loot table at all');
       // The seam that matters: the boon has to be readable at the site every
       // affix, relic and weave is read at. If it were not, the chip would say
       // Ember Ward and nothing in the world would be on fire.
