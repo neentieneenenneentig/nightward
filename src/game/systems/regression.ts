@@ -1401,10 +1401,24 @@ async function testBossDeathPaysOut(nw: any) {
     // leave the collect path unpinned, and calling drops.collectAll() would pass
     // without ever exercising the magnet — the tautology that has burned this
     // project three times. So: assert it hit the floor, then walk in and take it.
-    const groundSum = () => state.drops.reduce((t: number, d: any) => t + d.n, 0);
-    ok(groundSum() > 0,
-      `the lord's hoard hits the floor (${state.drops.length} stack(s), ${groundSum()} items)`);
-    const onGround = groundSum();
+    //
+    // B5 Q2 rewrite: the lord's PURSE now lands on the floor too, as coins. The
+    // two halves are counted apart because they bank to different places — the
+    // relics to the bag, the coins to state.player.gold — and one sum over both
+    // was what made the old assertion fail the moment coins started dropping.
+    const { GOLD_ID } = await import('../data/items');
+    const itemsDown = () => state.drops
+      .filter((d: any) => d.id !== GOLD_ID).reduce((t: number, d: any) => t + d.n, 0);
+    const goldDown = () => state.drops
+      .filter((d: any) => d.id === GOLD_ID).reduce((t: number, d: any) => t + d.n, 0);
+    ok(itemsDown() > 0,
+      `the lord's hoard hits the floor (${state.drops.length} stack(s), ${itemsDown()} items)`);
+    const onGround = itemsDown();
+    const coinsDown = goldDown();
+    ok(coinsDown > 0,
+      `...and so does its purse — ${coinsDown} gold in coins you have to walk through`);
+    eq(state.player.gold, before.gold,
+      '...which is NOT credited at the moment of the kill');
     eq(invSum(), before.inv,
       'and NOT into the bag — B5 loot is earned by walking to it');
     // the magnet only arms after CFG.drops.armDelaySec, so this must not collect yet
@@ -1420,8 +1434,8 @@ async function testBossDeathPaysOut(nw: any) {
     ok(invSum() >= before.inv + onGround,
       `walking onto the hoard banks it (${before.inv} → ${invSum()} items)`);
     eq(state.drops.length, 0, 'and the floor is clear again');
-    ok(state.player.gold > before.gold,
-      `gold drops (${before.gold} → ${state.player.gold})`);
+    eq(state.player.gold - before.gold, coinsDown,
+      `...including the coins, for exactly what was lying there (+${coinsDown} gold)`);
 
     // The three that nothing pinned before this test existed.
     eq(sys.scoreboard.bossesSlain, before.slain + 1,
@@ -5128,6 +5142,166 @@ async function testGroundDropDisabled(nw: any) {
 
 
 // ---------------------------------------------------------------------------
+// B5 Q2 — gold as physical coins
+// ---------------------------------------------------------------------------
+async function testGoldCoins(nw: any) {
+  const { state, sys } = nw;
+  const { CFG } = await import('../data/config');
+  const { GOLD_ICON, GOLD_ID } = await import('../data/items');
+  const { ENEMIES } = await import('../data/enemies');
+  const { invCount } = await import('../rules');
+
+  const savedMode = CFG.drops.goldDrops;
+  const savedEnabled = CFG.drops.enabled;
+  const savedGold = state.player.gold;
+  const savedDrops = state.drops.slice();
+  const savedFoes = sys.hordes.foes.slice();
+  const savedGod = state.god;
+
+  const coins = () => state.drops.filter((d: any) => d.id === GOLD_ID);
+  const purse = () => coins().reduce((a: number, d: any) => a + d.n, 0);
+  const clear = () => { state.drops.length = 0; };
+
+  // An award goes somewhere by definition — either the purse or the floor — so
+  // every check below is a matched pair on BOTH halves. An assertion that only
+  // counted the floor would pass just as happily if the gold had been created
+  // out of nothing, and one that only counted the purse would pass if the pile
+  // were a decoration.
+  const award = (amount: number, boss: boolean) => {
+    clear();
+    const before = state.player.gold;
+    sys.drops.awardGold(amount, nw.player.x + 300, nw.player.y + 300, boss);
+    return { credited: state.player.gold - before, dropped: purse(), rows: coins().length };
+  };
+
+  try {
+    state.god = true;
+    CFG.drops.enabled = true;
+    CFG.drops.goldDrops = 'boss';
+
+    // ---- 1. the shipped verdict: routine credits, a boss bursts ------------
+    const routine = award(37, false);
+    eq(routine.rows, 0, "at 'boss', a routine kill drops no coins");
+    eq(routine.credited, 37, '...it credits the purse instantly, exactly as before B5');
+
+    const hoard = award(220, true);
+    ok(hoard.rows > 1, `...and a boss bursts into a pile of ${hoard.rows} coins`);
+    eq(hoard.credited, 0, '...which is NOT credited until you walk through it');
+    eq(hoard.dropped, 220, '...and the pile is worth the whole award, to the coin');
+
+    // ---- 2. conservation, which is the property that matters ---------------
+    //
+    // A burst that rounds is a stealth nerf or a stealth buff to every boss in
+    // the game, and it would be invisible — nobody counts a boss payout. Swept
+    // rather than sampled, because the split is randomised per burst and one
+    // lucky amount proving nothing is exactly the failure mode here.
+    let worst = '';
+    for (let amount = 1; amount <= 400 && !worst; amount++) {
+      const r = award(amount, true);
+      if (r.dropped !== amount || r.credited !== 0) worst = `${amount} → ${r.dropped} (+${r.credited} credited)`;
+      else if (r.rows > amount) worst = `${amount} split into ${r.rows} coins — more coins than gold`;
+      else if (coins().some((d: any) => d.n < 1 || d.n !== Math.round(d.n))) worst = `${amount} produced a fractional or empty coin`;
+    }
+    ok(!worst, `every award from 1 to 400 gold lands on the floor entire${worst ? ': ' + worst : ''}`);
+
+    // ---- 3. all three states are real behaviour ----------------------------
+    //
+    // goldDrops spent months as the one deliberately dormant key in config.ts.
+    // The whole point of waking it is that each setting now does something
+    // DIFFERENT, so each one is asserted against the same call.
+    CFG.drops.goldDrops = 'off';
+    const offBoss = award(150, true);
+    eq(offBoss.rows, 0, "'off' — even a boss credits directly");
+    eq(offBoss.credited, 150, '...with nothing lost on the way');
+
+    CFG.drops.goldDrops = 'all';
+    const allRoutine = award(150, false);
+    ok(allRoutine.rows > 1, `'all' — even a routine kill bursts (${allRoutine.rows} coins)`);
+    eq(allRoutine.dropped, 150, '...for the full amount');
+
+    // ---- 4. the ground-loot hatch outranks it ------------------------------
+    //
+    // A build with drops switched off that still scattered coins on the floor
+    // would be neither of the two behaviours anyone asked for.
+    CFG.drops.goldDrops = 'boss';
+    CFG.drops.enabled = false;
+    const hatched = award(150, true);
+    eq(hatched.rows, 0, 'CFG.drops.enabled=false takes coins off the floor too');
+    eq(hatched.credited, 150, '...and pays the boss directly instead');
+    CFG.drops.enabled = true;
+
+    // ---- 5. a coin is not an item -----------------------------------------
+    //
+    // GOLD_ID has no ITEMS row on purpose. If collect() ever hands it to
+    // invAdd, the player grows a phantom bag row that no tooltip, icon or shop
+    // can explain — and it would still look like a working feature.
+    clear();
+    const beforeInv = invCount(state, GOLD_ID);
+    const beforeGold = state.player.gold;
+    sys.drops.awardGold(96, nw.player.x + 300, nw.player.y + 300, true);
+    sys.drops.collectAll();
+    eq(state.player.gold - beforeGold, 96, 'picking the pile up credits the purse for the whole pile');
+    eq(invCount(state, GOLD_ID), beforeInv, '...and never creates a bag row for it');
+    eq(state.drops.length, 0, '...and the floor is clear afterwards');
+
+    // ---- 6. the GAME calls it (WORKFLOW 3) --------------------------------
+    //
+    // Everything above drives awardGold() by hand, which proves the handler
+    // works and nothing else. These two kills go through hordes.hurt(), the
+    // verb the game itself uses.
+    const bossDef: any = ENEMIES.find((e) => e.id === 'thornwarden');
+    const mobDef: any = ENEMIES.find((e) => e.id === 'gnawer');
+    ok(!!bossDef && !!bossDef.boss, 'the fixture boss really is flagged boss');
+    ok(!!mobDef && !mobDef.boss, '...and the control really is not');
+    const killAndWatch = (def: any) => {
+      clear();
+      sys.hordes.foes.length = 0;
+      const f: any = makeDummyFoe(nw, def, 260, 260, 10);
+      sys.hordes.foes.push(f);
+      const before = state.player.gold;
+      sys.hordes.hurt(f, 999999);
+      const out = { credited: state.player.gold - before, dropped: purse(), rows: coins().length };
+      for (const x of sys.hordes.foes) nw.ctx.views?.removeFoe?.(x.uid);
+      sys.hordes.foes.length = 0;
+      return out;
+    };
+    const slainBoss = killAndWatch(bossDef);
+    ok(slainBoss.rows > 0 && slainBoss.dropped > 0,
+      `killing a ${bossDef.name} through hordes.hurt() leaves ${slainBoss.dropped} gold on the floor`);
+    eq(slainBoss.credited, 0, '...and credits nothing directly');
+
+    const slainMob = killAndWatch(mobDef);
+    eq(slainMob.rows, 0, `CONTROL: killing a ${mobDef.name} the same way drops no coins`);
+    ok(slainMob.credited > 0, `...it pays ${slainMob.credited} gold straight into the purse`);
+
+    // ---- 7. the pile is actually drawable ---------------------------------
+    //
+    // itemDef(GOLD_ID) is undefined by design, and art.itemIcon()'s fallback
+    // for an unknown id is a grey pebble. A boss hoard rendered as gravel is
+    // exactly the kind of bug that ships, because nothing throws.
+    eq(GOLD_ICON.kind, 'coin', 'the coin spec names the coin shape');
+    const icon = nw.ctx.art?.itemIcon?.(GOLD_ID);
+    const pebble = nw.ctx.art?.itemIcon?.('nonexistent_id_used_as_a_control');
+    ok(!!icon && icon.width > 0, 'and the coin resolves to a real icon canvas');
+    ok(!!pebble, 'CONTROL: an unknown id still yields the grey-pebble fallback');
+    ok(icon !== pebble, '...and the coin is NOT that fallback — it is drawn as coins');
+  } finally {
+    CFG.drops.goldDrops = savedMode;
+    CFG.drops.enabled = savedEnabled;
+    state.god = savedGod;
+    for (const f of sys.hordes.foes) nw.ctx.views?.removeFoe?.(f.uid);
+    sys.hordes.foes.length = 0;
+    for (const f of savedFoes) sys.hordes.foes.push(f);
+    state.drops.length = 0;
+    for (const d of savedDrops) state.drops.push(d);
+    // Restored last and unconditionally: part 2 alone awards ~80,000 gold, and
+    // CFG.horde.bossAtGold would turn every later night wave in this shared
+    // world into a parade of domain lords.
+    state.player.gold = savedGold;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // B6 — Level-Up Flourish
 // ---------------------------------------------------------------------------
 async function testLevelUpFlourish(nw: any) {
@@ -5401,6 +5575,39 @@ async function testScryingMappings(nw: any) {
     ok(slow < 1.0, `slow DNS narrows sight (${slow.toFixed(3)})`);
     ok(fast > slow, 'and the transform is monotone');
     ok(fast <= gm.max && slow >= gm.min, `sight stays inside [${gm.min}, ${gm.max}]`);
+
+    // ---- the 2026-08-22 slope retune, asserted for what it actually bought --
+    //
+    // NOT a wider 10→40 ms spread: the ceiling clamp eats that, and it is
+    // 0.30× on both the old slope and the new one. Anyone "improving" this
+    // test by asserting a wider spread there will be asserting a tautology.
+    // What doubling the slope bought is these two things, so these two things
+    // are what the suite holds:
+    const at = (ms: number) => { net.snap.dnsMedianMs = ms; return net.getGameValue('scrying'); };
+
+    // 1. The working range a real resolver lives in now covers the WHOLE upper
+    //    half of the band. On the old slope 25 ms reached only 1.25× — a
+    //    quarter of the headroom the band advertised was unreachable in
+    //    practice, which made `max: 1.5` a number no player would ever see.
+    const quick = at(25);
+    ok(Math.abs(quick - gm.max) < 1e-9,
+      `a sharp 25 ms resolver reaches the top of the band (${quick.toFixed(3)} = ${gm.max})`);
+
+    // 2. The floor is reachable by a bad-but-real resolver rather than only by
+    //    a broken one. 65 ms is a congested café; 75 ms was the old
+    //    requirement and is closer to a resolver that has given up.
+    const poor = at(65);
+    ok(Math.abs(poor - gm.min) < 1e-9,
+      `a poor 65 ms resolver reaches the floor (${poor.toFixed(3)} = ${gm.min})`);
+
+    // CONTROL: the band is not simply saturated everywhere. If a future retune
+    // flattens or over-steepens the slope, the two assertions above could both
+    // pass while every real reading sat on a clamp — so pin that the midpoint
+    // between them is strictly interior, which is the only way the mapping is
+    // doing arithmetic rather than picking one of two constants.
+    const mid = at(45);
+    ok(mid > gm.min && mid < gm.max,
+      `and 45 ms lands strictly inside the band (${mid.toFixed(3)}), not on a clamp`);
   } finally {
     net.snap.dnsMedianMs = saved;
   }
@@ -5802,6 +6009,34 @@ async function testReliquary(nw: any) {
     ok(!fine.includes('sword_copper'),
       "a Lord's Seal cannot hand you the blade you started the run with");
     ok(wide.includes('sword_copper'), 'CONTROL: the Lesser Seal still can');
+
+    // ---- 1b. the shelf shows what you are NOT buying ----------------------
+    //
+    // The 2026-08-22 verdict on the stock strip: show the full ladder and grey
+    // the half this seal cannot reach, because the price gap between seals is
+    // only legible if you can see what the cheaper one is missing.
+    //
+    // stock() is deliberately unchanged by that work — it is the buy pool that
+    // buy() draws from and the sweep in part 5 asserts against, and widening it
+    // would have quietly put unreachable bases on sale. shelf() is the sibling
+    // that carries the greyed half, so both are pinned against each other here.
+    const wideShelf = hub.shelf('weapon', lesser);
+    const fineShelf = hub.shelf('weapon', lords);
+    eq(fineShelf.length, wideShelf.length,
+      `every seal shows the same full ladder (${fineShelf.length} blades), rich or poor`);
+    ok(fineShelf.some((e: any) => !e.reachable),
+      "a Lord's Seal greys out the bases it cannot reach");
+    ok(wideShelf.every((e: any) => e.reachable),
+      'CONTROL: the widest seal greys out nothing — the flag tracks the seal, not the shape');
+    eq(fineShelf.filter((e: any) => e.reachable).length, fine.length,
+      'and the reachable half is exactly the buy pool stock() hands to buy()');
+    ok(fineShelf.filter((e: any) => e.reachable).every((e: any) => fine.includes(e.id)),
+      '...the same ids, not merely the same count');
+    // Ordering is load-bearing: the strip is drawn left-to-right, so a ladder
+    // whose greyed half is interleaved would read as noise rather than as a cut.
+    const firstGrey = fineShelf.findIndex((e: any) => !e.reachable);
+    ok(firstGrey > 0 && fineShelf.slice(firstGrey).every((e: any) => !e.reachable),
+      'the greyed bases are contiguous at the cheap end — the strip reads as one cut');
 
     // ---- 2. a refusal costs nothing -------------------------------------
     state.player.gold = 10;
@@ -6336,6 +6571,7 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Ground drops - cap holds and never evicts gear', fn: testGroundDropCap },
   { name: 'Ground drops - CFG.drops.enabled=false restores instant pickup', fn: testGroundDropDisabled },
   { name: 'Ground drops - the stack count is actually legible', fn: testWorldTextIsLegible },
+  { name: 'Gold - routine kills credit, bosses burst, and the pile is exact', fn: testGoldCoins },
   // ---- B6: Level-Up Flourish ----
   { name: 'Level-up flourish - rising motes, ring, config gate', fn: testLevelUpFlourish },
   // ---- N4.1: The Deep Wire ----
@@ -6356,6 +6592,7 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Omens - named in the Lens and on the HUD', fn: testLensShowsOmens },
   // ---- A1/A4: The Arsenal ----
   { name: 'Loot - the ladder is climbable in one run, and Fortune tilts it', fn: testLootLadder },
+  { name: 'Loot - every rung is worth climbing, and the top two stay apart', fn: testRarityLadderIsWorthClimbing },
   { name: 'Loot - a rolled item changes the numbers the game actually reads', fn: testRolledItemChangesStats },
   { name: 'Loot - affixes reach the effect hooks and move the player', fn: testAffixesDriveTheGame },
   { name: 'Loot - materials pass through, gear splits, bands hold', fn: testLootDropSeam },
@@ -6962,7 +7199,51 @@ async function testLensShowsOmens(nw: any) {
     // The half a player sees without opening anything. A multiplier that only
     // exists inside a diagnostics drawer is indistinguishable from a bug.
     const chip = document.getElementById('nw-omens') as HTMLElement;
+    const boonChip = document.getElementById('nw-boons') as HTMLElement;
     ok(chip !== null, 'the HUD carries an omen chip');
+    ok(boonChip !== null, '...and a separate boon chip');
+
+    // ---- the 2026-08-22 split -------------------------------------------
+    //
+    // Three omens and three boons can be up at once (CFG.omens.maxActive and
+    // CFG.a8.maxBoons are both 3), and before this they shared one badge — six
+    // chips in a row, none of which read under pressure. An Omen is something
+    // happening to the world; a Boon is something true of you. They are now two
+    // rows, and this asserts each name lands in the RIGHT one, because a split
+    // that put everything in one row would still look split from a screenshot.
+    const { grantBoon } = await import('./effects');
+    const savedBoons = (nw.state.boons ?? []).slice();
+    try {
+      nw.state.boons = nw.state.boons ?? [];
+      nw.state.boons.length = 0;
+      // Granted through the game's own verb rather than pushed onto the array,
+      // so the row under test is the shape grantBoon() really produces
+      // (WORKFLOW 16). BOONS[0] is used as the fixture name so a renamed row
+      // cannot leave this passing against a string that no longer ships.
+      const { BOONS } = await import('../data/boons');
+      const boonDef = BOONS[0];
+      grantBoon(nw.state, { ...boonDef, sec: 90 } as any);
+      nw.ui.refresh();
+      const omenRow = chip.innerHTML, boonRow = boonChip.innerHTML;
+      ok(omenRow.includes('Famine'), 'the omen row names the active omen');
+      ok(!omenRow.includes(boonDef.name), '...and does NOT carry the boon');
+      ok(boonRow.includes(boonDef.name), `the boon row names the active boon (${boonDef.name})`);
+      ok(!boonRow.includes('Famine'), '...and does NOT carry the omen');
+      ok(chip.style.display !== 'none' && boonChip.style.display !== 'none',
+        'both rows are visible while both are populated');
+
+      // CONTROL: an empty side hides itself. A badge that stays on screen empty
+      // is a permanent gap in the HUD for a thing that is not happening.
+      nw.state.boons.length = 0;
+      nw.ui.refresh();
+      eq(boonChip.style.display, 'none', 'CONTROL: with no boons up the boon row hides');
+      ok(chip.style.display !== 'none', '...while the omen row, still populated, does not');
+    } finally {
+      if (nw.state.boons) {
+        nw.state.boons.length = 0;
+        for (const b of savedBoons) nw.state.boons.push(b);
+      }
+    }
   } finally {
     om.active.length = 0;
     for (const o of saved) om.active.push(o);
@@ -7222,6 +7503,80 @@ async function testLootLadder(nw: any) {
   eq(lootQuantityMul(1), 1, 'CONTROL: a neutral wire changes neither');
 }
 
+/** A1 — what a tier is actually WORTH once it reaches a worn blade.
+ *
+ *  testLootLadder above asserts how OFTEN each tier drops. This asserts how
+ *  much better each one is, which is a different question and the one the
+ *  2026-08-22 Riftborn verdict turned on. See the measurement block at the top
+ *  of data/rarity.ts for the numbers and why the recorded trim was not applied.
+ *
+ *  Written as relations, never as absolutes (WORKFLOW 15). Pinning "riftborn
+ *  delivers ×1.807" would fail on the next affix-pool edit and teach nobody
+ *  anything; pinning "each rung beats the one below it, and the top two are
+ *  still far enough apart to be a choice" is the property that has to hold.
+ */
+async function testRarityLadderIsWorthClimbing(nw: any) {
+  const { rollItem } = await import('./loot');
+  const { ITEMS, itemDef, rolledOf } = await import('../data/items');
+  const { RARITIES } = await import('../data/rarity');
+
+  const BASE = 'sword_iron';
+  const base = ITEMS[BASE].weaponDmg as number;
+  const N = 3000;
+
+  /** Delivered damage, not the stat column: a curse can carry a swingSpeed mod
+   *  that never appears in weaponDmg, and reading the column alone is exactly
+   *  how Riftborn came to be recorded at ×2.23. */
+  const delivered = (rarity: string) => {
+    let sum = 0;
+    for (let i = 0; i < N; i++) {
+      const id = rollItem(BASE, { forceRarity: rarity as any });
+      let d = (itemDef(id)?.weaponDmg as number) ?? base;
+      for (const a of rolledOf(id)?.affixes ?? []) {
+        if (a.mod === 'swingSpeed' && a.modVal != null) d *= a.modVal;
+      }
+      sum += d;
+    }
+    return sum / N / base;
+  };
+
+  const mul: Record<string, number> = {};
+  for (const r of RARITIES) mul[r.id] = delivered(r.id);
+
+  eq(Math.round(mul.plain * 1000) / 1000, 1,
+    'CONTROL: Plain returns the authored id untouched — the measurement has no bias in it');
+
+  // Every rung beats the one below it. A tier that does not is a colour.
+  for (let i = 1; i < RARITIES.length; i++) {
+    const lo = RARITIES[i - 1].id, hi = RARITIES[i].id;
+    ok(mul[hi] > mul[lo],
+      `${hi} delivers more than ${lo}: ×${mul[hi].toFixed(3)} vs ×${mul[lo].toFixed(3)}`);
+  }
+
+  // The top of the ladder is the whole point of the 2026-08-22 verdict, and the
+  // reason it was not applied. Riftborn has to lead Sovereign by enough to be
+  // worth a rift — it is weight 4 against 18 — while Sovereign has to stay
+  // close enough to be worth wearing rather than being a consolation prize.
+  const lead = mul.riftborn / mul.sovereign - 1;
+  ok(lead > 0.03,
+    `Riftborn leads Sovereign by ${(lead * 100).toFixed(1)}% — enough that a rift is worth entering`);
+  ok(lead < 0.20,
+    `...and by less than 20%, so a Sovereign is still gear and not a runner-up rosette`);
+
+  // The tiers OVERLAP on purpose — rule 1 at the top of data/rarity.ts, and the
+  // same principle the `heavy` verdict upheld on the same day. A lucky Hallowed
+  // out-rolling an average Riftborn is the feature, not the bug that the ×2.23
+  // reading was mistaken for.
+  let bestHallowed = 0;
+  for (let i = 0; i < N; i++) {
+    const id = rollItem(BASE, { forceRarity: 'hallowed' as any });
+    bestHallowed = Math.max(bestHallowed, ((itemDef(id)?.weaponDmg as number) ?? base) / base);
+  }
+  ok(bestHallowed > mul.riftborn,
+    `a lucky Hallowed (×${bestHallowed.toFixed(2)}) still beats an average Riftborn `
+    + `(×${mul.riftborn.toFixed(2)}) — the ladder is a distribution, not a staircase`);
+}
+
 // ---------------------------------------------------------------------------
 // A1.2 — the roll reaches the numbers the game reads
 // ---------------------------------------------------------------------------
@@ -7295,6 +7650,7 @@ async function testAffixesDriveTheGame(nw: any) {
   const { gearMod } = await import('../rules');
   const { activeEffects } = await import('./effects');
   const { rollItem } = await import('./loot');
+  const { CFG } = await import('../data/config');
   const snap = snapshotPlayer(nw);
   const state = nw.state;
 
@@ -7354,6 +7710,15 @@ async function testAffixesDriveTheGame(nw: any) {
           for (let attempt = 0; attempt < 3; attempt++) {
             nw.sys.hordes?.clearField?.();
             state.player.hp = playerMaxHp(state);
+            state.player.resolve = CFG.vitals.resolveMax;
+            // C4's move burst is a TIMED window on the shared state, armed by
+            // any kill an earlier test made with 'move_burst_on_kill' worn. It
+            // does not survive to the end of the suite, which is worse than if
+            // it did: it expires PART WAY THROUGH, so `plain` runs inside the
+            // window and `fast` runs outside it, and a correctly-working Swift
+            // affix reads as ×1.008. That was the whole of this test's 1-in-10
+            // flake — diagnosed 2026-08-22 from `burst=1042.6 clock=1043.7`.
+            state._moveBurstUntil = 0;
             nw.player.teleport(c.x, c.y);
             state.player.x = c.x; state.player.y = c.y;
             nw.step(18);
@@ -7362,6 +7727,24 @@ async function testAffixesDriveTheGame(nw: any) {
           }
           return -1;
         };
+        // The speed product in main.ts is NINE multipliers, three of which move
+        // on their own between the two measurements below: net.getGameValue()
+        // and omens.mul() are read off the live browser every tick, and
+        // vitals.getSpeedMult() falls as Resolve drains. The ratio only means
+        // what the assertion says it means if the other eight terms are the
+        // same in both halves (WORKFLOW 11) — otherwise a probe landing between
+        // `plain` and `fast` reads as a broken affix.
+        //
+        // 2026-08-22: this was already true and already fragile; the suite grew
+        // by about a second that day, widening the real-time window between the
+        // two halves, and it started going red about one run in six. Pinned
+        // rather than given a wider tolerance, because a wider tolerance would
+        // have hidden the affix being wrong by exactly as much.
+        const savedGetGameValue = nw.ctx.net?.getGameValue;
+        const savedOmenMul = nw.ctx.omens?.mul;
+        const savedResolve = state.player.resolve;
+        if (nw.ctx.net) nw.ctx.net.getGameValue = () => 1;
+        if (nw.ctx.omens) nw.ctx.omens.mul = () => 1;
         try {
           await wearOnly(nw, ['armor_iron']);
           const plain = travel();
@@ -7377,11 +7760,18 @@ async function testAffixesDriveTheGame(nw: any) {
             const { rolledOf } = await import('../data/items');
             const want = rolledOf(swift)!.affixes.find((a: any) => a.mod === 'moveSpeed')!.modVal!;
             const got = fast / plain;
+            // The distances and the gear mod are carried in the message because
+            // the three numbers together say WHICH half went wrong; the bare
+            // ratio says only that one of them did.
             ok(Math.abs(got - want) < 0.02,
-              `and by the ROLLED amount: measured ×${got.toFixed(3)} against a rolled ×${want.toFixed(2)}`);
+              `and by the ROLLED amount: measured ×${got.toFixed(3)} against a rolled ×${want.toFixed(2)}`
+              + ` (${plain.toFixed(1)}px → ${fast.toFixed(1)}px, gearMod ×${gearMod(state, 'moveSpeed').toFixed(3)})`);
           }
         } finally {
           nw.input.axis = savedAxis;
+          if (nw.ctx.net && savedGetGameValue) nw.ctx.net.getGameValue = savedGetGameValue;
+          if (nw.ctx.omens && savedOmenMul) nw.ctx.omens.mul = savedOmenMul;
+          state.player.resolve = savedResolve;
         }
       }
     }
@@ -8928,6 +9318,131 @@ async function testHoarderChase(nw: any) {
     const offHits = countIn('spawnDayMob', 40);
     CFG.a8.enabled = savedFlag;
     ok(offHits === 0, 'CFG.a8.enabled=false takes it back out of the day pool entirely');
+
+    // ---- 6. it tires, so a long chase always ends --------------------------
+    //
+    // The 2026-08-22 verdict. Before this the Hoarder held fleeSpeedMul for as
+    // long as you cared to chase it, and the gap grew ~2 px a second: crossing
+    // the 21 tiles to escapeTiles took over four minutes, so in practice nobody
+    // ever outran one — they waited for it to hit a tree. A loss the player can
+    // do nothing about is a bad loss.
+    //
+    // Measured on a TREADMILL: the foe's displacement is accumulated each tick
+    // and then its position is reset. That pins everything the speed product
+    // reads except the one term under test — same tile so `terrain` is fixed,
+    // same distance from the player so `spooked` never lifts and `escapeTiles`
+    // is never crossed, same everything else (WORKFLOW 11). It also means the
+    // ratio below is TERRAIN-FREE: whatever the multiplier is, it divides out.
+    const beh = hoarderDef.behavior;
+    const savedToast = nw.ctx.toast;
+    const savedGetGameValue = nw.ctx.net?.getGameValue;
+    const savedOmenMul = nw.ctx.omens?.mul;
+    const toasts: string[] = [];
+    try {
+      // The speed product in hordes.ts also multiplies in `fray` (the deep
+      // wire's hordeAggression) and `surge` (an Omen on the same target). Both
+      // are read from the LIVE browser every tick, so across twenty-eight
+      // seconds of sim they drift — which is a fine thing for the game and a
+      // fatal thing for a measurement that compares second 1 against second 13.
+      // Pinned to neutral for the duration: the treadmill holds every term in
+      // that product still except the one under test (WORKFLOW 11).
+      if (nw.ctx.net) nw.ctx.net.getGameValue = () => 1;
+      if (nw.ctx.omens) nw.ctx.omens.mul = () => 1;
+
+      // Part 5 above left two knobs cranked that the outer finally only puts
+      // back at the very end: a dominating Hoarder weight and toSpawn at 99999.
+      // Fourteen seconds of real sim under those is a Hoarder factory, and the
+      // extra ones spook, tire and toast right through the measurement. That is
+      // what made the "said exactly once" assertion intermittent — the count was
+      // right about the foe under test and wrong about the world around it.
+      hoarderDef.weight = savedHoarderWeight;
+      (sys.hordes as any).toSpawn = 0;
+
+      nw.ctx.toast = (m: string) => { toasts.push(String(m)); };
+      state.god = true;
+      sys.hordes.foes.length = 0;
+      const runner: any = place(hoarderDef);
+      const homeX = runner.x, homeY = runner.y;
+
+      /** One second of sim with `f` held on the spot, returning the ground it
+       *  covered. The field is pinned to `f` alone each tick so a natural day
+       *  spawn cannot wander into the measurement. */
+      const second = (f: any) => {
+        let moved = 0;
+        for (let i = 0; i < 60; i++) {
+          if (sys.hordes.foes.length !== 1 || sys.hordes.foes[0] !== f) {
+            for (const other of sys.hordes.foes) if (other !== f) nw.ctx.views?.removeFoe?.(other.uid);
+            sys.hordes.foes.length = 0;
+            sys.hordes.foes.push(f);
+          }
+          const x0 = f.x, y0 = f.y;
+          nw.step(1);
+          moved += Math.hypot(f.x - x0, f.y - y0);
+          f.x = homeX; f.y = homeY;
+        }
+        return moved;
+      };
+      const treadmill = (f: any, secs: number) => {
+        const perSec: number[] = [];
+        for (let sec = 0; sec < secs; sec++) perSec.push(second(f));
+        return perSec;
+      };
+      const avg = (v: number[], a: number, b: number) =>
+        v.slice(a, b).reduce((p, c) => p + c, 0) / (b - a);
+
+      const perSec = treadmill(runner, 14);
+      const fresh = avg(perSec, 0, 3);                      // still sprinting
+      const blown = avg(perSec, 11, 14);                    // past staminaSec + tiredFadeSec
+      ok(fresh > 0, `the treadmill is measuring a moving foe (${fresh.toFixed(0)} px/s fresh)`);
+      ok(blown < fresh * 0.85,
+        `a Hoarder ${beh.staminaSec}s into a chase is slower than a fresh one: `
+        + `${fresh.toFixed(0)} → ${blown.toFixed(0)} px/s`);
+
+      // The decay reaches the mover at the AUTHORED strength, not merely in some
+      // direction. Terrain cancels in this ratio, so it can be checked against
+      // the data rows directly.
+      const wanted = beh.tiredSpeedMul / beh.fleeSpeedMul;
+      const got = blown / fresh;
+      ok(Math.abs(got - wanted) < 0.08,
+        `...and by the authored amount: ×${got.toFixed(2)} measured vs ×${wanted.toFixed(2)} in the table`);
+
+      ok(toasts.some((m) => /tiring/i.test(m)),
+        'the game says so out loud — the moment it blows is the only moment the mechanic teaches anything');
+      eq(toasts.filter((m) => /tiring/i.test(m)).length, 1,
+        '...exactly once, not once per frame for six seconds');
+
+      // The design promise the verdict actually bought, stated at the data level
+      // where terrain cannot muddy it: a chase now ENDS.
+      ok(hoarderDef.speed * beh.fleeSpeedMul > CFG.player.speed,
+        `a fresh Hoarder still outruns you (${(hoarderDef.speed * beh.fleeSpeedMul).toFixed(0)} > ${CFG.player.speed} px/s)`);
+      ok(hoarderDef.speed * beh.tiredSpeedMul < CFG.player.speed,
+        `...and a blown one does not (${(hoarderDef.speed * beh.tiredSpeedMul).toFixed(0)} < ${CFG.player.speed} px/s) `
+        + '— committing to a long chase is now a decision that pays');
+
+      // CONTROL: the slowdown is STAMINA and nothing else. Identical treadmill,
+      // identical foe, identical fourteen seconds — only the budget changes. If
+      // this one also slowed, the measurement above would be picking up the day
+      // cycle, a wandering campfire, or the sim drifting under it.
+      const savedStamina = beh.staminaSec;
+      try {
+        beh.staminaSec = 9999;
+        sys.hordes.foes.length = 0;
+        const fit: any = place(hoarderDef);
+        fit.x = homeX; fit.y = homeY;
+        const ctrl = treadmill(fit, 14);
+        const fresh2 = avg(ctrl, 0, 3), blown2 = avg(ctrl, 11, 14);
+        ok(blown2 > fresh2 * 0.95,
+          `CONTROL: with the stamina budget removed the same chase never slows `
+          + `(${fresh2.toFixed(0)} → ${blown2.toFixed(0)} px/s)`);
+      } finally {
+        beh.staminaSec = savedStamina;
+      }
+    } finally {
+      nw.ctx.toast = savedToast;
+      if (nw.ctx.net && savedGetGameValue) nw.ctx.net.getGameValue = savedGetGameValue;
+      if (nw.ctx.omens && savedOmenMul) nw.ctx.omens.mul = savedOmenMul;
+      sys.hordes.foes.length = 0;
+    }
   } finally {
     CFG.a8.enabled = savedFlag;
     hoarderDef.weight = savedHoarderWeight;

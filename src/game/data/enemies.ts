@@ -36,6 +36,9 @@ export interface EnemyBehavior {
   spookTiles?: number;            // starts running when the player is this close
   fleeSpeedMul?: number;          // × speed while running (>1 = faster than you)
   escapeTiles?: number;           // gets this far and it is gone, with its hoard
+  staminaSec?: number;            // seconds it can hold fleeSpeedMul before tiring
+  tiredFadeSec?: number;          // seconds to decay from fleeSpeedMul to tiredSpeedMul
+  tiredSpeedMul?: number;         // × speed once blown (<1 = you close on it)
 }
 
 export interface EnemyDef {
@@ -291,6 +294,24 @@ export const ENEMIES: EnemyDef[] = [
   // (×0.6) drops it under you, an echo or a bow hits it without closing, and
   // trees, water and cliffs corner it because it has no pathfinding either.
   //
+  // **Stamina, added 2026-08-22.** That 2 px/s margin turned out to describe a
+  // chase nobody could win OR lose on speed: a gap growing 2 px a second needs
+  // over four minutes to cross the 21 tiles to `escapeTiles`, which is longer
+  // than a third of the whole run. In practice the Hoarder never outran anyone
+  // — it waited for a tree. The chase was therefore decided by whether the
+  // terrain happened to help, and a player who lost one learned nothing they
+  // could do differently next time, which is the definition of a bad loss.
+  //
+  // So it sprints for `staminaSec` and then blows up, decaying over
+  // `tiredFadeSec` to `tiredSpeedMul` — 108 × 0.95 ≈ 103 px/s against a bare
+  // 160. Committing to a chase now ends it, in roughly eleven seconds. The
+  // counterplay above all still matters, because it decides whether you catch
+  // it in eleven seconds or three; what changed is that "just run at it" is now
+  // a strategy with a cost (eleven seconds of not doing anything else, at
+  // whatever time of day you chose to spend them) rather than a mistake.
+  // Stamina recovers at half rate while unspooked, so breaking off and
+  // re-approaching is a decision and not a free kill.
+  //
   // `dmg: 1` is a formality — the flee branch never enters the attack path, so
   // it is a number the Hoarder cannot spend. It is 1 rather than 0 because
   // testDataIntegrity requires every enemy to be able to hurt something, and
@@ -316,7 +337,10 @@ export const ENEMIES: EnemyDef[] = [
     // spawn every 3 s that is roughly one or two Hoarders in a full run — rare
     // enough to be an event, common enough that a run can actually contain one.
     fromNight: 1, weight: 0.16, daytime: true, dayOnly: true,
-    behavior: { kind: 'flee', spookTiles: 11, fleeSpeedMul: 1.5, escapeTiles: 21 },
+    behavior: {
+      kind: 'flee', spookTiles: 11, fleeSpeedMul: 1.5, escapeTiles: 21,
+      staminaSec: 8, tiredFadeSec: 2, tiredSpeedMul: 0.95,
+    },
     art: { size: 18, body: ramp('#4a3a10', '#8a6a1a', '#e8c34a'), eye: ramp('#ffffff')[0] },
   },
 ];

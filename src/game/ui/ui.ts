@@ -150,7 +150,9 @@ export class UI {
   private muteEl!: HTMLElement;
   private echoEl!: HTMLElement;
   private omenEl!: HTMLElement;
+  private boonEl!: HTMLElement;
   private worldStateCache = '';
+  private boonStateCache = '';
   private echoChipsCache = '';
   private vigorText!: HTMLElement;
   private resolveText!: HTMLElement;
@@ -219,7 +221,8 @@ export class UI {
       <div class="nw-badge nw-clock" id="nw-clock"></div>
       <div class="nw-badge" id="nw-nights" title="damage · defense · population · territory"></div>
       <div class="nw-badge" id="nw-echoes" style="display:none" title="echoes of the slain"></div>
-      <div class="nw-badge" id="nw-omens" style="display:none" title="what is true right now that is not normally true — omens off the wire, boons off a Wardstone"></div>
+      <div class="nw-badge" id="nw-omens" style="display:none" title="what the world is doing that it does not normally do — omens, read off the wire"></div>
+      <div class="nw-badge nw-boons" id="nw-boons" style="display:none" title="what is true of YOU that is not normally true — boons, carried from a Wardstone"></div>
       <div class="nw-badge nw-domain" id="nw-domain" title="the realm you stand in"></div>
       <div class="nw-spacer"></div>
       <div class="nw-badge nw-btn" id="nw-mute" style="pointer-events:auto" title="sound on/off">&#128266;</div>
@@ -236,6 +239,7 @@ export class UI {
     this.nights = top.querySelector('#nw-nights')!;
     this.echoEl = top.querySelector('#nw-echoes')!;
     this.omenEl = top.querySelector('#nw-omens')!;
+    this.boonEl = top.querySelector('#nw-boons')!;
     this.vigorText = top.querySelector('#nw-vigor-text')!;
     this.resolveText = top.querySelector('#nw-resolve-text')!;
     this.domainEl = top.querySelector('#nw-domain')!;
@@ -604,8 +608,17 @@ export class UI {
       // The stock is shown because "you buy the shape and the odds" is only
       // honest if the shape is visible. A seal that quietly excludes half the
       // ladder while the panel says nothing is a shop lying by omission.
-      const stock = o.stock.map((id) =>
-        `<img src="${icon(id)}" alt="" title="${escapeHtml(itemName(id))}">`).join('');
+      //
+      // 2026-08-22: the WHOLE ladder is drawn, with the bases this seal cannot
+      // reach greyed. Rendering only the reachable half was honest and useless
+      // — four icons tells you nothing without the denominator, and the thing a
+      // seal's price actually buys is the part that used to be invisible. Greyed
+      // out, the three rows become a comparison: you can see the Lesser Seal's
+      // shelf run the length of the ladder and the Lord's Seal start two thirds
+      // up it, which is the entire argument for the extra 1,160 gold.
+      const stock = o.shelf.map((e) =>
+        `<img class="${e.reachable ? '' : 'off'}" src="${icon(e.id)}" alt=""`
+        + ` title="${escapeHtml(itemName(e.id))}${e.reachable ? '' : ' — beyond this seal'}">`).join('');
       row.innerHTML = `
         <div class="info">
           <div class="name">${o.seal.name} &middot; <span class="band">${o.floor} &rarr; ${o.ceiling}</span></div>
@@ -1148,16 +1161,38 @@ export class UI {
     // throughput recovers, which is the point. For a boon it is the whole
     // truth. Saying the wrong one of those would make the HUD lie about the
     // only number on it the player is actually watching.
-    const stateChips = this.hooks.worldStateView().map((o) =>
+    //
+    // **Two rows, not one (2026-08-22).** These shared `#nw-omens` until a
+    // count made the problem obvious: `CFG.omens.maxActive` is 3 and
+    // `CFG.a8.maxBoons` is 3, so the single row could carry SIX chips joined by
+    // middots — a sentence-long strip of coloured text to be parsed mid-fight.
+    // The split is not really about the count though. An omen is something
+    // happening to the world and a boon is something true about you; they are
+    // answers to different questions, and a player glancing down is only ever
+    // asking one of them. Sharing a row meant neither could be found without
+    // reading both.
+    const chipHtml = (o: any) =>
       `<span title="${o.blurb} — ${o.kind === 'omen'
         ? `lifts when the reading recovers, or in ${o.secs}s`
         : `fades in ${o.secs}s`}"`
-      + ` style="color:${o.color ?? (o.good ? '#8fd98f' : '#f08a6a')};">${o.name} ${o.secs}s</span>`)
-      .join(' &middot; ');
-    if (stateChips !== this.worldStateCache) {
-      this.worldStateCache = stateChips;
-      this.omenEl.style.display = stateChips ? '' : 'none';
-      this.omenEl.innerHTML = stateChips;
+      + ` style="color:${o.color ?? (o.good ? '#8fd98f' : '#f08a6a')};">${o.name} ${o.secs}s</span>`;
+
+    const world = this.hooks.worldStateView();
+    // Partitioned on `kind`, which main() already stamps on every row. Deriving
+    // it here from `color` or `good` instead would be a second source of truth
+    // for the same fact, and the two would disagree the first time a benign
+    // omen was authored.
+    const omenChips = world.filter((o: any) => o.kind === 'omen').map(chipHtml).join(' &middot; ');
+    const boonChips = world.filter((o: any) => o.kind !== 'omen').map(chipHtml).join(' &middot; ');
+    if (omenChips !== this.worldStateCache) {
+      this.worldStateCache = omenChips;
+      this.omenEl.style.display = omenChips ? '' : 'none';
+      this.omenEl.innerHTML = omenChips;
+    }
+    if (boonChips !== this.boonStateCache) {
+      this.boonStateCache = boonChips;
+      this.boonEl.style.display = boonChips ? '' : 'none';
+      this.boonEl.innerHTML = boonChips;
     }
 
     // gather progress ring

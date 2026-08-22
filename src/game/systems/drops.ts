@@ -13,7 +13,7 @@
 //   2. the rest  — it sits with a contact shadow, bobbing so the eye finds it
 //   3. the collect — walk near, it snaps to you, it lands in the bag
 import { CFG } from '../data/config';
-import { ITEMS, itemDef } from '../data/items';
+import { GOLD_ID, ITEMS, itemDef } from '../data/items';
 import { acquireGear, invAdd } from '../rules';
 import { fortuneFrom, rollStacks } from './loot';
 import { rarityColor, rarityIndex, rarityOf } from '../ui/rarity';
@@ -30,6 +30,12 @@ export function isGear(id: string): boolean {
   const it = itemDef(id);
   if (!it) return false;
   return !!(it.weaponDmg || it.armor || it.trinket || it.relic || it.toolClass);
+}
+
+/** The name a pickup toast prints. GOLD_ID has no ITEMS row by design, so
+ *  itemDef() cannot answer for it and the `?? id` fallback would print "@gold". */
+function dropName(id: string): string {
+  return id === GOLD_ID ? 'gold' : (itemDef(id)?.name ?? id);
 }
 
 interface DropCtx {
@@ -126,6 +132,74 @@ export class DropSystem {
     this.enforceCap();
   }
 
+  /** B5 Q2 — the one seam every gold award in the game passes through.
+   *
+   *  It decides, from CFG, whether an award becomes a pile on the floor or a
+   *  direct credit, and then does it. The decision lives HERE rather than at the
+   *  two call sites for the same reason A1's rarity roll moved into spawn():
+   *  two call sites is two chances to forget one, and the one you forget is
+   *  invisible — a gold source that never bursts just quietly keeps teleporting.
+   *
+   *  `boss` is the caller's claim about the kill, not a lookup, because the two
+   *  callers disagree about where that fact lives: hordes.ts reads f.def.boss
+   *  off the enemy row, and worldbosses.ts has no enemy row at all — a domain
+   *  lord is a boss by construction.
+   */
+  awardGold(amount: number, x: number, y: number, boss: boolean) {
+    const { state } = this.ctx;
+    amount = Math.max(0, Math.round(amount));
+    if (amount <= 0) return;
+
+    // CFG.drops.enabled is the whole ground-loot escape hatch. If it is off,
+    // coins must fall back to a credit too — a build with drops disabled that
+    // still scattered gold on the floor would be neither of the two behaviours
+    // anyone asked for.
+    const mode = CFG.drops.goldDrops;
+    const burst = CFG.drops.enabled && (mode === 'all' || (mode === 'boss' && boss));
+    if (!burst) { state.player.gold += amount; return; }
+
+    const D = CFG.drops;
+    const [cMin, cMax] = D.coinBurst;
+    // Never more coins than gold: a 3-gold award split seven ways would need
+    // fractional coins, and rounding them would either invent or destroy gold.
+    const coins = Math.max(1, Math.min(amount, cMin + Math.floor(Math.random() * (cMax - cMin + 1))));
+
+    let left = amount;
+    for (let i = 0; i < coins; i++) {
+      const rest = coins - i - 1;
+      // Integer shares that sum to `amount` EXACTLY. Each coin takes about an
+      // even share of what is left, clamped so every coin still behind it can
+      // be worth at least 1, and the last one closes the books with whatever
+      // remains. The total a player picks up is the total that was awarded —
+      // a burst must never be a stealth nerf or a stealth buff to gold income.
+      const n = i === coins - 1
+        ? left
+        : Math.min(left - rest, Math.max(1, Math.round(left / (coins - i))));
+      left -= n;
+
+      const ang = Math.random() * Math.PI * 2;
+      const spd = (D.tossSpeed[0] + Math.random() * (D.tossSpeed[1] - D.tossSpeed[0])) * D.coinSpread;
+      // Pushed directly rather than through spawn(): a pile must NOT merge (the
+      // pile is the point, and mergePx would collapse all of it into one coin at
+      // the corpse's own position), and it must not go through rollStacks(),
+      // which would try to roll a rarity for an id that has no ITEMS row.
+      state.drops.push({
+        uid: state.nextUid++,
+        id: GOLD_ID,
+        n,
+        x, y,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd * 0.7,
+        hopT: D.tossSec,
+        hopH: 0,
+        bornT: state.clock,
+        magnet: false,
+        gear: false,     // coins rot like any material; the pile is under your feet already
+      });
+    }
+    this.enforceCap();
+  }
+
   private findMergeTarget(id: string, x: number, y: number): GroundDrop | null {
     const r2 = CFG.drops.mergePx * CFG.drops.mergePx;
     for (const d of this.ctx.state.drops) {
@@ -205,10 +279,21 @@ export class DropSystem {
     return this.ctx.state.clock - d.bornT >= CFG.drops.armDelaySec;
   }
 
+  /** Where a picked-up stack actually goes. Gold is a scalar on the player, not
+   *  a row in the bag: handing GOLD_ID to invAdd would create an inventory entry
+   *  for an item that does not exist, and acquireGear would ask itemDef() about
+   *  it and get undefined. One function, so the magnet path and collectAll()
+   *  cannot drift apart on it. */
+  private bank(id: string, n: number) {
+    const { state } = this.ctx;
+    if (id === GOLD_ID) { state.player.gold += n; return; }
+    invAdd(state, id, n);
+    acquireGear(state, id);            // auto-equip now happens at pickup, not at roll
+  }
+
   private collect(d: GroundDrop) {
     const { state } = this.ctx;
-    invAdd(state, d.id, d.n);
-    acquireGear(state, d.id);          // auto-equip now happens at pickup, not at roll
+    this.bank(d.id, d.n);
     this.queueToast(d.id, d.n);
     this.playSfx();
     this.ctx.particles?.spawn?.('spark', d.x, d.y, 3);
@@ -239,7 +324,7 @@ export class DropSystem {
     // the whole line in bone would bury the one event worth noticing.
     let best = 'plain', color: string | undefined;
     for (const [id, n] of this.pending) {
-      parts.push(`+${n} ${itemDef(id)?.name ?? id}`);
+      parts.push(`+${n} ${dropName(id)}`);
       const r = rarityOf(id);
       if (rarityIndex(r) > rarityIndex(best as any)) { best = r; color = rarityColor(id); }
     }
@@ -266,7 +351,7 @@ export class DropSystem {
    *  this project three times. */
   collectAll() {
     const drops = this.ctx.state.drops;
-    for (const d of drops) { invAdd(this.ctx.state, d.id, d.n); acquireGear(this.ctx.state, d.id); }
+    for (const d of drops) this.bank(d.id, d.n);
     drops.length = 0;
   }
 }

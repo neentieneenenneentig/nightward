@@ -42,6 +42,49 @@ export interface RarityDef {
   cursed?: boolean;
 }
 
+// ---- the 2026-08-22 Riftborn measurement -----------------------------------
+//
+// A verdict of "trim Riftborn from x2.23 to ~x1.8" was recorded against this
+// table. It is NOT applied, because measuring it properly — through a worn
+// blade, as the verdict itself demanded — showed the target was already met and
+// that the edit would have broken the reason the verdict gave for wanting it.
+//
+// 60,000 forced rolls per tier on `sword_iron` (base weaponDmg 9). "delivered"
+// folds in the swingSpeed mod a curse can carry, which the raw weaponDmg column
+// simply does not see:
+//
+//   tier        raw mean   raw p50   raw p90   raw max | delivered mean
+//   plain         1.000     1.000     1.000     1.000  |     1.000
+//   touched       1.184     1.060     1.482     1.727  |     1.167
+//   woven         1.346     1.288     1.728     2.204  |     1.317
+//   hallowed      1.533     1.463     1.924     2.327  |     1.489
+//   sovereign     1.763     1.670     2.188     2.497  |     1.701
+//   riftborn      1.912     1.844     2.343     2.704  |     1.807
+//
+// Three things fall out of that table, and each of them is a decision:
+//
+// 1. **x2.23 was never the typical Riftborn.** It sits at about p85 of the raw
+//    distribution. The median is x1.84 and the delivered mean is x1.807 — the
+//    requested ~x1.8, already, today. The figure that raised the question was
+//    one lucky blade, read off the stat column rather than off the swing.
+//
+// 2. **The trim would have inverted its own reason.** The verdict wanted
+//    Sovereign to stay worth wearing. Riftborn leads it by +8.4% raw / +6.2%
+//    delivered — thin already for something at weight 4 that only drops inside
+//    a rift. Sweeping statMul: 1.48 cuts the lead to +3.9%, and 1.42 puts
+//    Riftborn BELOW Sovereign on delivered damage. There is no statMul that
+//    lands the raw mean on 1.8 and leaves a tier gap worth the rarity.
+//
+// 3. **The long tail is systemic, not Riftborn's.** A lucky Hallowed reaches
+//    x2.33 — past the mean Riftborn and past the x2.23 that started this. The
+//    tiers are meant to overlap; that is rule 1 of this file, and it is the
+//    same principle the `heavy` verdict upheld on the same day ("a lucky blue
+//    copper blade out-rolling a plain iron one is the best thing that can
+//    happen to an early drop"). Capping it here would contradict that.
+//
+// The ladder relation is now pinned by testRarityLadder() in systems/regression.ts
+// so a future statMul edit cannot quietly collapse it again.
+
 export const RARITIES: RarityDef[] = [
   { id: 'plain',     name: 'Plain',     color: '#b9b2a4', affixes: [0, 0], weight: 620, statMul: 1.00 },
   { id: 'touched',   name: 'Touched',   color: '#6fa8dc', affixes: [1, 1], weight: 300, statMul: 1.06 },

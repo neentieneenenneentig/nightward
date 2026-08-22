@@ -85,6 +85,16 @@ html, body, #nw-observatory, .nw-pbody {
   color: var(--ink);
   white-space: nowrap;
 }
+/* A8 + N4.3, split 2026-08-22: boons used to share the omen plaque, which
+   could hold six chips at once (3 omens + 3 boons) and forced the player to
+   read the whole strip to find either. Two plaques now, and this one is marked
+   so the difference survives a glance rather than needing the tooltip: an omen
+   is the world acting on you, a boon is you carrying something. The left edge
+   is the tell — same plaque, one gold rule. */
+.nw-boons {
+  border-left: 2px solid var(--gold);
+  box-shadow: inset 0 0 0 1px var(--metal-lo), inset 6px 0 10px -8px var(--gold), 0 2px 8px rgba(0,0,0,.4);
+}
 .nw-title { font-family: var(--font-display); font-size: max(11px, calc(13px * var(--scale))); color: var(--accent);
   font-weight: 700; letter-spacing: 3px; text-transform: uppercase; }
 .nw-hpwrap { min-width: calc(108px * var(--scale)); }
@@ -786,6 +796,13 @@ html, body, #nw-observatory, .nw-pbody {
 .nw-seal .price.lack { color: var(--bad); }
 .nw-hub-stock { display: flex; gap: 3px; margin-top: 4px; flex-wrap: wrap; }
 .nw-hub-stock img { width: 20px; height: 20px; image-rendering: pixelated; opacity: .8; }
+/* Bases above this seal. Greyed and dimmed rather than hidden, because the
+   gap between what a seal reaches and what it does not IS the price
+   difference between the three seals, and it is unreadable if the excluded
+   half is simply absent. Kept at .28 rather than lower so the silhouette is
+   still identifiable — a player should be able to see WHICH blade they are
+   not buying. */
+.nw-hub-stock img.off { opacity: .28; filter: grayscale(1); }
 /* the bench */
 .nw-bench { border: 1px solid var(--metal-lo); background: var(--bg-deep); margin-bottom: 10px; }
 .nw-bench-hd { display: flex; align-items: center; gap: 8px; padding: 7px 8px;

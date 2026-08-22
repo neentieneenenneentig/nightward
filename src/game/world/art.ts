@@ -11,7 +11,7 @@ import { M, MATERIALS } from '../data/materials';
 import { FEATURES } from '../data/features';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
-import { itemDef } from '../data/items';
+import { GOLD_ICON, GOLD_ID, itemDef } from '../data/items';
 import { makeIcon } from '../../engine/procgen/icons';
 import { TILE } from './worldgen';
 
@@ -109,7 +109,11 @@ export class WorldArt {
   itemIcon(id: string): HTMLCanvasElement {
     let c = this.itemIcons.get(id);
     if (!c) {
-      const spec = itemDef(id)?.icon;
+      // GOLD_ID is a pseudo-item with no ITEMS row on purpose (see items.ts), so
+      // itemDef() returns undefined for it and the fallback below would silently
+      // draw a boss hoard as a grey pebble. Named explicitly rather than left to
+      // the fallback: an unknown id SHOULD look wrong, and this one is known.
+      const spec = id === GOLD_ID ? GOLD_ICON : itemDef(id)?.icon;
       c = makeIcon(spec ?? { kind: 'stone', color: [140, 140, 150] });
       this.itemIcons.set(id, c);
     }

@@ -792,10 +792,24 @@ export const NET_GAME_MAP: NetGameMapping[] = [
   // the radar sees further when your resolver is sharp, narrower when it
   // crawls. Neutral 50 ms sits at exactly 1.0× so an unmeasured run is
   // untouched — the fallback is the neutral value, per pillar 5.
+  //
+  // **The slope was doubled on 2026-08-22.** The original `1.5 - dns*0.01` put
+  // a typical 10–40 ms resolver at 1.10×–1.40×: always above neutral, never
+  // near the floor, and moving so slowly across a session that the radar
+  // effectively had one size per machine. A mapping whose output does not
+  // change is a constant wearing a measurement's clothes — the dormant-row sin
+  // in its live form. At 0.02 the same 10–40 ms span covers 1.50×–1.20× and a
+  // resolver drifting 10 ms mid-session moves the radar by a visible 0.2×.
+  //
+  // 50 ms → exactly 1.0 is load-bearing and unchanged: `dnsMedianMs` falls back
+  // to 50 before anything is measured, and pillar 5 says the fallback IS the
+  // neutral value. Written as an offset FROM 50 rather than as an intercept so
+  // that the neutral point is visible in the arithmetic and cannot drift out of
+  // it silently the next time the slope is retuned (WORKFLOW 15).
   {
     label: 'Scrying (sight)',
     netKey: 'dnsMs',
-    transform: (dns: number) => Math.max(0.75, Math.min(1.5, 1.5 - dns * 0.01)),
+    transform: (dns: number) => Math.max(0.75, Math.min(1.5, 1.0 - (dns - 50) * 0.02)),
     target: 'scrying',
     min: 0.75,
     max: 1.5,

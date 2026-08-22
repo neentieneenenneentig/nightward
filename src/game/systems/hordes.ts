@@ -593,7 +593,37 @@ export class HordeSystem {
     // Everything else in this product still applies to it — a chill, a tower
     // slow or a tar pit lands on the Hoarder exactly as it lands on a Brute,
     // which is the whole counterplay to a foe that is faster than you.
-    const pace = spooked ? (beh!.fleeSpeedMul ?? 1.5) : (f.dayMob && !targetPlayer ? 0.4 : 1);
+    //
+    // 2026-08-22: and it now tires. See the Hoarder's row in data/enemies.ts
+    // for why a 2 px/s margin made the chase undecidable rather than close.
+    // The decay multiplies into `pace` rather than replacing it, so every slow
+    // in the product above still stacks on top of an exhausted Hoarder exactly
+    // as it stacked on a fresh one.
+    let flee = beh?.fleeSpeedMul ?? 1.5;
+    if (isFlee) {
+      const anyF = f as any;
+      const stam = beh!.staminaSec ?? 8;
+      const fade = Math.max(0.001, beh!.tiredFadeSec ?? 2);
+      // Winds up while running, unwinds at half rate while it thinks it is
+      // safe. Clamped at both ends so a Hoarder chased across the whole map
+      // cannot bank an arbitrarily long recovery debt.
+      anyF._sprintT = Math.max(0, Math.min(stam + fade,
+        (anyF._sprintT ?? 0) + (spooked ? dt : -dt * 0.5)));
+      const over = anyF._sprintT - stam;
+      if (over > 0) {
+        flee += ((beh!.tiredSpeedMul ?? 0.95) - flee) * Math.min(1, over / fade);
+        // Said once per exhaustion, because the moment it blows is the only
+        // moment the mechanic teaches anything: a player who does not know it
+        // tires has no reason to still be chasing when it does.
+        if (!anyF._tiredSaid) {
+          anyF._tiredSaid = true;
+          this.ctx.toast(`${f.def.name} is tiring`, 'good');
+        }
+      } else if (anyF._sprintT <= 0) {
+        anyF._tiredSaid = false;
+      }
+    }
+    const pace = spooked ? flee : (f.dayMob && !targetPlayer ? 0.4 : 1);
     let step = f.def.speed * dt * pace * terrain * fear * chill * aura * towerSlow * tarSlow * fray * surge;
     step *= buffSpeedMul;
     if (stunned) step = 0;
@@ -921,7 +951,13 @@ export class HordeSystem {
     let goldWon = gMin + Math.floor(Math.random() * (gMax - gMin + 1));
     // X1: Miser's Charm — player kills pay out more gold
     if (awardXp && activeEffects(state).has('gold_find')) goldWon = Math.round(goldWon * 1.25);
-    state.player.gold += goldWon;
+    // B5 Q2: awardGold decides — from CFG.drops.goldDrops — whether this is a
+    // direct credit or a pile on the floor. At the shipped 'boss' setting a
+    // routine kill still credits instantly, so nothing is lost to a retreat,
+    // and only a boss corpse bursts. Every multiplier above still applies
+    // first: the burst splits the FINAL number, so a Miser's Charm boss pays
+    // 25% more coins and not a coin less than it did before.
+    this.ctx.drops.awardGold(goldWon, f.x, f.y, !!f.def.boss);
     // B5: the corpse drops its loot on the floor. The toast moved with it — a
     // 43-foe night wave firing one toast per stack at roll time is a wall of
     // text; drops.ts aggregates the pickups into one line per 0.4 s instead.

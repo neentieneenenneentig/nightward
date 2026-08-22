@@ -8,7 +8,7 @@ import type { ThreadId } from './weaves';
 export type IconKind =
   | 'log' | 'plank' | 'stone' | 'ore' | 'bar'
   | 'herb' | 'berry' | 'axe' | 'pick' | 'sword' | 'potion' | 'armor'
-  | 'ring' | 'amulet' | 'charm' | 'torch' | 'charcoal' | 'thread';
+  | 'ring' | 'amulet' | 'charm' | 'torch' | 'charcoal' | 'thread' | 'coin';
 
 export interface ItemDef {
   id: string;
@@ -37,6 +37,26 @@ export interface ItemDef {
   /** W7: soul XP granted when fed to a soul-gear slot. Materials use MaterialDef.xpValue instead. */
   soulXp?: number;
 }
+
+/** B5 Q2 — the coin pile. A reserved id that is deliberately NOT an ITEMS row.
+ *
+ *  Gold is a scalar on the player, not a stack in the bag, and giving it a real
+ *  ITEMS row would put it into every list that walks ITEMS — the Reliquary
+ *  shelf, the loot tables, the affix slots, the soul-gear feed. It would be a
+ *  dormant row in nine tables to make one pile of coins bounce.
+ *
+ *  So it is a pseudo-item: a drop id the ground layer understands and nothing
+ *  else does. The `@` prefix cannot collide with an authored id and reads at a
+ *  glance as "this is not an item". Every place that has to know is a special
+ *  case against this constant — drops.ts banks it to player.gold instead of
+ *  calling invAdd, and art.ts hands it the icon below instead of asking
+ *  itemDef() for one. Three call sites, all of them in this file's neighbours.
+ */
+export const GOLD_ID = '@gold';
+
+/** The icon for the above, since itemDef(GOLD_ID) is undefined by design and
+ *  the fallback in art.itemIcon() is a grey stone. */
+export const GOLD_ICON = { kind: 'coin' as IconKind, color: hex('#d8a83a'), accent: hex('#fff0b0') };
 
 const I = (
   id: string, name: string, kind: IconKind, color: string, accent?: string,

@@ -405,13 +405,22 @@ export const CFG = {
     mergeMaxN: 999,          // never merge past this stack size
     sfxMinGapSec: 0.12,      // pickup blip rate limit — the deathWhistle lesson (2026-08-14)
     toastWindowSec: 0.4,     // pickups inside this window collapse into one toast line
-    // B5 Q2, still open — and deliberately the one key in this file that NOTHING
-    // reads. It is a parked decision, not a feature: flipping it changes nothing
-    // until someone builds the coin pseudo-item (gold is not an ITEMS row). Kept
-    // so the question survives, and noted here so the next dormant-row sweep
-    // reads it as a placeholder rather than a placebo. Gold stays a direct
-    // credit to state.player.gold until the playtest verdict lands.
-    goldDrops: false,
+    // B5 Q2 — decided 2026-08-22. This key spent months as the one deliberate
+    // dormant row in this file; it is now read by DropSystem.awardGold(), the
+    // single seam every gold award in the game passes through.
+    //
+    // Three states, and all three are real behaviour:
+    //   'off'  — every kill credits state.player.gold directly (pre-B5)
+    //   'boss' — a boss bursts into a pile you walk through; routine kills credit
+    //   'all'  — every corpse drops its coins
+    //
+    // 'boss' is the verdict. Coins on every kill are a tax on the one fight you
+    // were right to run from, and a 5-gold detour is not worth the walk. A boss
+    // you have already beaten is the opposite case: the pile IS the trophy, you
+    // are standing on it anyway, and walking through it is the victory lap.
+    goldDrops: 'boss' as 'off' | 'boss' | 'all',
+    coinBurst: [5, 9] as [number, number],  // coins a pile splits into; the shares sum to the award exactly
+    coinSpread: 2.4,                        // toss spread for a hoard — the same width the Hoarder's spill uses
   },
 
   // A1 — the rarity roll. `enabled: false` is a real escape hatch, not a
@@ -517,7 +526,13 @@ export const CFG = {
     maxActive: 3,
     // Screen-space corruption when a Surge is up (0 = off). The wire fraying is
     // the one omen the plan explicitly asks to be *frightening*.
-    surgeFxStrength: 0.5,
+    //
+    // Was 0.5, which was tuned against a screen with nothing else on it. A2
+    // adds elite auras and attack telegraphs to the same pixels, and two
+    // systems both spending the player's attention budget on "something is
+    // wrong" is how a warning becomes noise. 0.35 keeps the Surge unmistakable
+    // and leaves A2 room to be read. Retuned 2026-08-22 by user verdict.
+    surgeFxStrength: 0.35,
   },
 };
 

@@ -26,6 +26,12 @@ import { carriedGearIds, invAdd, invCount, invHasAll, invTakeAll } from '../rule
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
 
+/** One base item on a seal's shelf, and whether that seal reaches it. */
+export interface ShelfEntry {
+  id: string;
+  reachable: boolean;
+}
+
 /** What the Reliquary can sell in one slot under one seal. */
 export interface OfferView {
   seal: SealDef;
@@ -33,6 +39,10 @@ export interface OfferView {
   /** The base items this seal can actually hand you, best first. Shown, because
    *  "you buy the shape and the odds" is only true if the shape is legible. */
   stock: string[];
+  /** The same ladder including the bases this seal CANNOT reach, so the panel
+   *  can grey them. `stock` is what you get; this is what you are choosing
+   *  between, and the difference between the two is what the price buys. */
+  shelf: ShelfEntry[];
   floor: string;
   ceiling: string;
   affordable: boolean;
@@ -100,11 +110,31 @@ export class HubSystem {
    *  panel opens, and a cache here would be a second copy of the item table
    *  that a new row could silently fall out of. */
   stock(slot: AffixSlot, seal: SealDef): string[] {
+    return this.shelf(slot, seal).filter((e) => e.reachable).map((e) => e.id);
+  }
+
+  /** The WHOLE ladder for a slot, best first, each base flagged with whether
+   *  this seal can reach it.
+   *
+   *  `stock()` above is the buy pool and answers "what can this hand me".
+   *  This answers "what is on the shelf, and how much of it is above your
+   *  price" — a different question with a different consumer, which is why it
+   *  is a second method rather than a flag on the first.
+   *
+   *  It exists because the panel used to draw only the reachable half, and a
+   *  strip of four icons tells a player nothing: four out of what? The number
+   *  a seal's price is really buying is the part you CANNOT see when you only
+   *  render what you can afford. Showing the excluded bases greyed turns the
+   *  strip from decoration into the actual comparison between the three seals,
+   *  which is the one comparison the panel exists to support. */
+  shelf(slot: AffixSlot, seal: SealDef): ShelfEntry[] {
     const ranked = Object.values(ITEMS)
       .filter((d) => !d.relic && affixSlotOf(d) === slot)
       .sort((a, b) => baseWorth(a) - baseWorth(b));
     const from = Math.floor(ranked.length * seal.stockFloor);
-    return ranked.slice(from).reverse().map((d) => d.id);
+    return ranked
+      .map((d, i) => ({ id: d.id, reachable: i >= from }))
+      .reverse();
   }
 
   /** Everything the Reliquary will sell in one slot, cheapest seal first. */
@@ -117,6 +147,7 @@ export class HubSystem {
         seal,
         gold: price,
         stock: this.stock(slot, seal),
+        shelf: this.shelf(slot, seal),
         floor: rarityDef(band.floor ?? 'plain').name,
         ceiling: rarityDef(band.ceiling ?? 'hallowed').name,
         affordable: gold >= price,

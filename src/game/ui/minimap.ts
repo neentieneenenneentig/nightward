@@ -15,6 +15,7 @@
 // looking at the actual screen.
 import { CFG } from '../data/config';
 import { TILE } from '../world/worldgen';
+import { GOLD_ID } from '../data/items';
 import { rarityColor, rarityOf } from './rarity';
 import type { GameState } from '../state';
 
@@ -109,6 +110,11 @@ export class Minimap {
 
     // ---- ground drops: rarity-coloured, which is the whole point ----
     for (const d of state.drops) {
+      // B5 Q2: coins have no rarity — rarityOf() answers 'plain' for a pseudo-id,
+      // which would draw a scattered boss hoard as the same faint specks as
+      // stray timber. The radar is exactly how you find the stragglers a 2.4×
+      // spread threw into the trees, so the pile gets its own colour.
+      if (d.id === GOLD_ID) { dot(d.x, d.y, 1.8, 'rgba(216,168,58,0.95)'); continue; }
       const r = rarityOf(d.id);
       dot(d.x, d.y, r === 'plain' ? 1.2 : 2.2, r === 'plain' ? 'rgba(214,203,180,0.5)' : rarityColor(d.id));
     }
@@ -163,6 +169,44 @@ export class Minimap {
         g.restore();
       }
     }
+
+    // ---- N4.4: the Scrying readout ----
+    //
+    // Scrying's problem was never the mapping, it was that the effect is
+    // invisible without a baseline. A player on their first run has never seen
+    // the other size, so a 1.30× disc and a 1.00× disc are the same picture —
+    // the mechanic was real and unobservable at the same time, which is the
+    // dormant-row sin with the row swapped for a radius.
+    //
+    // One line of text is the baseline. Veil-legal (pillar 7): it names the
+    // sense, never the instrument. "Scrying" has been this game's word for the
+    // resolver since N1 and the raw milliseconds stay in the Lens where the
+    // raw numbers live.
+    //
+    // Painted here rather than as a sibling DOM node because this canvas
+    // already repaints at 10 Hz — a DOM readout would need its own update path,
+    // its own dirty-cache, and its own reason not to have drifted out of sync
+    // with the disc it is describing. Drawn LAST so it wins against the hall
+    // arrow, which shares the bottom rim with it.
+    const s = Math.max(0.5, Math.min(2, sight));
+    const label = `SCRYING ×${s.toFixed(2)}`;
+    g.font = '600 8px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+    g.textAlign = 'center';
+    g.textBaseline = 'alphabetic';
+    const tw = g.measureText(label).width;
+    // A backing plate, because what sits under this is whatever the world is.
+    // fillRect rather than roundRect: the latter is Chrome 99+/Safari 16+ and
+    // is not worth a compatibility question for a 2px corner radius under 8px
+    // text nobody will measure.
+    g.fillStyle = 'rgba(12,9,6,0.72)';
+    g.fillRect(half - tw / 2 - 4, C - 15, tw + 8, 12);
+    // Green wider, orange narrower, and a quiet grey at exactly neutral — the
+    // same three readings the omen chips use, so the HUD has one colour idiom.
+    // Neutral is deliberately still SHOWN: an unmeasured run displaying ×1.00
+    // tells the player the sense exists and is currently saying nothing, which
+    // is pillar 5 made visible rather than merely obeyed.
+    g.fillStyle = s > 1.001 ? '#8fd98f' : s < 0.999 ? '#f08a6a' : 'rgba(214,203,180,0.55)';
+    g.fillText(label, half, C - 6);
   }
 }
 

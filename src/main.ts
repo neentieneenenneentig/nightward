@@ -133,6 +133,9 @@ async function boot() {
   // shared context every system reads/writes
   const ctx: any = {
     state, world, worldCore, chunks, views, cam, player, spawnPoint: spawn, log,
+    // B5 Q2 test seam: the icon atlas, so the suite can prove a coin is drawn
+    // as coins rather than as art.itemIcon()'s grey-pebble fallback for unknown ids.
+    art,
     floaters,
     isNight: () => phase(state.clock).isNight,
     nightIndex: () => phase(state.clock).dayIndex,
@@ -404,7 +407,12 @@ async function boot() {
       if (gather.target) return { label: labelFor(gather.target.def) + ' (E)', frac: 0 };
       return null;
     },
-    // N4.3 + A8: one chip row for everything temporarily true about the world.
+    // N4.3 + A8: everything temporarily true, in one list, each row stamped with
+    // its `kind`. The HUD splits that list into two badge rows on `kind` alone —
+    // an Omen is something happening to the WORLD, a Boon is something true of
+    // YOU, and one row meant neither read under pressure (verdict, 2026-08-22).
+    // The split lives in the view layer, not here: this is the source of truth
+    // for what is active, and it should not also own how it is arranged.
     // Omens first because they are the ones the player did not choose.
     worldStateView: () => [
       ...omens.active.map((o) => ({

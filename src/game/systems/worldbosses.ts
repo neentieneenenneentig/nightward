@@ -229,7 +229,12 @@ export class WorldBossSystem {
 
     const def = defOf(b.defId);
     const [gmin, gmax] = CFG.worldBoss.goldOnKill;
-    state.player.gold += gmin + Math.floor(Math.random() * (gmax - gmin + 1)) + b.level * 20;
+    const goldWon = gmin + Math.floor(Math.random() * (gmax - gmin + 1)) + b.level * 20;
+    // B5 Q2: a lord is a boss by construction — there is no enemy row to read a
+    // `boss` flag off, which is why awardGold takes the claim as an argument.
+    // At the shipped 'boss' setting this hoard bursts across the floor with the
+    // relics, which is the only reason the number was ever worth this much.
+    this.ctx.drops.awardGold(goldWon, b.x, b.y, true);
     // B5: a lord's hoard bursts outward rather than teleporting into the bag.
     // Relics are gear, so they never despawn — nothing rare is ever lost to a timer.
     // A1: a domain lord is the only ordinary route to a Sovereign — floor

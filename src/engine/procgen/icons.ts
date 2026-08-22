@@ -131,6 +131,19 @@ export function makeIcon(spec: IconSpec): HTMLCanvasElement {
       p.set(2, 11, a); p.set(3, 10, a); p.set(4, 10, lighten(a, 18)); // knot
       p.set(3, 12, darken(a, 12)); p.set(2, 12, lighten(c, 10));
       break;
+    case 'coin':
+      // B5 Q2 — a small heap of coins, not one big disc. Three overlapping
+      // ellipse-ish discs read as "a pile" at the 16 px the world sprite is
+      // drawn at, where a single coin reads as a button.
+      p.rect(3, 10, 8, 12, darken(c, 18));                       // back coin, low-left
+      p.rect(4, 9, 7, 9, c); p.set(5, 9, lighten(c, 30));
+      p.rect(8, 8, 13, 10, darken(c, 8));                        // right coin
+      p.rect(9, 7, 12, 7, c); p.set(10, 7, lighten(c, 34));
+      p.rect(5, 4, 10, 7, c);                                    // top coin, catching the light
+      p.rect(6, 3, 9, 3, lighten(c, 18));
+      p.set(6, 4, a); p.set(7, 4, lighten(a, 25));               // shine
+      p.rect(5, 7, 10, 7, darken(c, 22));                        // its rim
+      break;
     default:
       p.rect(4, 4, 11, 11, c);
   }
