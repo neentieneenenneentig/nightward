@@ -139,6 +139,22 @@ fix belongs.** A8's boons made `wearOnly()` a lie: it cleared gear, sockets and 
 not the new thing that also feeds `activeEffects()`. Every test that isolates already calls
 that helper; patching the two call sites that went red is how the third one gets missed.
 
+**13. A parser test that only feeds it the shapes it already handles is a mirror, not a
+test.** N4.4 extracted `parseDohAnswer` from a filter accepting DNS record types 1, 28 and 12
+and kept only the first two — silently emptying the Vessel's ISP row forever, because type 12
+is PTR and `resolvePtr()` is its only source. The extraction shipped with an adversarial
+parser test of nine malformed inputs, and it stayed green, because every input it tried was a
+type the new code already knew. **Enumerate the accepted set as a named table and have the
+test walk it**, so a dropped case fails at the parser instead of going quiet three files
+downstream. The generalisation: when you narrow an input domain, the test must be written
+against the CALLERS' needs, not against the new code's behaviour.
+
+**14. A test that moves a clock forward has to move it back.** The A4 radar test stamped
+`minimap.draw`'s throttle to `performance.now() + 2e6` to defeat the 10 Hz gate, and never
+restored it — so any `?test` run froze the player's own radar for the following half hour.
+Anything a test pushes into the future (a throttle, a cooldown, a respawn timer) is world
+state in a suite that shares one live world, and belongs in the same `finally` as the rest.
+
 ### The shared-world hazards
 
 `regression.ts` tests all run against **one live world**, in order, and `ok()` **throws**.

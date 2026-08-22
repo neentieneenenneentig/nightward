@@ -12,15 +12,15 @@ shipped is deleted, not archived — see "Retired plan documents" at the bottom.
 > — but its parameters are now live functions of your internet connection. Same tab, same
 > seed, totally different world depending on where and how you're connected.
 
-## Where we are — 2026-08-21
+## Where we are — 2026-08-22
 
-**Active branch: `dev/night-build`.** Eleven milestones are shipped-and-unmerged on it — B5,
-B6, N4.1, N4.2, N4.3, A1, A4, A3, A5, A8 and the C4 repair. `main` is still at the last tagged
-release, and nothing merges to it without explicit sign-off.
+**Active branch: `dev/night-build`.** Twelve milestones are shipped-and-unmerged on it — B5,
+B6, N4.1, N4.2, N4.3, N4.4, A1, A4, A3, A5, A8 and the C4 repair. `main` is still at the last
+tagged release, and nothing merges to it without explicit sign-off.
 
-**Gauntlet 2055–2058 across 120 tests**, nine consecutive green runs. Typecheck clean on both
-tsconfigs, build green. (Counts drift by a few from RNG-dependent assertion loops — the test
-*names* are the regression signal, not the total.)
+**Gauntlet 2134 across 124 tests**, green. Typecheck clean on both tsconfigs, build green.
+(Counts drift by a few from RNG-dependent assertion loops — the test *names* are the
+regression signal, not the total.)
 
 ### Open and owed
 
@@ -35,8 +35,86 @@ tsconfigs, build green. (Counts drift by a few from RNG-dependent assertion loop
 | **A8 balance** | is a Cairn's wake the right price? Five foes at the current night's scaling on top of a guaranteed Hallowed — arguably correct (the payout is flat, so the risk should scale), arguably a trap (the best drop becomes unreachable exactly when you need it). `CFG.a8.cairnWake` is its own switch so this can be answered alone | user |
 | **A8 balance** | can the Hoarder actually be caught? Tuned to outrun a bare player by 2 px/s, so it needs a slow, a ranged option or terrain. If the answer is "never", the real question is whether players chase it a second time | user |
 | **A8 balance** | do three concurrent Boons read as anything mid-fight? Twelve boons over fifteen hooks, three live at once, sharing one HUD chip row with the Omens | user |
-| **unstarted, ungated** | A6 (the Hall becomes a hub / the gambler), N4.4 (Scrying — recon done, no code), N4.5–N4.7 | — |
+| **N4.4 balance** | is the radar the right place for Scrying? It is the one HUD element whose value is spatial, so it is the honest target — but the effect is invisible unless the player has seen the other size. A first-run player has no baseline to notice it against | user |
+| **N4.4 balance** | the band is 0.75×–1.5× on a 58-tile disc, off a transform that hits its floor at 75 ms. Most home connections resolve in 10–40 ms, so most players will sit near the top of the band and only ever see the radar shrink on a bad network. Correct (a good connection should feel good), or should neutral sit mid-band? | user |
+| **unstarted, ungated** | A6 (the Hall becomes a hub / the gambler), N4.5–N4.7 | — |
 | **unstarted, gated** | A2 (on the two N4.3 numbers above), A7 (on N4.5) | — |
+
+---
+
+> ## N4.4 — Scrying, 2026-08-22 (branch `dev/night-build`, unmerged)
+>
+> The ROADMAP has carried **"DNS resolution time → Scrying skill — reveals map by resolving
+> domains"** since N1, and N4.0 made it load-bearing when it moved the discovery mechanic off
+> favicon fetches and onto DoH. This is that promise. **Gauntlet 2134 across 124 tests.**
+>
+> ### What shipped
+>
+> Every beacon the game already resolves now times itself, and the **median** of those
+> resolutions sets the radius of the minimap disc: a sharp resolver folds more world into the
+> radar, a crawling one narrows it. Deliberately passive — no new request, no new host, no new
+> verb. Scrying reads a number the wire was already producing, which is the same trade N4.1
+> made and the reason this phase was scoped "self-contained, tiny bandwidth".
+>
+> IPv6 rides the same answers: the first sighting of a host gets one AAAA query, ~13 across a
+> session, and one v6 answer latches `ipv6Live` for the run. The host is never contacted — the
+> resolver answers, usually from cache — so the game learns whether this network carries a
+> working v6 answer set without a packet going near the name it asked about.
+>
+> ### Most of the brief was already standing, and that was the problem
+>
+> N4.4's brief listed "resolver race, PTR on own IP, AAAA/IPv6, TTL, DNSSEC `AD`, per-beacon
+> real IPs". Five of those six had shipped with N4.0 and N4.1 as a side effect of moving
+> discovery onto DoH. What was actually missing was AAAA and — much more to the point — **any
+> game consequence whatsoever.** The phase as written was a pile of readings with no verb,
+> which is the dormant-row sin at the scale of a milestone. The radar is the fix: it is the one
+> HUD element whose value is spatial, so it is the honest target for a measurement about reach.
+>
+> ### Three defects, none of which the Gauntlet found
+>
+> All three came out of reading the work back, not out of anything going red — worth recording
+> because the suite was green across every one of them.
+>
+> - **`parseDohAnswer` dropped record type 12.** It was extracted from a filter accepting 1, 28
+>   AND 12, and kept the first two. Type 12 is PTR, `resolvePtr()` is its only caller, and that
+>   call is the entire source of the Vessel's ISP row — which could therefore never have filled
+>   again. The extraction shipped **with** an adversarial parser test of nine malformed inputs
+>   and stayed green, because every input it tried was a type the new code already knew. The
+>   accepted set is now a named table (`DOH_READ_TYPES`) and the test walks it. **New WORKFLOW
+>   rule 13:** a parser test fed only the shapes it already handles is a mirror, not a test.
+> - **A host the rate gate refused was burned for the run.** `aaaaChecked` was marked before
+>   the probe fired. `ipv6Live: false` documents itself as "not yet seen", which is only honest
+>   if a host no request was ever made for gets asked again. The line drawn is between "never
+>   asked" and "asked and got nothing" — not between success and failure.
+> - **One resolution was enough to move the radar.** A single cold-cache lookup measures a
+>   cache miss, not a network; publishing it snapped the disc to a clamp on the first probe and
+>   drifted it back over the next minute, which reads as a bug rather than as weather.
+>   `DNS_MIN_SAMPLES` holds the neutral value until three have landed — the same rule pillar 5
+>   applies to a probe that never answers, since "not yet measured" is a kind of not answering.
+>
+> ### The test that was missing was the one that mattered
+>
+> The first pass shipped a mapping-table test and a parser test. Both real, both entirely
+> upstream of the game, and **neither could tell you whether the radar had ever moved.** The
+> radar is now measured in pixels off the live HUD canvas: one foe forty tiles east, three
+> sight values, the red mark located by scanning. At neutral it lands 42.5px from centre, and
+> the assertion is that a 58-tile disc drawn into a 124px circle must put a 40-tile foe at
+> 40/58 of the way out — ~42.8px — which is the claim in the design's units rather than the
+> render recomputing its own `span` and agreeing with itself. Sharp Scrying pulls it to 28.3,
+> dim pushes it to 56.8, and a control redraw proves the measurement is stable.
+>
+> Four mutations, each confirmed red then reverted: the sight multiplier cut from `span`
+> ("sharp Scrying widens the radar (42.5 < 42.5)"); PTR dropped from the parser, which
+> reproduces the exact regression this milestone shipped with; the sample floor removed; the
+> gate-refusal release removed. `grep -c MUTATION` is 0.
+>
+> ### One older bug, fixed in passing
+>
+> `minimap.draw()` throttles at 10 Hz, so a test must hand it a far-future timestamp to be sure
+> it ran — and **testHudSurfaces has been stamping `performance.now() + 2e6` since A4 without
+> putting it back**, freezing the player's own radar for half an hour after any `?test` run.
+> **New WORKFLOW rule 14:** anything a test pushes into the future is world state in a suite
+> that shares one live world, and belongs in the same `finally` as the rest.
 
 ---
 

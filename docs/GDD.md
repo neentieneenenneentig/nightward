@@ -175,6 +175,17 @@ gather speed), **Fray** (horde aggression), **Silt** (movement drag) and **Apert
 (carrying capacity), and each falls back to the browser estimate when the edge is
 unreachable — a filtered network plays a balanced game, never an accidentally easy one.
 
+**Scrying (N4.4): how far you can see is how fast you resolve.** Every beacon the game
+discovers is resolved through DoH rather than fetched, and each of those resolutions is timed.
+The **median** — not the mean, so one slow answer cannot permanently dim the world — sets the
+radius of the corner radar: a sharp resolver folds more map into the same disc, a crawling one
+narrows it, across a 0.75×–1.5× band. It is the only mapping in the game whose effect is
+*spatial*, which is why the radar is the honest target for it: a measurement about how far the
+network reaches should change how far the player can see. The reading is passive — no new
+request, no new host — and holds its neutral value until three resolutions have landed, because
+one cold-cache lookup measures a cache miss and not a network. The same answers reveal whether
+the connection carries **IPv6**, without the host being contacted at all.
+
 **Omens (N4.3): the level and the step are different things.** The mappings above describe
 your connection's *steady state* — a permanently lossy link plays a permanently harder
 game. An **Omen** is the moment it *changes*. A session-long time series (the Chronicle)
@@ -609,7 +620,9 @@ before A4 the game had no tooltips of any kind, and a rolled item would have bee
 differently-coloured name with no way to interrogate it. Ground drops at Woven and above
 throw a rarity-coloured **light beam** with the item's name floating above it, and a
 corner **minimap** shows the Hall (with a rim arrow when it is off the edge), your
-territory, live drops in their tier colours, and everything hunting you.
+territory, live drops in their tier colours, and everything hunting you. Its *radius* is not
+fixed — **Scrying** (4.2) widens or narrows it with your DNS resolution speed, which is the one
+place in the HUD where the Wire changes what you can physically see.
 
 **The Lens** (`O`) is deliberately visually distinct from the rest of the chrome —
 clinical dark monospace, zero CSS-variable coupling to the main theme — because it's a
