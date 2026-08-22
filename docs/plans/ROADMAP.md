@@ -14,55 +14,257 @@ shipped is deleted, not archived — see "Retired plan documents" at the bottom.
 
 ## Where we are — 2026-08-22
 
-**Active branch: `dev/night-build`.** Thirteen milestones are shipped-and-unmerged on it —
-B5, B6, N4.1, N4.2, N4.3, N4.4, A1, A4, A3, A5, A6, A8 and the C4 repair. `main` is still at
-the last tagged release, and nothing merges to it without explicit sign-off.
+**Active branch: `dev/night-build`.** Nineteen milestones are shipped-and-unmerged on it —
+B5, B6, N4.1, N4.2, N4.3, N4.4, N4.5, N4.6, N4.7, N4.7b, A1, A2, A3, A4, A5, A6, A7, A8 and
+the C4 repair. `main` is still at the last tagged release, and nothing merges to it without
+explicit sign-off.
 
-**Gauntlet 2273–2276 across 130 tests**, fourteen consecutive green. Typecheck clean on both
-tsconfigs, build green. (Counts drift by a few from RNG-dependent assertion loops — the test
-*names* are the regression signal, not the total.)
+**Gauntlet 2653 across 140 tests**, green. Typecheck clean on both tsconfigs, build green.
+(Counts drift by a few from RNG-dependent assertion loops — the test *names* are the
+regression signal, not the total.)
 
-**Batch A is complete except where it is gated.** A6 was the last ungated phase. **A2 was
-unblocked on 2026-08-22** when both its N4.3 numbers were decided; A7 is still welded to N4.5.
-
-**Fifteen open balance verdicts were closed on 2026-08-22** — see *Decided* below. Eight of
-them cost work; **that queue is now done** and the batch is described in *Balance batch,
-2026-08-22* further down.
+> ### Both live plans are now fully built.
+>
+> [`A-arsenal.md`](A-arsenal.md) and [`N4-deep-wire.md`](N4-deep-wire.md) have no unshipped
+> phases left. **A2** was unblocked on 2026-08-22 when both its N4.3 numbers were decided and
+> shipped the same day; **A7** was welded to **N4.5** by its own brief and the two shipped as
+> one selector; **N4.6** and **N4.7** followed; and **N4.7b** closed §2.6, the last unbuilt
+> section in either document.
+>
+> By this file's own doctrine a plan that has shipped is **deleted, not archived** — see
+> *Retired plan documents* at the bottom. Neither has been retired yet, because one idea in
+> each is still standing and the call on whether it is worth keeping is the user's:
+>
+> | document | what is left in it | worth building? |
+> |---|---|---|
+> | `N4-deep-wire.md` §2.8f | **Connection-limit probing.** Fire N parallel requests at an `h1` host and an `h2` host; the HTTP/1.1 six-connection limit shows up as visible head-of-line stair-stepping while h2 multiplexes flat. Researched, never phased — it is in §2.8's list but in no phase row | costs a handful of requests. Would pair naturally with N4.7's Protocol Reality panel, which currently *names* the protocol without demonstrating what it changes |
+> | `A-arsenal.md` §4.3 | **Classes, declined.** Recorded as a decision, not a gap | no — the verdict was to build the Loom out instead, and the Loom is built |
+>
+> Everything else in both files is either shipped or an answered question. Say the word and
+> they get deleted with their path and sha recorded below, the way `BG-batch-proposal.md` was.
 
 ### Open and owed
 
 | | what | decided by |
 |---|---|---|
-| **playtest verdict** | twelve milestones — Batch G, Batch B, `fix/sound-rollback`, N4.1–N4.4, A1 / A3 / A4 / A5 / A6 / A8, the C4 repair. Automated pass started 2026-08-22; the **feel** verdict is still owed and cannot be delegated | user |
-| **merge to `main`** | `dev/night-build` is 60 commits and thirteen milestones ahead. Nothing merges without an explicit go-ahead | user |
+| **playtest verdict** | **eighteen** milestones — Batch G, Batch B, `fix/sound-rollback`, N4.1–N4.7b, A1–A8, the C4 repair. Automated pass started 2026-08-22; the **feel** verdict is still owed and cannot be delegated | user |
+| **merge to `main`** | `dev/night-build` is 66 commits and nineteen milestones ahead. Nothing merges without an explicit go-ahead | user |
+| **retire the plan docs** | both live plans are fully built. Delete them (recording path + sha) or keep them for §2.8f? | user |
 | **balance queue** | **done, 2026-08-22.** Seven applied, one overturned by its own re-measurement — see below | — |
-| **unstarted, ungated** | A2 (**unblocked** 2026-08-22), then N4.5–N4.7 | — |
-| **unstarted, gated** | A7 (on N4.5) | — |
+| **unstarted, ungated** | **none.** Both batches are complete | — |
+| **unstarted, gated** | **none** | — |
 
-### Decided — 2026-08-22
+---
 
-Fifteen questions had been accumulating across six milestones, several of them since Batch B.
-All fifteen were put to the user in one sitting and all fifteen came back. Recorded here in
-full, including the seven that changed nothing — **a verdict of "leave it" is a decision and
-deserves the same record as a retune**, or the same question gets asked again in a month.
+> ## N4.7b — The UDP path, 2026-08-22 (branch `dev/night-build`, unmerged)
+>
+> §2.6 was the last unbuilt section in either live plan. Every measurement this project had
+> ever taken rode TCP over HTTPS — `fetch`, the Performance API waterfalls, the trace, the
+> DoH resolvers, the Sounding's download. A STUN binding request is **UDP** and takes a
+> different path through the same network. Two roads out of the same house, and the game had
+> only ever walked down one.
+>
+> `systems/udp.ts` gathers ICE candidates against the two public STUN servers the plan names.
+> No media, no `getUserMedia`, no permission prompt, no data channel that ever opens, no peer
+> on the other end — about 200 bytes, once per run. They are now named in the **boot
+> disclosure** alongside the HTTPS endpoints, because a disclosure that enumerates only what
+> you reached with `fetch()` is a disclosure with a hole in it.
+>
+> Two mappings, both with a real consumer:
+>
+> | mapping | reads | drives | band |
+> |---|---|---|---|
+> | **The Warded Gate** | NAT class | building `maxHp`, applied once at placement | 0.9 / 1.0 / 1.2 |
+> | **The Swift Road** | time to first reflexive candidate | ability cooldowns | 0.85–1.15× |
+>
+> A NAT is literally the wall between a home network and the internet, and the three classes
+> are three strengths of wall. A symmetric NAT — the configuration that *breaks* peer-to-peer
+> games — is the strictest thing a consumer network does, and this repays it. Applied once at
+> placement beside the Loom multiplier and A1's Rooted, for their reason: carrying a laptop
+> onto a different network must not retroactively weaken a wall already standing.
+>
+> And the fourth masking signal §2.8c asked for from the start: the address STUN saw over UDP
+> against the one the trace saw over TCP. Worth 0.35 — a split tunnel or a TCP-only proxy has
+> few innocent explanations, but CGNAT and multi-WAN policy routing are two of them.
+>
+> ### The measurement that overturned the first classifier
+>
+> The first version read one `srflx` candidate from two configured servers and concluded
+> `unknown` — a comparison needs two. That was wrong, and it was wrong on the most common home
+> network there is. Measured, headless, each server alone and then together:
+>
+> | configured | srflx back | port | first answer | gathering |
+> |---|---|---|---|---|
+> | google only | 1 | 56672 | 35 ms | complete |
+> | cloudflare only | 1 | 51079 | 11 ms | complete |
+> | **both** | **1** | — | — | complete in 138 ms |
+>
+> Both alive, both fast, both answering. What happens with both configured is that ICE
+> **prunes redundant candidates** — two `srflx` entries with the same address and port are the
+> same candidate. The missing second candidate is not a silence. **It is the two servers
+> agreeing, and agreement is precisely the cone finding.**
+>
+> So: gathering completed on its own, two or more servers asked, exactly one v4 reflexive
+> candidate back ⇒ **cone**. A symmetric NAT gives the two servers different ports, the
+> candidates are not redundant, neither is pruned, and both arrive. A timeout stays `unknown`,
+> because a gather that never finished cannot tell a pruned duplicate from a server that went
+> quiet.
+>
+> That is a *deduction from browser behaviour*, not a comparison of two numbers, so the
+> reading carries `inferred` and the Lens tags it `derived` rather than `measured`. **Collapsing
+> those two would be the quietest possible lie on a panel whose entire job is honesty tags.**
+>
+> The same experiment settled a second thing: `relatedPort` on a `srflx` candidate is **0** in
+> Chrome, not the local port. The per-socket grouping stays — Firefox does populate it, and
+> grouping by a constant is harmless — but the comment now says so, because code that looks
+> like it is doing work and is not is worse than code that does nothing.
+>
+> ### Two smaller corrections it forced
+>
+> **A trait promised in a doc string is the dormant row wearing a different hat.**
+> `identity-ipv6` had advertised an "N4.7 Dual-Souled trait" in its `flowsInto` since N4.4 and
+> nothing was ever built. The promise is gone; the row now says what is true, which is that
+> the UDP walk's reflexive candidate is the *better* v6 answer — an AAAA record answers a
+> question about somewhere else.
+>
+> **`abilities.view()` divided remaining cooldown by the AUTHORED duration.** With the Swift
+> Road scaling the charged one, that ring would empty at the wrong rate and never reach zero —
+> the class of bug where the number is right and the thing the player *looks at* is wrong. The
+> charged duration is recorded per echo, and the tooltip quotes the effective cooldown with
+> the multiplier beside it.
+>
+> Five tests, 86 assertions. The classifier is pure and tested without a network: both
+> measured branches, the inference, the timeout guard that forbids it, both blocked paths and
+> the open one. Both mappings proved **monotone across their whole range** and neutral at the
+> value that is also their fallback. Both consumers driven through the game's own verbs — a
+> wall raised by `BuildSystem` and read back off state, and the cooldown ring asserted to stay
+> inside 0..1, which is exactly what a mismatched divisor would break.
+>
+> Gauntlet 2653/2653 across 140 tests, twice, no drift.
 
-| milestone | question | verdict | costs |
-|---|---|---|---|
-| N4.3 | `surgeFxStrength` at 0.5 — too strong? | **0.35.** A2 will add elite auras and telegraphs on top, and 0.5 was tuned with nothing else competing for the screen | one config number |
-| N4.3 | Fray × Surge compounding to ×1.81 | **Uncapped.** A bad wire during a Surge is supposed to be dangerous, and the Omen chip warns you it is coming | nothing — **and this unblocks A2** |
-| A1 | `heavy` rolls flat +2–6 and inverts the base ladder | **Keep it flat.** A lucky blue copper blade out-rolling a plain iron one is the best thing that can happen to an early drop | nothing |
-| A1 | Riftborn measured ×2.23 base damage | **Trim to ~×1.8.** Still unmistakably best-in-slot, but Sovereign stays worth wearing instead of being a consolation prize | a table edit, then re-measure through a worn blade (WORKFLOW 16) — **the re-measurement overturned the premise; see below** |
-| B5 Q2 | gold as physical coins | **Bosses only.** Routine kills credit instantly so a retreat never costs you gold; a boss bursts into a pile you walk through | `CFG.drops.goldDrops` becomes three-state, plus the burst |
-| A6 | seals priced against ~1,908g of tribute | **`priceMul` stays 1.0.** The top seal is a run-defining choice, not a purchase you repeat. Kill income rides on top and is still unmeasured | nothing — revisit if the playtest says otherwise |
-| A6 | the 1.8× rework escalation | **Keep 1.8.** Two reworks affordable, three a real decision, four a fantasy | nothing |
-| A6 | does the shelf strip read as the shelf? | **Show the full ladder and grey the half the seal cannot reach.** You see what you are *not* buying, which is the actual promise — and it makes the price gap between seals legible at a glance | panel work in `ui.ts` + `styles.ts` |
-| A8 | is a Cairn's wake the right price? | **Keep it as-is.** Flat payout, scaling risk. A night-6 Cairn is a wall you are meant to walk away from | nothing |
-| A8 | can the Hoarder be caught? | **Give it stamina.** Full speed for ~8s, then it slows — so a long chase always ends and committing to one is a decision that pays | new behaviour in the Hoarder |
-| A8 | three Boons sharing the Omen chip row | **Split them off.** An Omen is something happening to the world; a Boon is something true about you. One row means neither reads under pressure | HUD work |
-| N4.4 | is the radar the right home for Scrying? | **Keep the radar, add a readout.** The radar stays the mechanic, but the player is told their sight is at 1.3× — which is the baseline a first run has no way to feel | a HUD line |
-| N4.4 | the band floors at 75 ms and pins most players at the top | **Re-floor the transform at 25 ms.** Keeps neutral generous while spreading real-world latencies across the band, so the number moves during a session instead of sitting at the ceiling | the transform's floor |
-| — | how to close twelve playtest verdicts | **Run the playtest agent**, then the user plays. The agent answers the measurable half of twelve milestones at once; it does not replace a feel verdict | an agent run |
-| — | what next | **Apply these answers first**, before A2, N4.5 or any merge | the eight rows above |
+---
+
+> ## N4.5 + A7 — The Sounding and the Covenants, 2026-08-22 (branch `dev/night-build`, unmerged)
+>
+> **One control, two vocabularies.** The Veil calls it a covenant you swear; the Lens calls it
+> a data budget you consent to. They are the same row, and that is the whole design — A7's own
+> brief said in bold *do not build a second difficulty axis*, because two independent
+> difficulty systems is exactly what ships when two plans are written by the same person on
+> different days, and it makes both of them unbalanceable.
+>
+> Five tiers. `quiet` is the default and it is byte-for-byte the game that shipped: every
+> multiplier exactly 1.0, `budgetMB` 0, and the Sounding Stone refuses to fire. **A throughput
+> sounding spends the player's data** — not the developer's, not a server's, theirs, possibly
+> metered — which makes it the one thing in this project that cannot be a default.
+>
+> | pact | budget | hp | dmg | rarity floor | riftborn | legacy |
+> |---|---|---|---|---|---|---|
+> | The Quiet Pact | 0 MB | 1.00 | 1.00 | plain | no | 1.00 |
+> | The Listening Pact | 3 MB | 1.15 | 1.10 | plain | no | 1.15 |
+> | The Deep Pact | 12 MB | 1.35 | 1.25 | touched | yes | 1.40 |
+> | The Drowning Pact | 40 MB | 1.60 | 1.45 | woven | yes | 1.80 |
+> | The Abyssal Pact | 100 MB | 1.90 | 1.70 | woven | yes | 2.40 |
+>
+> Three rules the panel enforces rather than describes. **The budget is a hard ceiling for the
+> whole run, not a per-sounding rate** — a budget you can exceed by playing longer is not a
+> budget. **Every tier's cost is stated in megabytes, in the panel, before the player picks** —
+> not in a tooltip, not in a doc, not in the Lens. And **pacts raise only**: a difficulty
+> selector that can be turned down after the hard part is not a difficulty selector.
+>
+> Raising mid-run is allowed and is *fairly paid*, which is the part that took the thought. A
+> "whatever you hold at death" rule lets a player clear nine nights quiet and swear the Abyssal
+> Pact on the way out for ×2.4; a "lowest ever held" rule punishes raising so completely that
+> nobody would. **Weighting by nights** is the only version that makes raising a real decision —
+> the nights you already survived are scored at the price you actually paid for them.
+>
+> The rarity floor is an **overlay, never a mutation**: `covenantBand()` returns an adjusted
+> band and `LOOT_BANDS.rift.ceiling` is still `riftborn` afterwards. Raise-only, so a lord's
+> guaranteed Hallowed survives a Drowning Pact.
+>
+> `systems/sounding.ts` sequences idle baseline → download with a latency sampler running
+> underneath → upload → resolver race, and grades bufferbloat off the difference. The download
+> is timed **from first byte**, and `planSounding()` returns `null` rather than truncating
+> below the honest minimum — a short burst measures TCP slow-start, not bandwidth. The reward
+> pays gold and grants an **A8 Boon** rather than inventing a second buff system.
+>
+> Five tests, and the flake they caught: `testMobBirthStats` had been reading `veilPressure`
+> through the live net, which is a `PressureObserver` since N4.6 and was the JS heap before
+> that. Either way it is a number that moves **when the garbage collector runs**, which put the
+> hp/dmg product outside the fixture's bounds at random. WORKFLOW 11 — pin every input, measure
+> the thing.
+
+---
+
+> ## N4.6 + N4.7 — The Deep Vessel, and physics that checks the guess, 2026-08-22 (branch `dev/night-build`, unmerged)
+>
+> **N4.6 measures the vessel instead of the wire** — the machine and the browser the run is
+> happening inside. No packets, no prompts, nothing transmitted. `PressureObserver('cpu')`
+> replaces the Chrome-only JS-heap proxy the game had been inferring load from; LoAF gives real
+> main-thread stalls with attribution; `storage.estimate()`, the audio pipeline, the unmasked
+> GPU, media-device counts and the preference queries fill a tab.
+>
+> Three become real inputs. **Mercy** is the one that runs backwards on purpose: measured jank
+> *shrinks* enemy telegraph slack, so your dodges land. Every other row in the table says "your
+> network shapes your world"; this one says "and it will not be allowed to cheat you", which is
+> the same doctrine read from the other end. **Drop Memory** ties despawn to storage headroom —
+> and it shipped with a pillar-5 violation caught in smoke: an unreadable quota falls back to
+> `free = 1`, so the first transform paid every browser that cannot answer `storage.estimate()`
+> a permanent 15% gift. Re-banded to ceiling at exactly 1.0. **Reduced motion** is the one
+> reading the game *obeys* rather than displays.
+>
+> `veilPressure` was upgraded **in place** rather than given a second row. `getGameValue()`
+> resolves with `.find()`, so a second row aimed at an existing target is automatically dormant.
+> It branches on `cpuPressureState !== 'unknown'` and never on the number, because `cpuPressure`
+> is 0 at *both* `nominal` and `unknown`.
+>
+> **N4.7 derives truths from readings already taken.** Great-circle distance from the colo to a
+> timezone-estimated position against the kernel `min_rtt` gives speed-of-light efficiency,
+> which drives **Homeward** — a path whose packets go straight drops you close to the hall when
+> you fall; one that tours the country drops you a long way out.
+>
+> The panel first printed `efficiency 0.5` and "faster than the glass allows" — a true sentence
+> that reads as a bug. The fix was to let **the physics refute the guess**: when the reach
+> exceeds the horizon, the timezone estimate is provably wrong, efficiency goes to 0 and the
+> verdict says so. That refutation then became the *fifth and strongest* masking signal, because
+> it is not a heuristic at all — no weighting judgement, no cultural assumption, just a bound
+> that cannot be argued with.
+>
+> The masking panel is **evidence with confidence, never a verdict**. A false positive accuses a
+> player of something, so: bands not booleans, every signal shows what it compared, and a signal
+> whose inputs are unknown is *skipped* rather than counted as a miss. The timezone check
+> compares against `snap.country` and not the colo's country — Cloudflare routes you to a nearby
+> edge, so comparing to the colo agrees almost by construction.
+>
+> Also fixed: the Lens VESSEL tab was building a **WebGL context on every render at 4 Hz**,
+> which can evict the game's own context — Chrome caps at 16.
+
+---
+
+> ## A2 — Elites and champions, 2026-08-22 (branch `dev/night-build`, unmerged)
+>
+> Nine affixes, two ranks, and the failure mode the plan predicted in advance: *"Vigorous +
+> Warded + Leeching on a night-8 charger is an unkillable wall inside a fifteen-minute clock."*
+> Three guards shipped against it. A **conflict table** (`bulk` holds both survivability
+> affixes, so they can never roll together). A **per-night power budget** rather than an affix
+> count, so three cheap affixes and one expensive one cost the same. And `fromNight` gates on
+> the loud ones.
+>
+> Nine new *consumers*, not nine new subsystems. Every affix reuses proven machinery — the
+> march-step product, `damagePlayer`, `structureDmgMul`, the poison-DoT shape — with two
+> deliberate exceptions.
+>
+> **Venom bypasses `damagePlayer`.** Armour must not soften the affix that exists to answer
+> armour, and nobody is swinging, so dodge, thorns and soul-xp must not fire either. It still
+> has to be able to kill, which forced `fall()` out of `damagePlayer` as its own verb —
+> `damagePlayer` floors every hit at 1, so `damagePlayer(0)` would itself have dealt a point of
+> damage and rolled dodge.
+>
+> **`rollElite()` returns null before touching `Math.random`.** The Gauntlet seeds worlds and
+> compares spawn sequences, so a feature flag that consumes an RNG draw on its disabled path
+> shifts every downstream roll. A flag that changes the stream is not a flag.
+>
+> Unseen fades the body only — ring and nameplate stay at full alpha, because an invisible
+> enemy you cannot *locate* is a different and much worse mechanic than one you cannot see.
 
 ---
 

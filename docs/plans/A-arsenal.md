@@ -277,7 +277,7 @@ check a stat actually changed on the player**, not that a roll function returned
 
 ---
 
-### 5.2 A2 — Elites & champions
+### 5.2 A2 — Elites & champions ✅ **SHIPPED 2026-08-22**
 
 **Changed:** `data/enemies.ts` (+`ENEMY_AFFIXES`), `systems/hordes.ts` (roll at spawn).
 
@@ -443,7 +443,7 @@ before, exactly as this section said.
 
 ---
 
-### 5.7 A7 — Difficulty tiers ⚠️ **collides with N4.5**
+### 5.7 A7 — Difficulty tiers ✅ **SHIPPED 2026-08-22, merged into N4.5**
 
 Hero Siege has Normal → Nightmare → Hell → Inferno. **N4.5 already plans a difficulty axis**
 — the data-budget opt-in, where the tier you pick is both your bandwidth consent and your
@@ -557,12 +557,12 @@ everything after is depth.
 | Phase | Contents | Why here |
 |---|---|---|
 | **A1 — The Roll** ✅ | `rarity.ts`, `affixes.ts`, `systems/loot.ts`, the `fortune` mapping row, drop-histogram tests | Everything else decorates this. Mostly data, because the 15 effect hooks already work. **Shipped 2026-08-21.** |
-| **A2 — Elites** | `ENEMY_AFFIXES`, spawn-time roll, nameplates, aura rings, conflict table | Needs A1 to have something to drop. **Gated on the N4.3 balance verdict.** |
+| **A2 — Elites** ✅ | `ENEMY_AFFIXES`, spawn-time roll, nameplates, aura rings, conflict table | Needs A1 to have something to drop. Both gating N4.3 numbers came back 2026-08-22 and it shipped the same day. Three guards against the unkillable-wall failure the brief predicted: a conflict table, a per-night power BUDGET rather than an affix count, and `fromNight` gates. **Shipped 2026-08-22.** |
 | **A3 — The Bar** ✅ | `systems/abilities.ts`, Echoes promoted to actives, Resolve as the cost, cooldown sweeps | Independent of A1/A2; ran in parallel. **Shipped 2026-08-21.** |
 | **A4 — The Face** ✅ | orbs, comparison tooltips, loot beams, rarity colour everywhere, minimap | Makes A1 visible. **Shipping A1 without A4 ships an invisible feature.** **Shipped 2026-08-21.** |
 | **A5 — Weaves** ✅ | sockets, threads, `weaves.ts` | Multiplies A1's space; wants A1 tuned first. **Shipped 2026-08-21.** |
 | **A6 — The Hub** ✅ | Reliquary, Forge-Warden, `CFG.a6.priceMul` for the retune | Wants A1's tier weights settled. **Shipped 2026-08-22** — the retune is parked behind one config number until the playtest. |
-| **A7 — Covenants** | merge with N4.5's data-budget tier selector | **Blocked on N4.5.** Do not start early. |
+| **A7 — Covenants** ✅ | merge with N4.5's data-budget tier selector | Shipped as ONE selector with N4.5, exactly as §5.7 demanded. Five pacts, raise-only, nights-weighted legacy. **Shipped 2026-08-22.** |
 | **A8 — Cairns & the Hoarder** ✅ | Cairns, Wardstones, the Hoarder, `flee` behaviour, pick-one loot groups | Not "pure flavour" in the end — it is the first content in the game with a *price*. **Shipped 2026-08-21.** |
 
 **First cut A1 + A4 — shipped 2026-08-21.** That is the Hero Siege loop: kill, see a
@@ -570,11 +570,14 @@ coloured beam, walk over, read a tooltip, feel the upgrade. Gauntlet 1744/1744 a
 tests, 20 consecutive green runs, typecheck clean on both configs. See the ROADMAP entry
 for what the build actually found.
 
-**Next in this batch: A2 (Elites) — unblocked 2026-08-22.** Both gating N4.3 numbers came
-back: `surgeFxStrength` drops to 0.35 (A2's own telegraphs need the screen headroom), and
-Fray × Surge stays **uncapped** at ×1.81, so an elite pack meeting a Surge on a bad wire is
-a real and intended spike. A5 and A8 shipped 2026-08-21 and A6 on 2026-08-22 — see the
-ROADMAP entries. A7 still waits on N4.5.
+**Batch A is complete as of 2026-08-22.** A2 was the last ungated phase and shipped the
+day both its N4.3 numbers came back (`surgeFxStrength` to 0.35 so A2's own telegraphs have
+screen headroom, and Fray × Surge left **uncapped** at ×1.81, so an elite pack meeting a
+Surge on a bad wire is a real and intended spike). A7 shipped the same day, welded to N4.5's
+selector as §5.7 required. Every phase in the table above is ✅.
+
+The only thing still in this document that is not shipped is §4.3 — **classes, declined** —
+and that is a recorded decision rather than a gap.
 
 A batch of balance verdicts landed the same day and three of them are A-batch work: trim
 Riftborn from ×2.23 to ~×1.8, grey the unreachable half of the Reliquary's base ladder, and

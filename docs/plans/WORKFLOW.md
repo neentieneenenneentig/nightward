@@ -183,6 +183,26 @@ with a confident sentence in their hand. It now measures within three tiles of t
 names whatever it finds, and carries a matched control proving that measurement can see a
 drop at all.
 
+**18. Before concluding that something did not answer, check whether the platform
+deduplicated it.** N4.7b's first NAT classifier asked two STUN servers, got one reflexive
+candidate back, and concluded `unknown` — one server must not have replied, and a comparison
+needs two. Measuring each server on its own killed that: both answered, in 11 ms and 35 ms,
+and gathering completed in 138 ms with both configured. ICE **prunes redundant candidates**,
+and two candidates are only redundant when they carry the same address and port — so the
+missing second candidate was not a silence, it was *the two servers agreeing*, which was the
+exact finding the code had given up on. An absence produced by deduplication carries
+information; an absence produced by a timeout does not. The classifier now separates them on
+whether gathering finished on its own, and the reading that rests on the inference is tagged
+`inferred` so the panel never presents a deduction as a comparison.
+
+**19. A promise in a doc string is a dormant row wearing a different hat.** `identity-ipv6`
+had advertised `flowsInto: '... N4.7 Dual-Souled trait'` since N4.4 and no such trait was
+ever built. Nothing failed, because nothing *reads* a `flowsInto` — which is precisely the
+problem: the cardinal sin in this codebase is a data row nothing consumes, and a row that
+documents a consumer that does not exist is worse than one that admits it has none. "Surfaced
+for the Lens only" is an honest `flowsInto`. A named mechanic that was never written is a
+claim the next reader will spend an afternoon looking for.
+
 ### The shared-world hazards
 
 `regression.ts` tests all run against **one live world**, in order, and `ok()` **throws**.
