@@ -14,14 +14,16 @@ shipped is deleted, not archived — see "Retired plan documents" at the bottom.
 
 ## Where we are — 2026-08-22
 
-**Active branch: `dev/night-build`.** Twelve milestones are shipped-and-unmerged on it — B5,
-B6, N4.1, N4.2, N4.3, N4.4, A1, A4, A3, A5, A8 and the C4 repair. `main` is still at the last
-tagged release, and nothing merges to it without explicit sign-off.
+**Active branch: `dev/night-build`.** Thirteen milestones are shipped-and-unmerged on it —
+B5, B6, N4.1, N4.2, N4.3, N4.4, A1, A4, A3, A5, A6, A8 and the C4 repair. `main` is still at
+the last tagged release, and nothing merges to it without explicit sign-off.
 
-**Gauntlet 2133–2136 across 124 tests**, six consecutive green runs. Typecheck clean on both
-tsconfigs, build green.
-(Counts drift by a few from RNG-dependent assertion loops — the test *names* are the
-regression signal, not the total.)
+**Gauntlet 2213–2215 across 128 tests**, six consecutive green. Typecheck clean on both
+tsconfigs, build green. (Counts drift by a few from RNG-dependent assertion loops — the test
+*names* are the regression signal, not the total.)
+
+**Batch A is complete except where it is gated.** A6 was the last ungated phase; A2 waits on
+two N4.3 numbers and A7 is welded to N4.5.
 
 ### Open and owed
 
@@ -38,8 +40,106 @@ regression signal, not the total.)
 | **A8 balance** | do three concurrent Boons read as anything mid-fight? Twelve boons over fifteen hooks, three live at once, sharing one HUD chip row with the Omens | user |
 | **N4.4 balance** | is the radar the right place for Scrying? It is the one HUD element whose value is spatial, so it is the honest target — but the effect is invisible unless the player has seen the other size. A first-run player has no baseline to notice it against | user |
 | **N4.4 balance** | the band is 0.75×–1.5× on a 58-tile disc, off a transform that hits its floor at 75 ms. Most home connections resolve in 10–40 ms, so most players will sit near the top of the band and only ever see the radar shrink on a bad network. Correct (a good connection should feel good), or should neutral sit mid-band? | user |
-| **unstarted, ungated** | A6 (the Hall becomes a hub / the gambler), N4.5–N4.7 | — |
+| **A6 balance** | the seals are priced against **measured tribute of 1,908 gold per 900-second run** (pop 8, `goldRate` at its 1.5× ceiling; ~1,270 at a neutral wire). Kill income rides on top and is unmeasured. So a Lord's Seal is ~73% of tribute on a good wire and most of it on a bad one — is that the right shape, or should the top seal be reachable twice in a good run? `CFG.a6.priceMul` moves all of it at once | user |
+| **A6 balance** | does the Forge-Warden's 1.8× escalation bite at the right point? The first rework of a Hallowed is 420g and reads as cheap; the fourth is 2,449g and reads as impossible. The intended feel is "fix the one line that annoys you, then stop" | user |
+| **A6 balance** | the Reliquary shows its shelf as a strip of icons. Does a player read that strip as "these are the possible bases", or does it just look like decoration? It is the only thing making "you buy the shape and the odds" honest | user |
+| **unstarted, ungated** | N4.5–N4.7 | — |
 | **unstarted, gated** | A2 (on the two N4.3 numbers above), A7 (on N4.5) | — |
+
+---
+
+> ## A6 — The Hall becomes a hub, 2026-08-22 (branch `dev/night-build`, unmerged)
+>
+> A-arsenal §3.5 has said since the batch was written that **"gold is a number that goes
+> up"** — one sink in the whole game, a scatter-cache button, plus a death penalty. Every
+> other currency here is spent: materials build, threads socket, Loom points allocate. A
+> resource you only ever watch rise is a score, not an economy. This gives gold two verbs.
+> **Gauntlet 2213–2215 across 128 tests, six consecutive green.**
+>
+> ### What shipped
+>
+> Two buildable counters, both `unique`, both raised beside the Hall, both taking **gold**
+> where every other building takes materials — and both charging a second time in
+> **territory**, which is what the night scales on. A hub is paid for once when you raise it
+> and again every night it stands.
+>
+> - **The Reliquary.** Choose a shape (blade, armour, ring, amulet, charm, tool) and a seal;
+>   the seal decides the tier band and how far down the base ladder it will reach. Lesser
+>   240g / Touched→Hallowed / the whole shelf. Warded 620g / Woven→Sovereign. Lord's 1,400g /
+>   Hallowed→Sovereign / finest stock only. The roll itself is `rollItem()` — the same
+>   function a corpse calls, reading the same **Fortune** the wire is already feeding every
+>   other roll in the game. The Reliquary is inside the economy, not beside it.
+> - **The Forge-Warden.** Rework one line on one carried piece for gold plus materials. The
+>   uid does not change, so sockets, threads, weaves and the equip slot all survive; a worn
+>   item's stats update on the next read with nothing to notify.
+>
+> Interact is one key with two meanings: standing at a counter opens its panel, otherwise it
+> gathers. `CFG.a6.enabled = false` removes both rows from the build carousel *in order* and
+> stops a counter already standing from answering.
+>
+> ### Four arguments with the brief
+>
+> Recorded in A-arsenal §5.6 in full. In short: **one affix at a time is not enough** to stop
+> a slot machine, so the price of reworking a piece climbs 1.8× per prior rework of that same
+> piece; **a cursed line rerolls from the cursed pool**, because letting gold launder
+> Riftborn's price retires the rule that keeps the top of the ladder honest; **the base has
+> to be bounded, not just the tier**, or the most expensive purchase in the game can hand you
+> something worse than a free drop; and **no seal reaches the rift**, because `rarity.ts`
+> promises that band is the sole route to Riftborn and a shop selling it would retire that
+> sentence without anyone deciding to.
+>
+> ### Two defects the tests caught on their first run
+>
+> - **The proximity tie-break was inverted, and a comment was the reason.** The hub reach
+>   shipped at 2.4 tiles under a comment reading "TIGHTER than CFG.gather.reachTiles (3.2)".
+>   Gather reach is **1.6**. A Reliquary raised beside a tree would have stolen the chop —
+>   the exact failure the comment claimed to prevent. Two assertions pinning 2.4 and 1.6
+>   would both have passed; `ok(CFG.a6.reachTiles < CFG.gather.reachTiles)` failed
+>   immediately. Now 1.5 tiles = 48px, which still covers a diagonal neighbour's 45.3 so
+>   every tile touching a counter can trade. **New WORKFLOW rule 15.**
+> - **The damage test measured a state the game cannot produce.** It wore a blade by writing
+>   `state.player.equip.weapon = uid` and read **0.000 forever**, because `wornStat()` reads
+>   `soulItems[slot]` and only `toggleEquip()` binds it. Driving `ui.hooks.equip()` instead
+>   fixed it and proved main's equip wiring for free. **New WORKFLOW rule 16.**
+>
+> ### The tests
+>
+> Four, and the shape of all four is the same: driving `hub.buy()` proves `hub.buy()` works
+> and nothing else (rule 3), so each ends somewhere a player would look.
+>
+> - The escape hatch is **measured, not assumed**: the carousel with the flag off is asserted
+>   equal to the carousel with it on, minus exactly two ids, in the same order.
+> - The counter's reach is walked tile by tile and the flip point is asserted against
+>   `Math.floor(CFG.a6.reachTiles)`. Then `ui.hooks.interact()` — main's own hook — is pressed
+>   and the UI is asked which panel opened.
+> - **405 seals broken** across three seals and three shapes: every draw inside its band,
+>   every base off that seal's own shelf, and zero Riftborn, with a control proving the
+>   roller can still produce one (61–84 in 4,000 on the rift band).
+> - The forge: every other line byte-for-byte unchanged, threads still socketed in order,
+>   the second bill exactly 1.8× the first, and the **worn blade's live damage measured
+>   moving** (11.16 → 12.72) with a control that an untouched piece does not drift.
+>
+> Five mutations, each confirmed red then reverted: the escape-hatch filter, main's interact
+> dispatch, the cursed-pool branch, the seal's stock floor, and the price escalation.
+> `grep -c MUTATION` is 0.
+>
+> ### One older flake, fixed at its source
+>
+> A8's `ok(state.drops.length === 0, 'a Wardstone pays in a blessing, not in loot')` claimed
+> something about a Wardstone and measured **the entire world for the eight game-seconds the
+> harvest takes**. It went red about one run in five, blaming A8 for a drop A8 had nothing to
+> do with. It now measures within three tiles of the stone, names whatever it finds, carries
+> a control proving that measurement can see a drop at all, and asserts the Wardstone's loot
+> table is empty where a new row would break it. **New WORKFLOW rule 17: the failure message
+> is part of the test.**
+>
+> ### The retune is parked, deliberately
+>
+> §5.6 predicted it before the code existed: tribute is tuned against a world where gold does
+> nothing. Tribute alone measures **1,908 gold over a 900-second run** at pop 8 with
+> `goldRate` at its 1.5× ceiling — ~1,270 at a neutral wire, kills on top and unmeasured.
+> Every price passes through `CFG.a6.priceMul`, so the retune is one edit and it waits for
+> the playtest, which is what the plan asked for.
 
 ---
 

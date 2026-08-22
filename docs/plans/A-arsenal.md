@@ -126,6 +126,11 @@ death penalty. Gold is worth `×0.5` on the leaderboard and otherwise inert. Her
 gambler exists precisely to convert gold into loot anticipation, and we have a Hall sitting
 there doing nothing but being destructible.
 
+> **Closed by A6, 2026-08-22.** Two counters, both raised beside the Hall, both taking gold
+> where every other building takes materials. A run producing ~1,900 gold in tribute alone
+> can now afford roughly one Lord's Seal, or three reworks of a Hallowed piece, or a
+> handful of cheap gambles — so the number that went up is now a number you spend down.
+
 ---
 
 ## 4. The collision — Hero Siege is a forever-character game and we are not
@@ -372,23 +377,69 @@ the Loom, for the same reason: a run is its weave.
 
 ---
 
-### 5.6 A6 — The Hall becomes a hub
+### 5.6 A6 — The Hall becomes a hub ✅ **SHIPPED 2026-08-22**
 
-**Changed:** `data/buildings.ts`, `systems/economy.ts`.
+The brief, as written:
 
-Two buildable Hall-adjacent structures, giving gold its first real sink (§3.5):
+> **Changed:** `data/buildings.ts`, `systems/economy.ts`.
+>
+> Two buildable Hall-adjacent structures, giving gold its first real sink (§3.5):
+>
+> - **The Reliquary** *(the gambler)* — pay gold for an **unidentified** item: you buy the
+>   slot and the tier weighting, never the roll. Price scales with the tier floor you pay
+>   for. This is the purest loop in Hero Siege and it costs us one panel.
+> - **The Forge-Warden** *(the blacksmith)* — reroll **one** affix on one item for gold +
+>   materials. One affix, not all, so it is a repair for a near-miss rather than a slot
+>   machine that deletes the drop loop.
 
-- **The Reliquary** *(the gambler)* — pay gold for an **unidentified** item: you buy the
-  slot and the tier weighting, never the roll. Price scales with the tier floor you pay for.
-  This is the purest loop in Hero Siege and it costs us one panel.
-- **The Forge-Warden** *(the blacksmith)* — reroll **one** affix on one item for gold +
-  materials. One affix, not all, so it is a repair for a near-miss rather than a slot
-  machine that deletes the drop loop.
+**Shipped as `data/hub.ts` + `systems/hub.ts` + two panels.** `economy.ts` was never
+touched — the retune it predicted is deliberately deferred (see below), and both counters
+are thin wrappers over `rollItem()` and a new `reforgeAffix()` in `systems/loot.ts` rather
+than a second loot system beside the first.
 
-**Open balance question in §9:** tribute income is currently tuned against a world where
-gold does nothing. Adding two sinks changes what the `goldRate` mapping and the Night Market
-keystone are worth, and the leaderboard's `gold×0.5` weight starts competing with spending
-it. Expect a retune, and do it *after* the playtest, not before.
+**Four deviations, all deliberate**, recorded here because each is an argument with the
+brief and the next reader deserves the argument:
+
+1. **One affix at a time is not enough to stop it being a slot machine.** The brief's
+   reasoning is right as far as it goes, but rerolling ONE affix over and over is still a
+   slot machine — just a narrower one, and the correct play on any Hallowed drop would be to
+   feed it gold until every line is perfect. **The price of reworking a piece climbs 1.8×
+   per prior rework of that same piece** (`CFG.a6.reforgeEscalation`, counted in
+   `state.reforged[uid]`). First rework on a Hallowed: 420g. Second: 756. Fourth: 2,449 —
+   most of a run's income for one line of text. *That* is what makes it a repair.
+
+2. **A cursed line rerolls from the cursed pool.** The brief does not mention curses, and
+   the obvious implementation lets gold replace Riftborn's curse with a blessing. `rarity.ts`
+   rule 2 — "Riftborn always costs something" — is load-bearing for the whole top of the
+   ladder, and a shop that launders it retires the rule without anyone deciding to. You may
+   change **which** curse you carry. You may not stop carrying one.
+
+3. **"You buy the slot and the tier weighting" is only fair if the BASE is bounded too.**
+   A Hallowed Copper Blade is 6 damage × 1.24 plus affixes; a Plain Star-Metal Sword is 18.
+   Selling the top tier without bounding the base means the most expensive purchase in the
+   game can hand you something worse than a free drop — not a gamble, a bug the player
+   cannot distinguish from one. Each seal carries a `stockFloor` cutting the bottom of its
+   slot's ladder (a Lord's Seal reaches 4 of the 8 blades), and the panel **shows the shelf**,
+   because a seal that quietly excludes half the ladder while saying nothing is a shop lying
+   by omission. Ranking is `baseWorth()` = the item's own stat column **+ 2.5 per effect**,
+   so the four elemental sidegrades (Void, Fire, Frost, Storm) rank where they belong instead
+   of at the bottom with the starting blade.
+
+4. **No seal reaches the rift.** `rarity.ts` states the rift band is "the sole route to
+   Riftborn". The Reliquary stops one rung below the best thing in the game on purpose: gold
+   buys odds, and the rift still has to be walked into. Asserted over 405 draws, with a
+   matched control proving the roller can still produce one.
+
+**One more, smaller:** materials do **not** escalate with repeat reworks, only gold.
+Star-Metal is the scarcest thing in a fifteen-minute run and doubling it per rework would
+make the second attempt on a Sovereign a refusal wearing a price tag.
+
+**The retune §9 predicted is one number and it is still parked.** `CFG.a6.priceMul`
+multiplies every seal price and every forge bill. Tribute alone was measured at **1,908 gold
+over a full 900-second run** (pop 8, `goldRate` at its 1.5× ceiling; ~1,270 at a neutral
+wire) — kills ride on top and are the larger, more variable half. Against that floor a Lesser
+Seal is ~13% of a run's tribute, a Lord's Seal ~73%. Do the retune *after* the playtest, not
+before, exactly as this section said.
 
 ---
 
@@ -510,7 +561,7 @@ everything after is depth.
 | **A3 — The Bar** ✅ | `systems/abilities.ts`, Echoes promoted to actives, Resolve as the cost, cooldown sweeps | Independent of A1/A2; ran in parallel. **Shipped 2026-08-21.** |
 | **A4 — The Face** ✅ | orbs, comparison tooltips, loot beams, rarity colour everywhere, minimap | Makes A1 visible. **Shipping A1 without A4 ships an invisible feature.** **Shipped 2026-08-21.** |
 | **A5 — Weaves** ✅ | sockets, threads, `weaves.ts` | Multiplies A1's space; wants A1 tuned first. **Shipped 2026-08-21.** |
-| **A6 — The Hub** | Reliquary, Forge-Warden, gold retune | Wants A1's tier weights settled. |
+| **A6 — The Hub** ✅ | Reliquary, Forge-Warden, `CFG.a6.priceMul` for the retune | Wants A1's tier weights settled. **Shipped 2026-08-22** — the retune is parked behind one config number until the playtest. |
 | **A7 — Covenants** | merge with N4.5's data-budget tier selector | **Blocked on N4.5.** Do not start early. |
 | **A8 — Cairns & the Hoarder** ✅ | Cairns, Wardstones, the Hoarder, `flee` behaviour, pick-one loot groups | Not "pure flavour" in the end — it is the first content in the game with a *price*. **Shipped 2026-08-21.** |
 
@@ -519,9 +570,9 @@ coloured beam, walk over, read a tooltip, feel the upgrade. Gauntlet 1744/1744 a
 tests, 20 consecutive green runs, typecheck clean on both configs. See the ROADMAP entry
 for what the build actually found.
 
-**Next in this batch: A2 (Elites)**, still gated on the N4.3 balance verdict, or **A6 (The
-Hub)**, which is ungated but wants A1's tier weights settled by a playtest. A5 and A8 both
-shipped 2026-08-21 — see the ROADMAP entries.
+**Next in this batch: A2 (Elites)**, still gated on the N4.3 balance verdict. A5 and A8
+shipped 2026-08-21 and A6 on 2026-08-22 — see the ROADMAP entries. With A6 done, **every
+ungated phase in this batch is built**: A2 waits on two numbers and A7 waits on N4.5.
 
 ---
 

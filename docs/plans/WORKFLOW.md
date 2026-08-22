@@ -155,6 +155,34 @@ restored it — so any `?test` run froze the player's own radar for the followin
 Anything a test pushes into the future (a throttle, a cooldown, a respawn timer) is world
 state in a suite that shares one live world, and belongs in the same `finally` as the rest.
 
+**15. When a value is only correct RELATIVE to another value, assert the relation, not the
+two numbers.** A6 gave the hub counters `reachTiles: 2.4` under a comment reading "TIGHTER
+than CFG.gather.reachTiles (3.2)". Gather reach is **1.6**. The comment was wrong, the
+tie-break was therefore inverted, and a Reliquary raised beside a tree would have stolen
+the chop — the exact failure the comment claimed to prevent. Two assertions pinning 2.4 and
+1.6 would both have passed. `ok(CFG.a6.reachTiles < CFG.gather.reachTiles)` failed on the
+first run. **A comment that quotes a constant from another file is a claim with no test
+behind it, and it decays silently the moment either file is retuned.** If the relation
+matters, it is the assertion.
+
+**16. Build a fixture through the game's own verb, or measure a world the game cannot
+produce.** The A6 forge test wore a blade by writing `state.player.equip.weapon = uid`, and
+then measured the player's damage at **0.000 forever** — because `wornStat()` reads
+`soulItems[slot]`, and only `toggleEquip()` binds that. The assertion was not wrong about
+the game; it was right about a state no player can reach. Driving `ui.hooks.equip()` instead
+both fixed it and proved main's equip wiring for free. Where the game has a verb for
+reaching a state, the test uses the verb.
+
+**17. Scope an assertion to the subject its message names.** `ok(state.drops.length === 0,
+'a Wardstone pays in a blessing, not in loot')` claimed something about a Wardstone and
+measured *the entire world for eight game-seconds* — the length of the harvest it was
+holding down. It went red about one run in five and blamed A8 for a drop A8 had nothing to
+do with. The failure message is part of the test: an assertion whose scope is wider than its
+wording will one day accuse the wrong system, and send the next reader to the wrong file
+with a confident sentence in their hand. It now measures within three tiles of the stone,
+names whatever it finds, and carries a matched control proving that measurement can see a
+drop at all.
+
 ### The shared-world hazards
 
 `regression.ts` tests all run against **one live world**, in order, and `ok()` **throws**.

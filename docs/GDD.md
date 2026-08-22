@@ -397,6 +397,23 @@ tiered T1→T2→T3 in Legion-TD-style upgrade paths (e.g. the base Watchtower f
 Ember/splash line and a Frost/slow line, each culminating in an ultimate — Inferno/Forge or
 Glacier/Hail).
 
+**The Hall is a hub (A6).** Two `unique` counters are raised beside it, and they are the only
+buildings in the game that take **gold** rather than materials — which is also the only thing
+gold is for beyond a death penalty and one horde-thinning button. Walk up to either and the
+interact key opens it instead of gathering.
+
+- **The Reliquary** sells **sealed relics**: you choose the shape (blade, armour, ring,
+  amulet, charm, tool) and the **seal**, and the seal decides both the rarity band and how far
+  down that shape's base ladder it will reach — a Lord's Seal at 1,400 gold cannot hand you
+  the blade you started the run with. What is inside is never bought. The roll is the same one
+  a corpse makes, reading the same **Fortune** off the wire (§4.2), and **no seal reaches
+  Riftborn**: gold buys odds, the rift still has to be walked into.
+- **The Forge-Warden** reworks **one line** on one carried piece for gold plus materials, and
+  the new line can be worse than the old one. Each rework of the same piece costs 1.8× the
+  last, which is what keeps it a repair for a near-miss rather than a machine you feed until
+  every line is perfect. A Riftborn's curse rerolls into *another curse* — you may change
+  which price you pay, never that you pay one.
+
 **Placement is anchor-chained, not just hall-radius.** You may build within
 `CFG.build.maxDistFromHall` (18 tiles) of the Hall *or* of any placed **Waystone** — and
 waystones themselves must be placed in range of the Hall or another waystone. This lets a
