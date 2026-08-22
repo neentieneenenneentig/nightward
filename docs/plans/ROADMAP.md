@@ -22,29 +22,45 @@ the last tagged release, and nothing merges to it without explicit sign-off.
 tsconfigs, build green. (Counts drift by a few from RNG-dependent assertion loops — the test
 *names* are the regression signal, not the total.)
 
-**Batch A is complete except where it is gated.** A6 was the last ungated phase; A2 waits on
-two N4.3 numbers and A7 is welded to N4.5.
+**Batch A is complete except where it is gated.** A6 was the last ungated phase. **A2 was
+unblocked on 2026-08-22** when both its N4.3 numbers were decided; A7 is still welded to N4.5.
+
+**Fifteen open balance verdicts were closed on 2026-08-22** — see *Decided* below. Eight of
+them cost work, and that queue comes before A2 or N4.5.
 
 ### Open and owed
 
 | | what | decided by |
 |---|---|---|
-| **playtest verdict** | Batch G, Batch B, `fix/sound-rollback`, N4.1–N4.3, A1 / A3 / A4 / A5, the C4 repair | user |
-| **gates A2** | `CFG.omens.surgeFxStrength` — 0.5 may be too strong (N4.3) | user |
-| **gates A2** | Fray × Surge compounds to ×1.81 horde speed — intended, or capped? (N4.3) | user |
-| **A1 balance** | `heavy` rolls a flat +2–6 and can land at Touched, so a lucky blue copper blade beats a plain iron one. Deliberate Diablo behaviour, but it inverts the copper→iron→silver→star ladder | user |
-| **A1 balance** | a Riftborn weapon measured ×2.23 base damage (9 → 20.08) | user |
-| **B5 Q2** | should gold drop as physical coins? `CFG.drops.goldDrops` is `false`; a boss bursting into coins is the juiciest version of B5 and a one-row follow-up | user |
-| **A8 balance** | is a Cairn's wake the right price? Five foes at the current night's scaling on top of a guaranteed Hallowed — arguably correct (the payout is flat, so the risk should scale), arguably a trap (the best drop becomes unreachable exactly when you need it). `CFG.a8.cairnWake` is its own switch so this can be answered alone | user |
-| **A8 balance** | can the Hoarder actually be caught? Tuned to outrun a bare player by 2 px/s, so it needs a slow, a ranged option or terrain. If the answer is "never", the real question is whether players chase it a second time | user |
-| **A8 balance** | do three concurrent Boons read as anything mid-fight? Twelve boons over fifteen hooks, three live at once, sharing one HUD chip row with the Omens | user |
-| **N4.4 balance** | is the radar the right place for Scrying? It is the one HUD element whose value is spatial, so it is the honest target — but the effect is invisible unless the player has seen the other size. A first-run player has no baseline to notice it against | user |
-| **N4.4 balance** | the band is 0.75×–1.5× on a 58-tile disc, off a transform that hits its floor at 75 ms. Most home connections resolve in 10–40 ms, so most players will sit near the top of the band and only ever see the radar shrink on a bad network. Correct (a good connection should feel good), or should neutral sit mid-band? | user |
-| **A6 balance** | the seals are priced against **measured tribute of 1,908 gold per 900-second run** (pop 8, `goldRate` at its 1.5× ceiling; ~1,270 at a neutral wire). Kill income rides on top and is unmeasured. So a Lord's Seal is ~73% of tribute on a good wire and most of it on a bad one — is that the right shape, or should the top seal be reachable twice in a good run? `CFG.a6.priceMul` moves all of it at once | user |
-| **A6 balance** | does the Forge-Warden's 1.8× escalation bite at the right point? The first rework of a Hallowed is 420g and reads as cheap; the fourth is 2,449g and reads as impossible. The intended feel is "fix the one line that annoys you, then stop" | user |
-| **A6 balance** | the Reliquary shows its shelf as a strip of icons. Does a player read that strip as "these are the possible bases", or does it just look like decoration? It is the only thing making "you buy the shape and the odds" honest | user |
-| **unstarted, ungated** | N4.5–N4.7 | — |
-| **unstarted, gated** | A2 (on the two N4.3 numbers above), A7 (on N4.5) | — |
+| **playtest verdict** | twelve milestones — Batch G, Batch B, `fix/sound-rollback`, N4.1–N4.4, A1 / A3 / A4 / A5 / A6 / A8, the C4 repair. Automated pass started 2026-08-22; the **feel** verdict is still owed and cannot be delegated | user |
+| **balance queue** | the eight verdicts below that cost work. Do these before A2 or N4.5 | — |
+| **unstarted, ungated** | A2 (**unblocked** 2026-08-22), then N4.5–N4.7 | — |
+| **unstarted, gated** | A7 (on N4.5) | — |
+
+### Decided — 2026-08-22
+
+Fifteen questions had been accumulating across six milestones, several of them since Batch B.
+All fifteen were put to the user in one sitting and all fifteen came back. Recorded here in
+full, including the seven that changed nothing — **a verdict of "leave it" is a decision and
+deserves the same record as a retune**, or the same question gets asked again in a month.
+
+| milestone | question | verdict | costs |
+|---|---|---|---|
+| N4.3 | `surgeFxStrength` at 0.5 — too strong? | **0.35.** A2 will add elite auras and telegraphs on top, and 0.5 was tuned with nothing else competing for the screen | one config number |
+| N4.3 | Fray × Surge compounding to ×1.81 | **Uncapped.** A bad wire during a Surge is supposed to be dangerous, and the Omen chip warns you it is coming | nothing — **and this unblocks A2** |
+| A1 | `heavy` rolls flat +2–6 and inverts the base ladder | **Keep it flat.** A lucky blue copper blade out-rolling a plain iron one is the best thing that can happen to an early drop | nothing |
+| A1 | Riftborn measured ×2.23 base damage | **Trim to ~×1.8.** Still unmistakably best-in-slot, but Sovereign stays worth wearing instead of being a consolation prize | a table edit, then re-measure through a worn blade (WORKFLOW 16) |
+| B5 Q2 | gold as physical coins | **Bosses only.** Routine kills credit instantly so a retreat never costs you gold; a boss bursts into a pile you walk through | `CFG.drops.goldDrops` becomes three-state, plus the burst |
+| A6 | seals priced against ~1,908g of tribute | **`priceMul` stays 1.0.** The top seal is a run-defining choice, not a purchase you repeat. Kill income rides on top and is still unmeasured | nothing — revisit if the playtest says otherwise |
+| A6 | the 1.8× rework escalation | **Keep 1.8.** Two reworks affordable, three a real decision, four a fantasy | nothing |
+| A6 | does the shelf strip read as the shelf? | **Show the full ladder and grey the half the seal cannot reach.** You see what you are *not* buying, which is the actual promise — and it makes the price gap between seals legible at a glance | panel work in `ui.ts` + `styles.ts` |
+| A8 | is a Cairn's wake the right price? | **Keep it as-is.** Flat payout, scaling risk. A night-6 Cairn is a wall you are meant to walk away from | nothing |
+| A8 | can the Hoarder be caught? | **Give it stamina.** Full speed for ~8s, then it slows — so a long chase always ends and committing to one is a decision that pays | new behaviour in the Hoarder |
+| A8 | three Boons sharing the Omen chip row | **Split them off.** An Omen is something happening to the world; a Boon is something true about you. One row means neither reads under pressure | HUD work |
+| N4.4 | is the radar the right home for Scrying? | **Keep the radar, add a readout.** The radar stays the mechanic, but the player is told their sight is at 1.3× — which is the baseline a first run has no way to feel | a HUD line |
+| N4.4 | the band floors at 75 ms and pins most players at the top | **Re-floor the transform at 25 ms.** Keeps neutral generous while spreading real-world latencies across the band, so the number moves during a session instead of sitting at the ceiling | the transform's floor |
+| — | how to close twelve playtest verdicts | **Run the playtest agent**, then the user plays. The agent answers the measurable half of twelve milestones at once; it does not replace a feel verdict | an agent run |
+| — | what next | **Apply these answers first**, before A2, N4.5 or any merge | the eight rows above |
 
 ---
 

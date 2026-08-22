@@ -570,9 +570,16 @@ coloured beam, walk over, read a tooltip, feel the upgrade. Gauntlet 1744/1744 a
 tests, 20 consecutive green runs, typecheck clean on both configs. See the ROADMAP entry
 for what the build actually found.
 
-**Next in this batch: A2 (Elites)**, still gated on the N4.3 balance verdict. A5 and A8
-shipped 2026-08-21 and A6 on 2026-08-22 — see the ROADMAP entries. With A6 done, **every
-ungated phase in this batch is built**: A2 waits on two numbers and A7 waits on N4.5.
+**Next in this batch: A2 (Elites) — unblocked 2026-08-22.** Both gating N4.3 numbers came
+back: `surgeFxStrength` drops to 0.35 (A2's own telegraphs need the screen headroom), and
+Fray × Surge stays **uncapped** at ×1.81, so an elite pack meeting a Surge on a bad wire is
+a real and intended spike. A5 and A8 shipped 2026-08-21 and A6 on 2026-08-22 — see the
+ROADMAP entries. A7 still waits on N4.5.
+
+A batch of balance verdicts landed the same day and three of them are A-batch work: trim
+Riftborn from ×2.23 to ~×1.8, grey the unreachable half of the Reliquary's base ladder, and
+give the A8 Hoarder stamina. `heavy` stays flat, the Cairn's wake stays as it is, and both A6
+price knobs stay where they shipped. See ROADMAP → *Decided — 2026-08-22*.
 
 ---
 
