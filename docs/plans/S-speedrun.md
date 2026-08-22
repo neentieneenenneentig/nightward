@@ -30,6 +30,35 @@ worth speedrunning *and* worth looking at while you do.
 
 ---
 
+## 0.1 Decisions — 2026-08-22
+
+Six questions were put and six came back before a line was written. Recorded in full, because a
+verdict of "as proposed" is a decision too and deserves the same record as a reversal.
+
+| # | question | verdict | what it costs |
+|---|---|---|---|
+| **Q4** | how far up the graphics ladder? | **the whole ladder, SR4 → SR8.** Shader floor, real light, palette, feel, and the Diablo pass | roughly doubles the graphics track. It is now the larger half of the batch |
+| **Q2** | how hard is the finale? | **a wall you train against.** Most runs will not beat it | reshapes SR3 — see below. A boss most runs lose to changes what the scorecard has to reward |
+| **Q3** | does the Gathering survive? | **keep it at ~5 minutes.** It is the identity of the game | nothing — SR1 as written, shipped instrumented |
+| **Q5** | auto-attack? | **no. Keyboard-only, and movement stays the aim.** Mouse click defaults to pause/menu. Weapons are the core damage; elements are enchanted onto them; some auto from abilities is fine | a new phase, **SR0**, and it goes first |
+| **Q6** | how does building work without a mouse? | **ghost at your facing, hold and walk to paint** | part of SR0 |
+| **Q1** | the leaderboard's shape | **local board**, built so a global one can be added later | SR9, plus one cheap piece of insurance — see §2 |
+
+**Q5 is the answer that moved the most**, and most of it is already built. The user's words were
+*"i like that your movement affects how you do damage with current default attack"* — and going
+keyboard-only does not weaken that, it **sharpens** it. `combat.ts` already reads
+`player.aimAngle ?? FACING_ANGLE[player.facing]`, so deleting the mouse aim makes movement the
+*only* aiming verb in the game. That is a stronger version of the property that was asked to be
+kept, and it is a deletion rather than a feature.
+
+Likewise the elemental half. Echoes are **already** auto-firing abilities in a lord's element
+(C1, with an A3 active on top), and X1 already shipped four elemental weapons —
+`sword_fire`, `sword_frost`, `sword_void`, `sword_storm`, each carrying an `effects` row. What is
+missing is not the concept but the **generality**: today only four fixed swords have an element.
+SR2 makes it an affix any weapon can roll.
+
+---
+
 ## 1. Honest audit — three of the four games are already in here
 
 This project has a habit of writing plans for things it already owns. So, first, what actually
@@ -82,7 +111,7 @@ and the **power curve** that make a swarm a game instead of a crowd:
 
 ## 2. The collision — what the pivot costs
 
-Three pillars get touched. Two survive intact; one needs an explicit ruling.
+Three pillars get touched. Two survive intact; the third was ruled on before a line was written.
 
 **Pillar 8 (the Lifespan) survives, reworded.** The run stays ~15 real minutes and stays
 un-extendable. What changes is what the clock *does* at the end: instead of ending the run, it
@@ -92,22 +121,71 @@ what you accomplish inside the window" is more true when the window closes on a 
 **Pillar 1 (100% procgen) survives, and is not the problem.** See §4. A normal map generated
 from a seed is exactly as procedural as the sprite it belongs to.
 
-**Pillar 3 (no persistence except finished-run outcomes) needs a ruling.** A leaderboard is, by
-definition, *many* finished-run outcomes kept across sessions. Three ways out, in preference
-order, and this is **open question Q1**:
+**Pillar 3 (no persistence except finished-run outcomes) — ruled, Q1.** A leaderboard is, by
+definition, *many* finished-run outcomes kept across sessions.
 
-| | shape | pillar 3 | cost |
-|---|---|---|---|
-| **(a)** | a **local** board in `localStorage` — your own last 50 runs, sorted by category | the existing carve-out, in the plural. Nothing new is persisted that a scorecard did not already persist | small |
-| **(b)** | a **run certificate**: the finished scorecard encodes to a short signed string / URL the player can paste anywhere | no persistence at all — the player is the storage | small, and it is how this genre did it before servers |
-| **(c)** | a **hosted** board | breaks pillar 3 and adds a backend, an abuse surface, and a moderation problem to a game with a console | large, and out of character for the project |
+**Verdict: a local board in `localStorage` — your own last ~50 runs, sorted by category.** That
+is the existing pillar-3 carve-out in the plural, and it persists nothing a finished scorecard
+did not already persist. A hosted global board is explicitly a *later* thing, not a never thing.
 
-Recommendation: **(a) + (b)**. Together they give a personal best board *and* something to post
-in a Discord, with no server. (c) stays available later if the game ever deserves it.
+### The one piece of insurance that has to be taken now
+
+The question asked alongside the verdict was *"we can then easily setup the global rankings later
+right?"* — and the honest answer is **yes, provided one thing is done now, because it is nearly
+free today and expensive to retrofit.**
+
+Shipping stored records to a server later is a POST. `RunScorecard` is already versioned (`v: 2`)
+and already migrates. Transport is not the problem.
+
+**Verification is the problem, and waiting does not make it smaller.** A global board must tell a
+real run from a fabricated one, and this game deliberately hands every player `window.NW.CFG` to
+retune balance from the console at runtime. The scorecard's existing `legit` flag catches god
+mode and nothing else. A board built on trust gets gamed on day one.
+
+**Pillar 4 is the way out, and it is why this is cheap.** The world is deterministic from seed —
+"the same `?seed=` always generates the same world" — so a run is fully described by its seed
+plus its input stream. If every local record carries **seed + input log + a checksum** from the
+first version, a server can later re-simulate the run and confirm the score without trusting the
+client at all. Nothing has to check it now. It just has to be *recorded* now, because adding it
+to a record format that has already shipped means either a migration or a permanently
+unverifiable back-catalogue.
+
+Cost today: a bounded input ring buffer and four more fields on the record. Cost later: the
+difference between a leaderboard and a suggestion.
 
 ---
 
-## 3. The run — SR1, SR2, SR3
+## 3. The run — SR0, SR1, SR2, SR3
+
+### SR0 — Keyboard only *(Q5, Q6 — and it goes first)*
+
+Small, cheap, and it changes the control model every phase after it is built on. It is also
+mostly **deletion**, which is the best kind of phase.
+
+**Attack aiming: delete the mouse, keep the verb.** `combat.ts` already resolves its swing as
+`player.aimAngle ?? FACING_ANGLE[player.facing]`. Removing `aimAngle` does not remove aiming —
+it makes **movement the only aiming verb in the game**, which is precisely the property that was
+asked to be preserved. Positioning becomes the whole skill of the default attack, and that is a
+much better fit for a leaderboard than a mouse is: keyboard input is consistent across machines,
+and a run's inputs are then a clean, replayable stream (see §2's verification note — these two
+decisions help each other).
+
+**Building: ghost at your facing, hold and walk to paint (Q6).** The blueprint sits on the tile
+you face. `Enter` places. **Hold `Enter` and walk** to lay a wall line, which is faster than
+dragging a pointer ever was and reads instantly in a replay. Nudge keys offset the ghost for the
+cases you cannot stand next to. `BuildSystem.hover(sx, sy)` and `place(sx, sy)` currently take
+*screen* coordinates and call `cam.toWorld()`; they gain a tile-space entry point and the
+pointer handlers in `main.ts` stop being the only way in.
+
+**Mouse click becomes pause / main menu.** Not disabled — repurposed. A player who clicks gets a
+menu, not a swing and not nothing.
+
+**Everything else the pointer touches** — the Lens drawer, panels, the ability bar — keeps
+working with a mouse, because those are UI and this decision is about *the game*. Touch controls
+(the existing virtual stick in `input.ts`) are unaffected.
+
+**Why first:** SR1's acts, SR2's draft and SR3's boss all assume a control model. Building them
+against the mouse and then removing it is doing the work twice.
 
 ### SR1 — The Three Acts
 
@@ -148,12 +226,23 @@ it gives the rarity ladder somewhere to point.
 `gearMod` key plus a Loom node — and it is the thing that makes a swarm feel like income
 instead of chores.
 
-**4. Auto-attack — declined, and its purpose taken instead.** VS is auto-everything because your
-hands are for movement. NIGHTWARD's combat is a real swing with a telegraph, a dodge and a
-recovery window, and A2's affixes were balanced against a player who can *choose* not to swing.
-Auto-attack deletes that. What we take is the **intent**: an option for the basic swing to
-repeat while the key is held, and an option for bar abilities to auto-fire on cooldown. Both
-off by default, both in the options panel, neither touching the leaderboard's categories.
+**4. Elements become an affix, not four fixed swords.** X1 shipped `sword_fire`, `sword_frost`,
+`sword_void` and `sword_storm`, each hard-coding an `effects` row. That is the concept without
+the generality: exactly four weapons in the game can carry an element, and none of them can roll
+one you wanted. Q5 asked for elements *enchanted onto* weapons, so A1's affix table gains an
+**elemental damage** family — fire, cold, lightning, chaos, physical — with tiered rolls, which
+is the PoE shape and is a data edit on a system that already rolls prefixes and suffixes. The
+four X1 swords stay as authored bases that start with theirs.
+
+This also gives A5's weaves and A6's Forge-Warden somewhere better to point: a thread that
+converts an element, a reroll that is chasing a specific one.
+
+**5. Auto-attack — declined (Q5), and it was the right call for a reason nobody guessed.** Not
+because the swing is precious, but because **movement is the aim**. Auto-attack in a game where
+facing decides what you hit does not free your hands — it takes the decision away and leaves the
+movement, which is the wrong half. Weapons stay the core damage. Echoes keep their C1 autofire
+(they already have it) and their A3 active, so "some auto stuff from abilities" is already true
+and shipped. No new switches.
 
 ### SR3 — The Reckoning (the finale and the score)
 
@@ -162,10 +251,20 @@ to nothing. The horde thins, the sky changes, and one lord — the deepest one y
 walks at your hall from the edge of the map. This uses `WorldBossSystem`'s existing converge
 behaviour with a new trigger. The run now has an **antagonist** rather than an expiry date.
 
-**Its difficulty is a function of the run you had.** Not a fixed wall. The boss scales on your
-gear score, your Loom depth, the pact you swore and the lords you already killed — so rushing
-the boss underpowered is a *legitimate strategy with a worse payout*, not a soft-lock. That is
-what makes a speedrun category interesting.
+**It is a wall you train against (Q2).** Not scaled to meet you. Its difficulty is a function of
+the **pact** you swore and the **act curve**, not of how well you personally geared up — so
+outgearing it genuinely helps, and a first run will lose. Most runs will lose.
+
+That verdict costs something and the cost has to be paid deliberately: **if most runs end in a
+loss, the scorecard cannot only reward winning.** A board whose only category is "did you kill
+it" is a board with three entries on it. So the axes below are not decoration — they are what
+makes a lost run still a *run*, with a damage number to beat and a time-to-death to push. The
+four outcomes exist for the same reason.
+
+This is also where the covenants earn their second life. A wall at the Quiet Pact and a wall at
+the Abyssal Pact are different walls, and the pact is already a raise-only five-tier selector
+that the player chose in advance. Difficulty classes, for free, from a system built for a data
+budget.
 
 **Four outcomes, all scored, none of them "you lose":**
 
@@ -326,7 +425,8 @@ which is the colour grammar every Diablo game is built on.
 | **WebGPU/WebGL divergence** | every filter needs paired WGSL *and* GLSL, and they will drift | one filter in SR4 proves the convention; the visual gate runs both backends before any phase lands |
 | **The Gathering is a five-minute tutorial** | a speedrunner will optimise it into a rush, and then act 1 is dead weight | SR1 ships instrumented — measure what a fast player actually does in minutes 0–5 before defending the act |
 | **The draft trivialises the Loom** | three cards offered from 15 nodes is a much narrower tree than 15 nodes browsed | offer weighted by depth and holdings; the Loom's four keystones stay a real choice, which is the property B3.b was built to protect |
-| **A scaling boss is a boss you cannot lose to** | scaled to your power, it always meets you evenly, and an even fight every time is a boring fight | scale *sub-linearly* — outgearing it must genuinely help, it just pays less |
+| **A wall most runs lose to is a wall most players quit at** | Q2 chose a wall deliberately, and the failure mode is a player who never sees the finale land a hit | the four scored outcomes are the mitigation, not a consolation: a losing run still produces a damage number and a survival time to beat. Ship SR3 instrumented and watch the *second* run, not the first |
+| **Keyboard-only strands existing pointer code** | `BuildSystem` takes screen coordinates and `main.ts`'s pointer handlers are the only caller | SR0 adds a tile-space entry point rather than rewriting the system, and the pointer path is deleted in the same commit so no dead branch survives |
 | **Six leaderboard axes is no leaderboard** | categories nobody understands are categories nobody plays | ship three (Time, Purity, Legacy), add the rest only if they are asked for |
 | **Pillar 1 pressure** | the temptation, once lighting exists, to "just add one texture" | the rule is unconditional and has survived two batches. Normal maps are generated. Nothing is fetched |
 
@@ -339,23 +439,29 @@ data, SR4–SR8 touch the renderer, and they do not collide.
 
 | phase | contents | depends on |
 |---|---|---|
+| **SR0 — Keyboard only** | delete `aimAngle` and the pointer attack path, tile-space entry to `BuildSystem`, ghost-at-facing + hold-to-paint, click → pause/menu | — |
 | **SR4 — Shader floor** | `engine/shaders/`, paired WGSL+GLSL convention, `CFG.gfx` gates, real bloom replacing the Canvas2D fake, both backends green | — |
 | **SR5 — Light** | height buffer in `Pix`, Sobel normals at bake, light buffer, the lighting shader, light sources on fires/spells/telegraphs/moon | SR4 |
-| **SR1 — Three Acts** | `CFG.sr.actCurve`, act-driven density and elite gating, the act named in the HUD, instrumentation | — |
-| **SR3 — The Reckoning** | the summons trigger, the boss encounter, four outcomes, the certificate with axes, Gear Score | SR1 |
-| **SR2 — The Quickening** | the level-up draft over Loom nodes, weapon evolution over A5 weaves, pickup radius, the two auto-fire options | SR1 |
 | **SR6 — Palette** | hue-shifted ramps, 6–8 steps, dithering, per-biome LUT | SR4 |
 | **SR7 — Feel** | hit-stop, flashes, trails, decals, crit weight, boss-slam distortion | SR4 |
 | **SR8 — Diablo pass** | shafts, ground specular, fog, exposure, warm/cold grading | SR5 |
-| **SR9 — The board** | local board + run certificate, category sorting | SR3, **Q1** |
+| **SR1 — Three Acts** | `CFG.sr.actCurve`, act-driven density and elite gating, the act named in the HUD, instrumentation | SR0 |
+| **SR3 — The Reckoning** | the summons trigger, the boss as a wall, four outcomes, the certificate with axes, Gear Score | SR1 |
+| **SR2 — The Quickening** | the level-up draft over Loom nodes, weapon evolution over A5 weaves, elemental affixes, pickup radius | SR1 |
+| **SR9 — The board** | local board, category sorting, and the seed + input log + checksum that makes a global board possible later | SR3 |
 
-**Recommended first cut: SR4 + SR5.** Not because the run matters less, but because *the look is
-the thing the user can see in ten seconds*, the run half is more expensive to judge without
-playing, and SR5's answer to "does per-pixel lighting fit the budget" is the single fact that
-determines whether the rest of the graphics track is a plan or a wish.
+**First: SR0.** It is the smallest phase in the batch, it is mostly deletion, and every phase
+after it assumes a control model. Building SR1's acts against a mouse and then removing the
+mouse is doing the work twice.
 
-**Second cut: SR1 + SR3.** That is the speedrun — a curve and a finish line. SR2 is depth on top
-of a shape that has to exist first.
+**Then the graphics ladder, SR4 → SR8, in order.** Q4 took the whole thing, which makes this the
+larger half of the batch. The order is not negotiable: SR5 needs SR4's pipeline, SR8 needs SR5's
+lights, and SR6/SR7 are cheap once SR4 exists. **SR5 is the gate** — its answer to "does
+per-pixel lighting fit 16.67 ms with 250 foes alive" decides whether SR8 is a plan or a wish, so
+it is measured before SR6 starts rather than after SR7.
+
+**Then the run, SR1 → SR3 → SR2.** A curve, then a finish line, then depth on top of a shape that
+exists. SR9 last, because a board with nothing to rank is furniture.
 
 ---
 
@@ -373,29 +479,32 @@ of a shape that has to exist first.
 
 ## 9. Open questions
 
-**Q1 — the leaderboard's shape.** Local board, run certificate, both, or hosted? §2 recommends
-local + certificate. **This gates SR9 and nothing else**, so the rest can start regardless.
+All six opening questions were answered on 2026-08-22 — see §0.1. What remains are the questions
+that only measurement can answer, listed so they are not mistaken for oversights:
 
-**Q2 — how hard is the finale?** Should a well-played run beat the boss most of the time (a
-victory lap) or rarely (a wall you train against)? This is the single biggest feel decision in
-the run half and it cannot be derived — it is a taste call about what a run is *for*.
+**M1 — does per-pixel lighting fit the budget?** 250 alive, four post passes, 16.67 ms, on the
+WebGL fallback path too. SR5 answers it with a number and the rest of the graphics track is
+downstream of that number. *Measured in SR5, before SR6 starts.*
 
-**Q3 — does the Gathering survive?** Five minutes of Terraria before ten minutes of ARPG. Keep
-it as the identity of the game, compress it to two minutes, or make it skippable at a scoring
-cost? §7 says instrument first, but the intent should be stated up front.
+**M2 — what does a fast player actually do in minutes 0–5?** Q3 kept the Gathering because it is
+the identity of the game. That verdict deserves evidence, so SR1 ships instrumented and the act
+gets defended or compressed on what the instrument says, not on what either of us assumed.
 
-**Q4 — how far up the graphics ladder?** SR4–SR6 gets to "modern pixel game" honestly. SR7–SR8
-is the Diablo reach and roughly doubles the batch. Worth it now, or after the run half proves
-the game is worth looking at longer?
+**M3 — how many runs does it take to beat the wall?** Q2 chose a boss most runs lose to. The
+failure mode is a player who quits before the finale ever lands. Watch the *second* run and the
+fifth, not the first.
 
-**Q5 — auto-fire, in or out?** §3 declines auto-attack and offers two opt-in switches instead.
-If the intent was closer to true Vampire Survivors — hands on movement only, all damage
-automatic — that is a different combat model and a much larger change to A2, A3 and the dodge.
-
----
+**M4 — is the draft narrower than the Loom?** Three cards from fifteen nodes is a much tighter
+tree than fifteen nodes browsed, and B3.b resized the Loom specifically so that "one keystone is
+a real choice" was true. SR2 must not quietly undo that.
 
 ## 10. First thing to do
 
-Prove SR4 on both backends with one real filter, then measure SR5's lighting cost against the
-16.67 ms budget with 250 foes alive. Every other estimate in this document is downstream of
-that one number.
+**SR0**, because it is the smallest phase here and everything else assumes its control model.
+Deleting `aimAngle` and the pointer attack path is an afternoon, and it makes movement the only
+aiming verb in the game — which is the property Q5 asked to protect.
+
+**Then SR4, and then measure SR5 immediately.** Prove one real filter on both the WebGPU default
+and the `?gl` fallback, then get per-pixel lighting standing and put 250 foes in front of it with
+a frame counter running. Every other estimate in this document — the whole of SR6, SR7 and SR8 —
+is downstream of that one number.
