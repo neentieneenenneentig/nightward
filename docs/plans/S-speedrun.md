@@ -157,18 +157,28 @@ difference between a leaderboard and a suggestion.
 
 ## 3. The run — SR0, SR1, SR2, SR3
 
+*Design here; file paths, signatures and data shapes in [§11](#11-implementation-detail).*
+
 ### SR0 — Keyboard only *(Q5, Q6 — and it goes first)*
 
 Small, cheap, and it changes the control model every phase after it is built on. It is also
 mostly **deletion**, which is the best kind of phase.
 
-**Attack aiming: delete the mouse, keep the verb.** `combat.ts` already resolves its swing as
-`player.aimAngle ?? FACING_ANGLE[player.facing]`. Removing `aimAngle` does not remove aiming —
-it makes **movement the only aiming verb in the game**, which is precisely the property that was
-asked to be preserved. Positioning becomes the whole skill of the default attack, and that is a
-much better fit for a leaderboard than a mouse is: keyboard input is consistent across machines,
-and a run's inputs are then a clean, replayable stream (see §2's verification note — these two
-decisions help each other).
+**Attack aiming: nothing to do — it was never a mouse.** Reading the seams for §11 overturned
+this half of the phase. `player.aimAngle` is set at
+[player.ts:56](../../src/game/world/player.ts#L56) as `Math.atan2(ay, ax)` **from the movement
+axis**, and `Space` has been the attack key all along
+([ui.ts:478](../../src/game/ui/ui.ts#L478)). The mouse never aimed anything; the pointer handler
+at [main.ts:555](../../src/main.ts#L555) is a *redundant second way* to call `combat.attack()`.
+
+So "movement is the aim" is not a change this phase makes — **it is a property the game already
+has, and this phase's job is to stop anything competing with it.** `aimAngle` is load-bearing
+and is not going anywhere; it gains a test instead. That is a better outcome than the one this
+section originally proposed, and it is written down rather than quietly enjoyed.
+
+It does still buy the leaderboard something real: a keyboard-only run has a small, discrete,
+exactly replayable input stream, which is what §2's verification insurance needs. SR0 and SR9
+turn out to be the same decision seen twice.
 
 **Building: ghost at your facing, hold and walk to paint (Q6).** The blueprint sits on the tile
 you face. `Enter` places. **Hold `Enter` and walk** to lay a wall line, which is faster than
@@ -334,6 +344,8 @@ shading, blend-mode compositing, no shaders. That is fixable without touching pi
 
 ## 5. The look — SR4 through SR8
 
+*Design here; shaders, buffers and the measurement that gates the batch in [§11](#11-implementation-detail).*
+
 Ordered strictly by **visual return per unit of work**. SR5 is the one that matters; the rest are
 multipliers on it.
 
@@ -439,7 +451,7 @@ data, SR4–SR8 touch the renderer, and they do not collide.
 
 | phase | contents | depends on |
 |---|---|---|
-| **SR0 — Keyboard only** | delete `aimAngle` and the pointer attack path, tile-space entry to `BuildSystem`, ghost-at-facing + hold-to-paint, click → pause/menu | — |
+| **SR0 — Keyboard only** | `Input.pressed/held`, tile-space entry to `BuildSystem`, ghost-at-facing + hold-to-paint, arrows-nudge mode, delete the four pointer build handlers, click → pause menu (the one piece of new UI) | — |
 | **SR4 — Shader floor** | `engine/shaders/`, paired WGSL+GLSL convention, `CFG.gfx` gates, real bloom replacing the Canvas2D fake, both backends green | — |
 | **SR5 — Light** | height buffer in `Pix`, Sobel normals at bake, light buffer, the lighting shader, light sources on fires/spells/telegraphs/moon | SR4 |
 | **SR6 — Palette** | hue-shifted ramps, 6–8 steps, dithering, per-biome LUT | SR4 |
@@ -448,7 +460,7 @@ data, SR4–SR8 touch the renderer, and they do not collide.
 | **SR1 — Three Acts** | `CFG.sr.actCurve`, act-driven density and elite gating, the act named in the HUD, instrumentation | SR0 |
 | **SR3 — The Reckoning** | the summons trigger, the boss as a wall, four outcomes, the certificate with axes, Gear Score | SR1 |
 | **SR2 — The Quickening** | the level-up draft over Loom nodes, weapon evolution over A5 weaves, elemental affixes, pickup radius | SR1 |
-| **SR9 — The board** | local board, category sorting, and the seed + input log + checksum that makes a global board possible later | SR3 |
+| **SR9 — The board** | category comparators over the board that **already exists** (`nw.leaderboard`, `saveToLeaderboard`, `migrate`), plus the seed + input log + checksum that makes a global board possible later | SR3 |
 
 **First: SR0.** It is the smallest phase in the batch, it is mostly deletion, and every phase
 after it assumes a control model. Building SR1's acts against a mouse and then removing the
@@ -508,3 +520,518 @@ aiming verb in the game — which is the property Q5 asked to protect.
 and the `?gl` fallback, then get per-pixel lighting standing and put 250 foes in front of it with
 a frame counter running. Every other estimate in this document — the whole of SR6, SR7 and SR8 —
 is downstream of that one number.
+
+---
+
+## 11. Implementation detail
+
+Written after reading the seams, not before. Every file path, symbol and line number below was
+checked against `main` at the merge. Where a phase turned out to be smaller than the design
+section assumed, **that is recorded rather than quietly enjoyed** — three of them did.
+
+Two new `CFG` blocks carry this batch. They go beside `a2` / `a6` / `a8` / `n45`, in
+[data/config.ts](../../src/game/data/config.ts), and each has an `enabled` flag that is a real
+revert:
+
+```ts
+sr: {
+  enabled: true,
+  keyboardOnly: true,          // SR0
+  buildReachTiles: 1,          // SR0 — ghost distance along aimAngle
+  actCurve: [ /* SR1 */ ],
+  reckoningAtSec: 720,         // SR3 — minute 12 of a ~15 min run
+  draftCards: 3,               // SR2
+  draftRerollGold: 40,
+  pickupBaseTiles: 1.2,
+},
+gfx: {
+  tier: 'auto',                // 'auto' | 'low' | 'mid' | 'high' — SR4
+  bloom: true, lights: true, palette: true, feel: true, atmosphere: true,
+  lightBufferScale: 0.5,       // SR5 — half-res light target
+  maxLights: 32,               // SR5
+},
+```
+
+---
+
+### SR0 — Keyboard only
+
+> **Three findings shrank this phase to roughly a third of what §3 assumed.** They are worth
+> stating because each one is a thing we were about to build that already exists.
+>
+> 1. **`aimAngle` was never a mouse.** [player.ts:56](../../src/game/world/player.ts#L56) sets
+>    `this.aimAngle = Math.atan2(ay, ax)` from the movement axis, inside the branch that only
+>    runs when there is input. The game has always been movement-aimed. There is **no aiming
+>    work in this phase at all** — the property Q5 asked to protect was never at risk.
+> 2. **Space is already the attack key.** [ui.ts:478](../../src/game/ui/ui.ts#L478) —
+>    `else if (kl === ' ') this.hooks.attack()`. The pointer path at
+>    [main.ts:555](../../src/main.ts#L555) is a *redundant* second way to do the same thing.
+>    Deleting it costs zero gameplay.
+> 3. **`aimAngle` holds its last value when you stop.** Because it only updates while moving,
+>    standing still and pressing Space swings in the direction you were last travelling. That
+>    is already the right behaviour and needs no defending — but it is now load-bearing, so it
+>    gets a test.
+
+**What actually touches the mouse for gameplay** — five handlers,
+[main.ts:543–570](../../src/main.ts#L543-L570), and that is the entire list:
+
+| handler | today | after SR0 |
+|---|---|---|
+| `pointermove` | `build.paint()` while held, else `build.hover()` | deleted |
+| `pointerdown` | `build.hover()`, or `combat.attack()` | → `ui.openPause()` |
+| `pointerup` | `build.place()` | deleted |
+| `contextmenu` | `build.cancel()` | deleted (Esc does it) |
+| `wheel` | `build.cycle()` | kept — harmless, and pleasant when a mouse is present |
+
+**Step 1 — `Input` gains edge detection.** [input.ts](../../src/engine/input.ts) currently
+exposes only `axis()`. The build ghost, the draft (SR2) and the pause menu all need
+*press*, not *held*:
+
+```ts
+export interface Input {
+  axis(): { x: number; y: number };
+  /** True exactly once per physical keypress. Consumed on read. */
+  pressed(key: string): boolean;
+  /** True while held — for hold-to-paint. */
+  held(key: string): boolean;
+}
+```
+
+Implemented with a second `Set<string>` of keys that went down this frame, cleared at the end of
+each `sim()` tick rather than each render frame, so a 30 fps machine cannot eat inputs. Note the
+existing handler calls `e.preventDefault()` **only** for keys in `KEYMAP`; the new keys join that
+list so `Enter` and `[` `]` stop scrolling the page.
+
+**Step 2 — `BuildSystem` gets a tile-space core.** Today `hover(sx, sy)`, `place(sx, sy)` and
+`paint(sx, sy)` each take *screen* pixels and call `cam.toWorld()`. Split, do not rewrite:
+
+```ts
+// new, the real ones
+hoverTile(tx: number, ty: number) { … }        // was the body of hover() after toWorld
+placeTile() { … }                              // was place() after toWorld — commits at mode.tx/ty
+paintTile(tx: number, ty: number) { … }
+// kept as thin wrappers, because TOUCH still needs them
+hover(sx, sy) { const [wx, wy] = this.ctx.cam.toWorld(sx, sy); this.hoverTile(wx / TILE | 0, wy / TILE | 0); }
+```
+
+The virtual joystick in `input.ts` is untouched and touch play keeps working — "keyboard only"
+is a statement about the desktop control scheme, not a removal of the touch path.
+
+**Step 3 — the ghost follows your facing.** New, called each frame from `main()` while
+`build.mode` is set:
+
+```ts
+aimFromPlayer() {
+  const p = this.ctx.state.player, r = CFG.sr.buildReachTiles;
+  const tx = Math.floor((p.x + Math.cos(p.aimAngle) * r * TILE) / TILE) + this.nudgeX;
+  const ty = Math.floor((p.y + Math.sin(p.aimAngle) * r * TILE) / TILE) + this.nudgeY;
+  this.hoverTile(tx, ty);
+}
+```
+
+`nudgeX/nudgeY` are an offset in tiles, reset to 0 on `start()` and on `cycle()`.
+
+**Step 4 — the keys.** While `build.mode` is active, **arrow keys stop being movement and become
+nudge.** This requires splitting `KEYMAP`: WASD stays movement always, arrows are movement only
+when not building. That is a real mode switch and it must be announced in the build banner
+(`ctx.setBuildBanner`) or it is a trap.
+
+| key | action |
+|---|---|
+| `Enter` | place at the ghost (`placeTile()`) |
+| `Enter` **held** | paint — each tick, if the facing tile changed and `validate()` passes and `affordable() > 0`, commit |
+| arrows | nudge the ghost ±1 tile (build mode only) |
+| `[` / `]` | `cycle(-1)` / `cycle(+1)` |
+| `Esc` | `cancel()` |
+| `Space` | attack (unchanged) |
+
+Hold-to-paint is a `lastPaintedTile` guard, not a timer: commit only when the tile *changes*, so
+standing still with `Enter` down places exactly one building.
+
+**Step 5 — the pause menu.** This is the only genuinely new UI in SR0. `ui.showGameOver()` exists
+([ui.ts:1419](../../src/game/ui/ui.ts#L1419)) and is the shape to copy — a modal over the canvas.
+`openPause()` needs: resume, the run's live stats (`scoreboard.getLiveStats()` already returns
+them), the controls list, and a restart. Bound to `Esc` when `!build.mode`, and to left-click.
+
+**Tests.** `aimAngle` tracks the movement axis and *holds* when input stops; `hoverTile` and
+`hover` agree for the same world point; hold-to-paint places exactly one building per distinct
+tile; `[`/`]` cycle the same list `selectable()` returns; Esc clears `build.mode` and the ghost.
+
+---
+
+### SR4 — The shader floor
+
+**The starting position:** [postprocess.ts](../../src/engine/postprocess.ts) header says
+**"zero shaders"** as a feature, and `BloomPass` is a `<canvas>` with radial gradients drawn into
+it at quarter resolution, uploaded via `Texture.from(canvas)`, composited as a `Sprite` with
+`blendMode = 'add'`, `zIndex = 60`, `alpha = 0.4`. It never reads the framebuffer — it draws
+glow *where systems tell it there is glow*.
+
+**New home:** `src/engine/shaders/`, one file per effect, each exporting a factory:
+
+```ts
+// src/engine/shaders/bloom.ts
+import { Filter, GlProgram, GpuProgram } from 'pixi.js';
+
+export function makeBloomFilter(opts: { threshold: number; intensity: number }) {
+  return new Filter({
+    gpuProgram: GpuProgram.from({ vertex: { source: WGSL_VERT, entryPoint: 'main' },
+                                  fragment: { source: WGSL_FRAG, entryPoint: 'main' } }),
+    glProgram:  GlProgram.from({ vertex: GLSL_VERT, fragment: GLSL_FRAG }),
+    resources: { bloomUniforms: { uThreshold: { value: opts.threshold, type: 'f32' },
+                                  uIntensity: { value: opts.intensity, type: 'f32' } } },
+  });
+}
+```
+
+**The convention this phase establishes**, and every later filter obeys:
+
+1. **Paired sources, same file.** WGSL and GLSL for one effect live together so they cannot
+   drift into separate commits. A filter with only one is a bug, not a WebGPU exclusive.
+2. **Uniforms declared once**, in a `resources` block, named `u*`.
+3. **Every filter behind a `CFG.gfx` boolean**, checked where it is *attached*, not inside the
+   shader. Off means the filter is not in `container.filters` at all — a no-op shader still
+   costs a full-screen pass.
+4. **Both backends in the visual gate before the phase lands.** `?gl` is not a debug flag here,
+   it is half the target.
+
+**The real bloom.** Three passes: bright-pass (`max(0, luma - uThreshold)`), separable gaussian
+(horizontal then vertical, at `lightBufferScale`), additive composite. Attached to
+`stage.world`, not `app.stage`, so the HUD stays out of it — the same boundary `BloomPass`
+already respects with its `zIndex = 60`.
+
+**`GlowSpot` does not die.** `BloomPass.render(spots)` is called with explicit glow sources
+today, and that list is exactly what SR5's light buffer needs. The Canvas2D compositing is
+replaced; the *inventory of things that glow* is kept and promoted.
+
+**Tiering.** `CFG.gfx.tier = 'auto'` resolves at boot from readings **N4.6 already takes**:
+`net.vessel.reading` carries the unmasked GPU string, `pressureFrac`, and the LoAF jank window;
+`snap.jankMs` is live. Auto-tier picks `high`/`mid`/`low` from those and **re-checks once at 60 s**,
+dropping a tier if the jank window says the first guess was wrong. The deep wire paying for the
+graphics batch is not a metaphor — it is `readGpu()` and `observeJank()`, already shipped.
+
+---
+
+### SR5 — Normal maps and real light
+
+The gate phase. Everything in SR6/SR7/SR8 is downstream of the number this produces.
+
+**Step 1 — `Pix` emits height.** [sprites.ts:20](../../src/engine/procgen/sprites.ts#L20) is a
+`w × h` `ImageData` with `set/rect/outline/done`. It gains a parallel `Uint8Array`:
+
+```ts
+export class Pix {
+  private img: ImageData;
+  private hgt: Uint8Array;                 // NEW — one byte per pixel, 128 = flat
+  set(x, y, c: RGB, a = 255, h = 128) { …; this.hgt[y * this.w + x] = h; }
+  rect(x0, y0, x1, y1, c: RGB, h = 128) { … }
+  done(): HTMLCanvasElement { … }          // unchanged
+  normals(): HTMLCanvasElement { … }       // NEW — Sobel over hgt, packed RGB
+}
+```
+
+`h` defaults to 128 so **every existing call site keeps compiling and keeps working**, producing
+a flat-lit sprite identical to today. Generators then opt in one at a time — `blocks()` gives
+walls a face gradient, `roof()` slopes from apex to eave, `makeTreeVariants` rounds the trunk,
+`makeRockVariants` domes. No new art is drawn; the generators are annotating knowledge they
+already have and currently throw away at write time.
+
+**Step 2 — Sobel to normals**, once, at bake:
+
+```
+n.x = (h[x-1,y] - h[x+1,y]) * strength
+n.y = (h[x,y-1] - h[x,y+1]) * strength
+n.z = 1;  normalize;  pack to RGB as (n * 0.5 + 0.5) * 255
+```
+
+`normals()` returns a second canvas → a second `Texture.from()`. The 1px `outline()` writes
+height 128 so silhouettes stay flat and do not get a bright rim.
+
+**Step 3 — the light buffer.** A `RenderTexture` at `CFG.gfx.lightBufferScale` (0.5), cleared to
+the ambient colour each frame, into which every live light is drawn as a radial falloff. Lights
+are gathered the same way `GlowSpot`s already are:
+
+| source | where it already exists |
+|---|---|
+| campfires, the hall, the forge | `FireSystem`, `state.buildings` |
+| spell impacts, novas, volleys | `EchoSystem`, `AbilitySystem` |
+| elite auras | `EliteState.has` — A2 already gives every affix a `color` |
+| boss telegraphs | `hordes.updateFoe` telegraph phase |
+| the moon | `daynight.tintAt(state.clock)`, already computed |
+
+Capped at `CFG.gfx.maxLights` (32), sorted by distance to the camera centre, culled to the
+viewport plus one tile.
+
+**Step 4 — the lighting filter**, applied to `stage.world`:
+
+```
+albedo = texture(uWorld, uv)
+N      = texture(uNormals, uv) * 2 - 1
+L      = texture(uLight, uv)              // pre-accumulated, half res, bilinear
+lambert = clamp(dot(N, normalize(uLightDir)), 0, 1)
+out    = albedo * (uAmbient + L * (0.35 + 0.65 * lambert))
+```
+
+**Step 5 — night stops being a rectangle.** [main.ts:123–126](../../src/main.ts#L123-L126) draws
+a screen-space `Graphics` rect with `blendMode = 'multiply'` over everything. That *is* the
+1993 night. It becomes the shader's `uAmbient` term, which means a campfire genuinely carves a
+hole in the dark — **darkness with pools of light, which is the Diablo look.**
+
+> **A normals pipeline needs two textures per sprite.** `chunkmap.ts` calls `Texture.from(canvas)`
+> in four places (lines 320, 344, 574, 603) and `views.ts` builds a `Sprite` per foe, drop and
+> building. Each becomes a pair. Watch texture memory on the chunk cache — this is the most
+> likely place SR5 costs more than it looks.
+
+**The measurement that gates the batch (M1).** Seed a world, force 250 alive via
+`hordes.toSpawn`, run 600 frames, record p50 and p99 frame time, on WebGPU *and* `?gl`. If p99
+breaks 16.67 ms at `high`, the tier ladder absorbs it and SR8 gets re-scoped **before** SR6
+starts, not after SR7.
+
+---
+
+### SR6 — The palette pass
+
+Fixes Finding 3. Mostly data.
+
+**Today:** `const STONE: RGB[] = [[60,65,78],[80,85,98],[105,110,125],[130,135,148]]` — four
+steps, one hue, shading baked in because there was no lighting.
+
+**After:** ramps are *generated* from a base colour by a rule, in
+[procgen/palette.ts](../../src/engine/procgen/palette.ts):
+
+```ts
+export function ramp(base: RGB, steps = 7, opts?: { shadowHue?: number; lightHue?: number }): RGB[]
+```
+
+- **Hue-shifted.** Shadows rotate toward the ambient (cool/blue), highlights toward the light
+  (warm). This single rule is most of the visual distance between amateur and professional pixel
+  art, and it is arithmetic on a ramp, not artistry.
+- **Seven steps, not four**, with **4×4 ordered (Bayer) dithering** between adjacent steps so the
+  extra resolution reads as gradient rather than banding.
+- **Per-biome LUT** as a 3D-ish 2D strip texture, sampled in a grading shader — replacing
+  `GradePass`'s tinted overlay `Graphics`.
+
+Shading baked into the ramps must come *out* as it goes into the normals (SR5), or every surface
+gets lit twice and the world looks like plastic. **SR6 lands after SR5 for that reason, not for
+convenience.**
+
+---
+
+### SR7 — Game feel
+
+Cheap, entirely felt, and it inherits an accessibility gate for free.
+
+| effect | implementation | seam |
+|---|---|---|
+| **hit-stop** | on a hit over a damage threshold, scale `dt` to ~0.05 for 40–80 ms | `main()`'s `simMul` product — where `net.getGameValue('simSpeed')` already multiplies |
+| **impact flash** | 2-frame white tint on the struck sprite | `FoeView` already flashes on hurt; raise the contrast |
+| **weapon arc** | a fading `Graphics` arc along `swingAngle` | `combat.swingT` / `swingAngle` already exist |
+| **crit weight** | bigger, slower, shakier damage numbers | `ui/floaters.ts` |
+| **blood / sparks / embers** | new `ParticleKind` rows | `PARTICLE_DEFS` in [particles.ts](../../src/engine/particles.ts) is a `Record<ParticleKind, ParticleDef>` — this is a data edit |
+| **ground decals** | blood pools persisting for the night | `views.fx` container, `zIndex = 1e9` today; decals need their own container *under* entities |
+| **boss slam** | chromatic aberration + radial blur, 200 ms | new filter, SR4's convention |
+
+**Every one of these routes through `cam.shake()` or the `simMul` product, and
+`cam.motionScale` is already `0` when `prefers-reduced-motion` is set** (N4.6). So the entire
+phase inherits the accessibility gate without a single new check — provided nothing here shakes
+the camera directly instead of through `shake()`. That is the one rule of this phase.
+
+---
+
+### SR8 — The Diablo pass
+
+Only worth doing once SR5's lights are real, because every item is a function of them.
+
+- **Volumetric shafts** — radial blur from each light in the light buffer, masked by an occlusion
+  pass. Cheapest convincing god-rays available.
+- **Ground specular / wetness** — a second Blinn-Phong term against `uLightDir` using the SR5
+  normals, gated per-material so stone glistens and grass does not. `data/materials.ts` is the
+  table.
+- **Distance fog + horizon blur** — depth from `cont.zIndex`, which `views.ts` already sets to
+  world `y` for depth sorting. The sort key is a free depth buffer.
+- **Exposure and contrast** — darker global exposure, brighter fewer lights, hard warm/cold
+  split (cold ambient, warm firelight). This is the colour grammar of every Diablo game and it
+  costs two uniforms.
+
+---
+
+### SR1 — The Three Acts
+
+**Trigger.** `LifespanSystem` already tracks real elapsed time and exposes `minutesRemaining()`
+and `fracRemaining()`. The act is a pure function of it:
+
+```ts
+export type Act = 'gathering' | 'swelling' | 'reckoning';
+export function actFor(elapsedSec: number): Act
+```
+
+Real seconds, not `state.clock` — for the same reason the Lifespan uses real time: a Gauntlet
+`__nw.step()` loop must not trip the acts, and network jank must not stretch them.
+
+**Consumption.** `CFG.sr.actCurve` is a row per act supplying multipliers over the *existing*
+horde knobs rather than replacing them — the same discipline A2's covenant multipliers follow:
+
+```ts
+actCurve: [
+  { id: 'gathering', untilSec: 300, countMul: 0.6, rateMul: 0.7, elites: false, champions: false },
+  { id: 'swelling',  untilSec: 720, countMul: 1.4, rateMul: 1.5, elites: true,  champions: true  },
+  { id: 'reckoning', untilSec: 900, countMul: 0.2, rateMul: 0.3, elites: false, champions: false },
+]
+```
+
+`countMul` and `rateMul` fold into `hordes.spawn()`'s existing product beside `hpGrowth` and the
+net scale. `elites: false` gates `rollElite()` — which **already returns null before touching
+`Math.random`** when disabled, so the seeded spawn stream is unchanged and the Gauntlet's
+seed-comparison tests stay valid. That property was built for `CFG.a2.enabled` and pays for
+itself again here.
+
+The Reckoning act *thins* the field (`countMul: 0.2`) so the boss is the fight, not the garnish.
+
+**Instrumentation (M2).** Q3 kept the Gathering on the grounds that it is the identity of the
+game. That deserves evidence: log first-craft time, first-build time, first-night HP and tiles
+walked in act 1 to the Chronicle, and read them off a real run before defending or compressing.
+
+---
+
+### SR3 — The Reckoning
+
+**The summons.** At `CFG.sr.reckoningAtSec`, `LifespanSystem.checkThresholds()` — which already
+owns the warn and critical thresholds — fires a third: `onReckoning()`. It calls into
+`WorldBossSystem`, which already knows how to make a lord converge on your hall
+([worldbosses.ts:165](../../src/game/systems/worldbosses.ts#L165), `huntSpeed +
+convergePerTerritory * terr`). The new work is *selection* and *staging*, not pathing.
+
+**It is a wall (Q2).** Its stats are a function of the **pact** and the act curve, **not** of
+your gear:
+
+```ts
+bossHp  = base * pow(CFG.sr.bossHpPerTier, tier) * activeCovenant(state.covenant).hpMul
+bossDmg = base * …                              * activeCovenant(state.covenant).dmgMul
+```
+
+Deliberately **not** a function of `gearScore` — that was the design in the first draft and Q2
+overturned it. Outgearing it must genuinely help.
+
+**Four outcomes**, extending the existing `causeOfDeath` union rather than replacing it (the
+scorecard's `migrate()` already handles unknown values from older cards):
+
+```ts
+outcome: 'reckoned' | 'outlasted' | 'fallen' | 'unmet'
+```
+
+**Gear Score** — new, in `rules.ts` beside `wornStat()`, summing over worn slots:
+
+```
+gearScore = Σ  (rarityIndex(item) + 1) * 10  +  affixCount * 5  +  Σ affixTier
+```
+
+Read from the **roll registry**, not the bag — the same source `trophy` uses, so a Sovereign you
+found, wore and lost to a death scatter still counts. That precedent is already set and tested.
+
+**The scorecard becomes v3.** `RunScorecard` gains `outcome`, `gearScore`, `reckoningSec`,
+`bestHit`, `bestBurst10s`, `bossDamageDealt` — all optional, so every v2 card stays valid, the
+same carve-out `elitesFelled` / `pact` / `trophy` already took. `migrate()` handles it.
+
+> **The cost Q2's verdict carries.** If most runs lose, the scorecard cannot only reward winning.
+> `bossDamageDealt` and `reckoningSec` are not decoration — they are what makes a losing run a
+> run with a number to beat. A board whose only category is "did you kill it" has three rows.
+
+---
+
+### SR2 — The Quickening
+
+**1. The draft, and the trigger nobody had to build.** `LoomSystem` already grants points at
+exactly the "you got stronger, come spend it" moments — `onNightSurvived()`, `onBossSlain()`,
+`onSkillLevelUp()` via the Long Thread keystone — and already exposes
+`canAllocate(nodeId): boolean` and `allocate(nodeId): boolean`. The draft is those three
+functions and a modal:
+
+```ts
+offerDraft() {
+  const pool = LOOM_NODES.filter(n => loom.canAllocate(n.id));
+  const cards = weightedPick(pool, CFG.sr.draftCards, { byDepth: true, avoidHeld: true });
+  // pause → render → on choice: loom.allocate(id)
+}
+```
+
+Fired from the point grant, not from a panel. `levelUpFlourish(ctx)` already exists for the
+moment's juice.
+
+**M4 is the risk to hold.** B3.b resized the Loom from 40 nodes to 15 *specifically* so that
+"one keystone is a real choice" was true, and `testLoomTreeShape` / `testLoomPayoffLayerIsReal`
+pin that. Three cards from fifteen is a much narrower tree. The weighting must guarantee a
+keystone appears when affordable, or SR2 quietly undoes B3.b and the suite will not catch it —
+because the suite tests the *tree*, not the *offer*.
+
+**2. Elements become an affix.** X1 shipped four hard-coded elemental swords —
+`sword_fire`, `sword_frost`, `sword_void`, `sword_storm`, each an `I(...)` row carrying
+`effects: ['fire_on_hit']` ([items.ts:142–146](../../src/game/data/items.ts#L142-L146)). That is
+the concept without the generality: four weapons in the entire game can have an element and none
+can roll the one you wanted.
+
+A1's affix table gains an **elemental family** — fire, cold, lightning, chaos, physical — with
+tiered rolls, rolled by the same `rollRarity` / affix machinery that already produces prefixes
+and suffixes. Each maps to an existing `effects` hook where one exists (`fire_on_hit`,
+`chill_on_hit`) and to a new one where it does not. **The C4 rule applies without exception: an
+affix that grants an effect hook with no consumer is an affix that does nothing**, and seven of
+those shipped once already. The four X1 swords stay as authored bases that begin with theirs.
+
+This also gives A5's weaves and A6's Forge-Warden a better target: a thread that converts an
+element, a reroll chasing a specific one.
+
+**3. Pickup radius.** `DropSystem` already owns pickup. Radius becomes
+`CFG.sr.pickupBaseTiles × gearMod(state, 'pickupRadius') × loom.mods.pickupRadius` — a new
+`gearMod` key and a new `LoomModifiers` key, both of which must be **granted by a node and
+consumed by a system in the same commit**, per B3.a.
+
+**4. No auto-attack.** Q5. Echoes keep their C1 autofire and A3 active — "some auto stuff from
+abilities" is already shipped. No new switches.
+
+---
+
+### SR9 — The board
+
+> **This phase is much smaller than §3 assumed, because the board already exists.**
+> [scoreboard.ts](../../src/game/systems/scoreboard.ts) has `LS_KEY = 'nw.leaderboard'`,
+> `saveToLeaderboard()`, `loadLeaderboard()`, `migrate()`, a `MAX_ENTRIES` prune, and a sort that
+> already ranks `legit` runs above god-mode ones regardless of score. Q1's "local board" is
+> **built**. What is missing is categories and verification.
+
+**Categories.** `loadLeaderboard()` returns `RunScorecard[]`; a category is a comparator plus a
+filter, which is data:
+
+```ts
+export const CATEGORIES = [
+  { id: 'time',    label: 'Fastest Reckoning', filter: c => c.outcome === 'reckoned', cmp: (a,b) => a.reckoningSec - b.reckoningSec },
+  { id: 'purity',  label: 'Lowest Gear',       filter: c => c.outcome === 'reckoned', cmp: (a,b) => a.gearScore - b.gearScore },
+  { id: 'damage',  label: 'Biggest Hit',       filter: () => true,                    cmp: (a,b) => b.bestHit - a.bestHit },
+  { id: 'legacy',  label: 'Legacy',            filter: () => true,                    cmp: (a,b) => b.legacyScore - a.legacyScore },
+];
+```
+
+**Ship three, not six** (§6): Time, Purity, Legacy. Add the rest when someone asks.
+
+**The verification insurance (§2), and it must land in the same commit as v3.** Every record
+gains:
+
+```ts
+seed: string;          // already known — the ?seed= or the generated one
+inputLog: string;      // base64 of a compact (tickDelta, keyMask) ring buffer
+inputHash: string;     // cheap checksum over the log
+engineVersion: string; // the build this ran on — a replay is only valid against its own rules
+```
+
+Pillar 4 is what makes this cheap: *"the same `?seed=` always generates the same world."* A run is
+therefore fully described by its seed plus its input stream, and a server can later re-simulate
+it and confirm the score **without trusting the client at all**. Nothing checks it now. It has to
+be *recorded* now, because adding it to a shipped record format means a migration or a
+permanently unverifiable back-catalogue.
+
+**Keyboard-only pays for this too.** A keyboard input stream is a small, discrete, exactly
+replayable thing. Pointer coordinates in screen space, at an arbitrary DPR, against a camera that
+moves, are not. **SR0 and SR9 are the same decision seen twice** — which is a good sign for both
+of them.
+
+`engineVersion` is the honest limit: a replay is only valid against the rules it ran under, and
+`window.NW.CFG` retunes balance at runtime. A verifier must pin the config too, or record that
+it was touched — the scorecard's existing `legit` flag is the precedent for that admission.
