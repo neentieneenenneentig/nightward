@@ -151,6 +151,9 @@ async function boot() {
     onGold: () => {},
     damagePlayer: (d: number, src?: string, foe?: any) => combat.damagePlayer(d, src, foe),
     onHallDestroyed: () => triggerGameOver('hall_fallen'),
+    // SR3: the two endings that only exist once the summoned boss is alive.
+    onReckoningKill: () => triggerReckoningEnd('reckoned'),
+    onReckoningDeath: () => triggerReckoningEnd('fallen'),
     // SR7: hit-stop request — the caller doesn't own the timer, it just names
     // how much weight it wants; concurrent requests take the longer one.
     // CFG.gfx.feel is the real revert: false means every SR7 juice call in
@@ -498,6 +501,9 @@ async function boot() {
     actView: () => ({
       label: ACT_LABEL[(CFG.sr.enabled ? actFor(simTicks * (STEP / 1000)) : 'gathering')],
     }),
+    reckoningSecLeft: () => state.reckoning?.active
+      ? state.reckoning.deadlineRealSec - simTicks * (STEP / 1000)
+      : null,
     gatherView: () => {
       if (gather.active) return { label: labelFor(gather.active.def), frac: gather.active.progress / gather.active.need };
       if (gather.target) return { label: labelFor(gather.target.def) + ' (E)', frac: 0 };
@@ -577,6 +583,16 @@ async function boot() {
     if (state.gameOver) return;
     state.gameOver = true;
     state.gameOverCause = cause;
+    // SR3: this path is normally pre-summons ('Unmet'), but the hall can
+    // fall from a lord's own blows during an active Reckoning, and a stray
+    // frame could in principle race the dedicated Outlasted check below —
+    // so this derives the SAME way that check does rather than assuming
+    // 'unmet' unconditionally. hall_fallen mid-fight reads as a defeat
+    // ('fallen'), same family as being struck down directly; old_age
+    // mid-fight reads as running out of time ('outlasted'), same as the
+    // dedicated check's own case.
+    state.outcome = !state.reckoning?.active ? 'unmet' : cause === 'old_age' ? 'outlasted' : 'fallen';
+    if (state.reckoning) state.reckoning.active = false;
     hordes.clearField(); // B2: clear the field WITHOUT crediting a night survived
     if (cause === 'old_age') {
       log.push('death', `The years catch up at last. Age ${Math.floor(state.player.age)}, the dream lets go gently.`, state.clock);
@@ -584,6 +600,29 @@ async function boot() {
       log.push('death', 'The hall has fallen. The racket is finished.', state.clock);
     }
     // W6/L1: save scorecard and show death screen
+    const card = scoreboard.saveToLeaderboard();
+    ui.showGameOver(() => { location.reload(); }, card);
+  }
+
+  /** SR3 — the three endings that only exist once the Reckoning has begun.
+   *  Shares triggerGameOver's shape rather than calling it, because none of
+   *  these three should ever be relabelled 'unmet' by it. */
+  function triggerReckoningEnd(outcome: 'reckoned' | 'fallen' | 'outlasted') {
+    if (state.gameOver) return;
+    state.gameOver = true;
+    state.outcome = outcome;
+    // 'Outlasted' IS a time-based ending, just on the Reckoning's own clock
+    // rather than Lifespan's — gameOverCause stays meaningful rather than
+    // null for the one outcome that's genuinely a variant of old_age.
+    state.gameOverCause = outcome === 'outlasted' ? 'old_age' : null;
+    if (state.reckoning) state.reckoning.active = false;
+    hordes.clearField();
+    const msg = outcome === 'reckoned'
+      ? 'The lord falls. The Reckoning is yours — the dream holds.'
+      : outcome === 'fallen'
+      ? "The lord's blow lands true. The dream ends here."
+      : 'The clock runs out. The lord still stands, and so, for now, do you.';
+    log.push('death', msg, state.clock);
     const card = scoreboard.saveToLeaderboard();
     ui.showGameOver(() => { location.reload(); }, card);
   }
@@ -784,6 +823,24 @@ async function boot() {
     wasNight = ph.isNight;
     // S1: collect RTT samples during the night for stability tracking
     if (ph.isNight) net.sampleNightRtt();
+
+    // SR3: the summons, and the window it opens. Both read elapsedRealSec —
+    // the SAME clock the act curve uses — rather than state.clock, so the
+    // field thinning (actCurve's reckoning row) and the lord's arrival can
+    // never drift apart from each other the way two independently-paced
+    // clocks eventually would.
+    if (CFG.sr.enabled && !state.gameOver) {
+      const elapsed = simTicks * (STEP / 1000);
+      if (!state.reckoning && elapsed >= CFG.sr.reckoningAtSec) {
+        const boss = worldbosses.summonReckoning();
+        if (boss) {
+          const deadline = CFG.sr.actCurve[CFG.sr.actCurve.length - 1].untilSec;
+          state.reckoning = { active: true, bossUid: boss.uid, startClock: state.clock, deadlineRealSec: deadline, damageDealt: 0 };
+        }
+      } else if (state.reckoning?.active && elapsed >= state.reckoning.deadlineRealSec) {
+        triggerReckoningEnd('outlasted');
+      }
+    }
 
     // SR0: build mode is driven from the fixed step, not from DOM events, so
     // placement obeys the same clock the world does. Arrows change meaning here

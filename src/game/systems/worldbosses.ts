@@ -9,6 +9,7 @@ import { addXp, awardSoulXp, hall, rollLoot, territoryScore } from '../rules';
 import type { WorldBoss } from '../state';
 import { TILE } from '../world/worldgen';
 import { REGION, domainAtRegion, regionCenterPx } from '../world/domains';
+import { activeCovenant } from '../data/covenants';
 import { hash2 } from '../../engine/rng';
 import { Sound } from '../../engine/audio';
 import { levelUpFlourish } from './flourish';
@@ -68,6 +69,50 @@ export class WorldBossSystem {
     };
     state.worldBosses.push(b);
     this.ctx.views.addBoss(b);
+  }
+
+  /** SR3 — the summons. "The deepest one you have provoked": level only
+   *  grows through revival, which only happens after being fought and killed
+   *  once, so the highest-level boss among the seeded set is, by
+   *  construction, the one with the most history — not an arbitrary pick.
+   *  Ties broken toward the more dangerous home region.
+   *
+   *  Q2: stats are a function of the PACT, never of gear — outgearing this
+   *  fight must genuinely help, which only holds if gear was never in the
+   *  formula. Reuses hpFor/dmgFor's existing level curve rather than a
+   *  parallel "tier" scale, and multiplies the covenant on top — the same
+   *  hpMul/dmgMul hordes.wake() already applies to regular spawns. */
+  summonReckoning(): WorldBoss | null {
+    const { state } = this.ctx;
+    if (!state.worldBosses.length) return null;
+    const boss = [...state.worldBosses].sort((a: WorldBoss, b: WorldBoss) =>
+      b.level - a.level
+      || domainAtRegion(b.homeGx, b.homeGy, state.seed).danger - domainAtRegion(a.homeGx, a.homeGy, state.seed).danger,
+    )[0] as WorldBoss;
+
+    if (boss.reviveAt > 0) {
+      boss.reviveAt = 0;
+      this.ctx.views.addBoss(boss);
+    }
+    const cov = activeCovenant(state.covenant ?? 'quiet');
+    boss.maxHp = Math.round(this.hpFor(boss.level) * cov.hpMul);
+    boss.hp = boss.maxHp;
+    boss.dmg = Math.round(this.dmgFor(boss.level) * cov.dmgMul);
+
+    // "from the edge of the map" — send it home first, so the convergence
+    // that already exists (huntSpeed + convergePerTerritory*territory) has
+    // real distance to close instead of starting the fight on your doorstep.
+    const [cx, cy] = regionCenterPx(boss.homeGx, boss.homeGy);
+    boss.x = boss.px = cx; boss.y = boss.py = cy;
+    boss.hunting = true;
+    // Never stops hunting for the whole window — the existing `roused`
+    // check already ORs against provokedUntil, so this needs no new branch.
+    boss.provokedUntil = state.clock + 1e6;
+    this.warned.delete(boss.uid);
+
+    this.ctx.toast?.(`${boss.name} rises. The Reckoning has come.`, 'bad');
+    this.ctx.log?.push('boss', `The Reckoning — ${boss.name} (level ${boss.level}) walks for the hall`, state.clock);
+    return boss;
   }
 
   private hpFor(level: number) {
@@ -216,6 +261,12 @@ export class WorldBossSystem {
     if (b.reviveAt > 0) return;
     const { state } = this.ctx;
     const wasHunting = b.hunting;
+    // SR3: Outlasted is scored on damage dealt to the summoned lord — clamped
+    // to what was actually left, the same "don't overcount the killing blow"
+    // rule combat.ts already applies to its own hit log.
+    if (fromPlayer && state.reckoning?.active && state.reckoning.bossUid === b.uid) {
+      state.reckoning.damageDealt += Math.min(dmg, Math.max(0, b.hp));
+    }
     b.hp -= dmg;
     if (b.hp > 0) {
       // being struck triggers it right now, whatever territory/night says —
@@ -281,5 +332,11 @@ export class WorldBossSystem {
     Sound.play('enemyDie');
     this.ctx.toast(`You have slain ${b.name}! The land trembles.`, 'good');
     this.ctx.log?.push('boss', `Slain ${b.name}!`, state.clock);
+
+    // SR3: Reckoned. Fires AFTER the normal kill rewards above, not instead
+    // of them — a win doesn't cost you the gold and loot a kill always pays.
+    if (state.reckoning?.active && state.reckoning.bossUid === b.uid) {
+      this.ctx.onReckoningKill?.();
+    }
   }
 }

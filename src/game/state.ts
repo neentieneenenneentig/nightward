@@ -121,6 +121,16 @@ export interface GameState {
   nightEntered: boolean;
   gameOver: boolean;
   gameOverCause: 'hall_fallen' | 'old_age' | null; // L1: what actually ended the run
+  /** SR3: the summoned boss fight, or null before/after it. `damageDealt` is
+   *  scored against on an Outlasted ending — a fight the clock cut short
+   *  still needs a number. Separate from ScoreboardSystem's run-wide
+   *  bestHit/enemiesKilled because this one resets to null and those don't. */
+  reckoning: { active: boolean; bossUid: number; startClock: number; deadlineRealSec: number; damageDealt: number } | null;
+  /** SR3: the run's terminal shape. Distinct from gameOverCause (which stays
+   *  'hall_fallen' | 'old_age' | null and predates this) rather than folded
+   *  into it, so every pre-SR3 read of gameOverCause keeps meaning exactly
+   *  what it always meant. */
+  outcome: 'reckoned' | 'outlasted' | 'fallen' | 'unmet' | null;
   god: boolean;                        // debug/test mode: immortal, everything unlocked
   everGod: boolean;                    // L1: sticky — true once god mode was ever toggled on this run; flags the scorecard as not leaderboard-legit
   lifespanTargetMin: number;           // L1: seeded target run length in minutes (CFG.lifespan.baseRunMinutes ± jitter)
@@ -213,6 +223,8 @@ export function newState(seed: number, spawn: { x: number; y: number }): GameSta
     nightEntered: false,   // a run that boots mid-night has not entered it
     gameOver: false,
     gameOverCause: null,
+    reckoning: null,
+    outcome: null,
     god: false,
     everGod: false,
     lifespanTargetMin,

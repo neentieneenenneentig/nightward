@@ -113,6 +113,9 @@ export interface UIHooks {
   /** SR2: gold-priced re-roll. Returns false (and changes nothing) if the
    *  player can't afford CFG.sr.draftRerollGold. */
   rerollDraft(): boolean;
+  /** SR3: seconds left before an active Reckoning resolves as Outlasted, or
+   *  null when no lord is currently summoned. */
+  reckoningSecLeft(): number | null;
 }
 
 type Panel = 'bag' | 'craft' | 'skills' | 'loom' | 'log' | 'leaderboard' | 'reliquary' | 'forge' | 'sounding' | 'covenant' | null;
@@ -1297,10 +1300,17 @@ export class UI {
     const ph = phase(this.state.clock);
     const rem = Math.ceil(phaseRemaining(this.state.clock));
     const act = this.hooks.actView();
+    // SR3: a countdown the player can plan against, same reasoning SR1 named
+    // the acts for — replaces the act label rather than sitting beside it,
+    // because once a lord is summoned "The Reckoning" IS the act.
+    const reckSec = this.hooks.reckoningSecLeft();
+    const actHtml = reckSec != null
+      ? `<span class="nw-act nw-reck">&#9876; THE RECKONING &mdash; ${Math.max(0, Math.ceil(reckSec))}s</span>`
+      : `<span class="nw-act">${act.label}</span>`;
     this.clock.innerHTML = (ph.isNight
       ? `<span class="moon">&#9789; NIGHT ${ph.dayIndex}</span> &middot; ${rem}s`
       : `<span class="sun">&#9788; DAY ${ph.dayIndex}</span> &middot; ${rem}s`)
-      + ` &middot; <span class="nw-act">${act.label}</span>`;
+      + ` &middot; ${actHtml}`;
 
     const dmg = CFG.player.baseDmg + equippedWeaponDmg(this.state);
     const def = armorDef(this.state);
@@ -1641,18 +1651,43 @@ export class UI {
           <div><span style="color:var(--metal-hi)">Peak RTT:</span> ${card.peakRtt}ms · <span style="color:var(--metal-hi)">Lowest BW:</span> ${card.lowestDownlink}Mbps</div>
           <div><span style="color:var(--metal-hi)">Loom points:</span> ${card.loomPointsEarned}</div>
           <div><span style="color:var(--metal-hi)">Connection age:</span> ${ageStr}</div>
-        </div>`;
+        </div>
+        ${card.outcome ? `
+        <div style="font-size:11px;color:var(--ink-dim);margin-top:10px;line-height:1.6;text-align:left;max-width:300px;border-top:1px solid var(--metal-lo);padding-top:8px;">
+          <div style="color:#c9b6e6;font-family:var(--font-display);letter-spacing:1px;font-size:10px;">THE RECKONING</div>
+          <div><span style="color:var(--metal-hi)">Gear Score:</span> ${card.gearScore ?? 0}</div>
+          ${card.bossDamageDealt != null ? `<div><span style="color:var(--metal-hi)">Damage to the lord:</span> ${card.bossDamageDealt}</div>` : ''}
+          ${card.reckoningSec != null ? `<div><span style="color:var(--metal-hi)">Reckoning lasted:</span> ${card.reckoningSec}s</div>` : ''}
+          <div><span style="color:var(--metal-hi)">Biggest hit:</span> ${card.bestHit ?? 0}</div>
+        </div>` : ''}`;
     }
-    // L1: two distinct endings — a violent hall-fall vs. a peaceful old-age
-    // ending — never mixed, and never using network jargon in the fiction
-    // (Veil law).
+    // SR3: four endings, none of them "you lose" — Q2's cost is that a
+    // scorecard covering mostly-losing runs cannot only celebrate winning.
+    // Falls back to the pre-SR3 two-ending split (via causeOfDeath) for a
+    // card with no outcome at all — CFG.sr.enabled off, or a v2 record from
+    // before this batch existed.
     const oldAge = card?.causeOfDeath === 'old_age';
-    const title = oldAge ? 'THE DREAM FADES' : 'THE THREAD IS CUT';
-    const flavor = oldAge
-      ? `Your dream-self grows heavy with years and lies down beneath the dark, and does not wake.
-         You lived ${card?.age ?? '?'} years and survived ${this.state.nightsSurvived} night${this.state.nightsSurvived === 1 ? '' : 's'}.`
-      : `Your Hearthstone lies in ruin and the dark takes the rest.
-         You survived ${this.state.nightsSurvived} night${this.state.nightsSurvived === 1 ? '' : 's'}.`;
+    let title: string, flavor: string;
+    if (card?.outcome === 'reckoned') {
+      title = 'THE RECKONING IS YOURS';
+      flavor = `The lord falls. You held against it${card.reckoningSec != null ? ` for ${card.reckoningSec}s` : ''}, and the dream holds with you.`;
+    } else if (card?.outcome === 'fallen') {
+      title = "THE LORD'S RECKONING";
+      flavor = `Its blow lands true before yours did. You dealt ${card.bossDamageDealt ?? 0} before the end.`;
+    } else if (card?.outcome === 'outlasted') {
+      title = 'THE CLOCK RUNS OUT';
+      flavor = `The lord still stands when the years catch up. You dealt it ${card.bossDamageDealt ?? 0} in the time you had.`;
+    } else {
+      // L1: two distinct endings — a violent hall-fall vs. a peaceful old-age
+      // ending — never mixed, and never using network jargon in the fiction
+      // (Veil law).
+      title = oldAge ? 'THE DREAM FADES' : 'THE THREAD IS CUT';
+      flavor = oldAge
+        ? `Your dream-self grows heavy with years and lies down beneath the dark, and does not wake.
+           You lived ${card?.age ?? '?'} years and survived ${this.state.nightsSurvived} night${this.state.nightsSurvived === 1 ? '' : 's'}.`
+        : `Your Hearthstone lies in ruin and the dark takes the rest.
+           You survived ${this.state.nightsSurvived} night${this.state.nightsSurvived === 1 ? '' : 's'}.`;
+    }
     over.innerHTML = `<h1>${title}</h1>
       <div style="color:var(--ink-dim);max-width:340px">${flavor}</div>
       ${cardHtml}`;

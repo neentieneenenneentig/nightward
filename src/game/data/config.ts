@@ -636,6 +636,12 @@ export const CFG = {
     // instead of leaving the point sitting in a panel nobody opens mid-fight.
     draftCards: 3,
     draftRerollGold: 40,
+    // SR3: the summons. Matches actCurve's swelling→reckoning boundary
+    // exactly on purpose — the field thinning and the lord's arrival are the
+    // SAME moment, not two clocks that can drift apart from each other.
+    // The window's length is read off actCurve's own reckoning row
+    // (untilSec − reckoningAtSec) rather than duplicated as a second number.
+    reckoningAtSec: 720,
   },
 
   // ---------------------------------------------------------------- SR4-SR8 ---

@@ -124,6 +124,9 @@ html, body, #nw-observatory, .nw-pbody {
   50% { box-shadow: inset 0 0 0 1px var(--blood-hi), 0 0 10px rgba(210,74,56,.5); } }
 .nw-clock .sun { color: var(--gold); } .nw-clock .moon { color: #a9b6e6; }
 .nw-act { color: #cfa96a; font-style: italic; opacity: 0.85; }
+.nw-reck { color: #e0708a; font-style: normal; font-weight: 600; opacity: 1;
+  animation: nw-reck-pulse 1.6s ease-in-out infinite; }
+@keyframes nw-reck-pulse { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; text-shadow: 0 0 8px rgba(224,112,138,.6); } }
 .nw-domain .dn { color: #ccbbdd; } .nw-domain .dg { color: #d89a9a; letter-spacing: 1px; }
 .nw-domain { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; }
 .nw-spacer { margin-left: auto; }

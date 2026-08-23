@@ -3,6 +3,7 @@
 import { CFG } from './data/config';
 import { itemDef, rolledOf } from './data/items';
 import type { GearMod } from './data/affixes';
+import { rarityIndex } from './data/rarity';
 import { activeEffects } from './systems/effects';
 import { computeModifiers } from './data/loom';
 import { SOULGEAR, baseStatFor, type SoulSlot } from './data/soulgear';
@@ -213,6 +214,29 @@ export function gearMod(state: GameState, key: GearMod): number {
     for (const a of r.affixes) if (a.mod === key && a.modVal != null) m *= a.modVal;
   }
   return m;
+}
+
+/** SR3 — Gear Score: a derived item level over every WORN piece (equip
+ *  slots only — carriedGearIds also pulls in the relic and best tools, which
+ *  read as utility rather than "how strong is this character"). Read from
+ *  the roll registry via rolledOf(), the same source `trophy` uses, so a
+ *  Sovereign you found, wore and then lost to a death scatter still counts —
+ *  it happened to this run whether or not it survived to the end screen.
+ *
+ *  Deviates from the plan's stated formula by one term: RolledAffix carries
+ *  no per-affix tier number anywhere in this codebase (loot.ts's "tier" is
+ *  the ITEM's rarity, already counted), so there is nothing for a `Σ
+ *  affixTier` term to sum. Rarity and affix count are what's actually
+ *  tracked, and are what this counts. */
+export function gearScore(state: GameState): number {
+  let score = 0;
+  for (const id of Object.values(state.player.equip ?? {})) {
+    if (!id) continue;
+    const r = rolledOf(id);
+    const rarity = r?.rarity ?? 'plain';
+    score += (rarityIndex(rarity) + 1) * 10 + (r?.affixes.length ?? 0) * 5;
+  }
+  return score;
 }
 
 /** B3.a — the player's max HP, which is no longer a constant.

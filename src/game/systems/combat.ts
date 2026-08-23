@@ -333,6 +333,7 @@ export class CombatSystem {
       // severity the damage roll already produced.
       this.ctx.floaters?.spawnDamage?.(f.x, f.y - 14, Math.min(dmg, hpBefore), severity, this.ctx.cam);
       this.ctx.particles?.spawn?.('blood', f.x, f.y - 6, 3 + Math.round(severity * 4), fa);
+      this.ctx.scoreboard?.onDamageDealt?.(Math.min(dmg, hpBefore));
       landed = true;
       hitLines.push(`${f.def.name} for ${Math.min(dmg, hpBefore)} (${Math.max(0, f.hp)}/${f.maxHp} hp left)`);
     }
@@ -347,6 +348,7 @@ export class CombatSystem {
       views.addHitFlash(b.x, b.y - size / 4);
       this.ctx.floaters?.spawnDamage?.(b.x, b.y - size / 2, Math.min(dmg, hpBefore), severity, this.ctx.cam);
       this.ctx.particles?.spawn?.('blood', b.x, b.y - size / 4, 3 + Math.round(severity * 4), fa);
+      this.ctx.scoreboard?.onDamageDealt?.(Math.min(dmg, hpBefore));
       landed = true;
       hitLines.push(`${b.name} for ${Math.min(dmg, hpBefore)} (${Math.max(0, b.hp)}/${b.maxHp} hp left)`);
     }
@@ -638,6 +640,14 @@ export class CombatSystem {
    *  dodge, and fired thorns at nobody. */
   private fall() {
     const { state, player, toast } = this.ctx;
+    // SR3: Fallen. Once the Reckoning is active, going down ends the run
+    // instead of scattering you — the field is thinned to exactly one real
+    // threat for this reason, and a death here is the wall the plan calls
+    // for, not a survivable setback like every other death in the game.
+    if (state.reckoning?.active) {
+      this.ctx.onReckoningDeath?.();
+      return;
+    }
     // down — drop gold and the connection scatters you far into the wilds
     const lost = Math.floor(state.player.gold * CFG.player.deathGoldLossPct);
     state.player.gold -= lost;

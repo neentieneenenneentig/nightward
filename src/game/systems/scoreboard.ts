@@ -15,6 +15,7 @@ import { CFG } from '../data/config';
 import { allRolled } from '../data/items';
 import { bestRoll } from './loot';
 import { legacyWeight } from '../data/covenants';
+import { gearScore } from '../rules';
 
 export interface RunScorecard {
   v: 2;
@@ -60,6 +61,23 @@ export interface RunScorecard {
    *  and lost to a death scatter still happened to you. Optional, so v2 records
    *  written before A1 stay valid and need no migration. */
   trophy?: { name: string; rarity: string; affixes: number } | null;
+  /** SR3 — the run's terminal shape and the Reckoning's own numbers. All
+   *  optional, the same carve-out elitesFelled/pact/trophy already took: a
+   *  v2 card predates the Reckoning entirely and stays valid without a
+   *  migration branch, reading as "not recorded" rather than as zeroes —
+   *  a zero bossDamageDealt would read as "the fight went badly", when what
+   *  actually happened is the fight never existed on that record. */
+  outcome?: 'reckoned' | 'outlasted' | 'fallen' | 'unmet';
+  /** Rarity + affix count over every worn slot — see rules.ts gearScore(). */
+  gearScore?: number;
+  /** Seconds from the summons to however the fight ended. Undefined on
+   *  'unmet' — there was no fight to time. */
+  reckoningSec?: number;
+  /** Biggest single melee hit landed this run, win or lose. */
+  bestHit?: number;
+  /** Damage dealt to the summoned lord specifically — what an Outlasted
+   *  ending is scored on, and what makes a loss still a number to beat. */
+  bossDamageDealt?: number;
 }
 
 /** Bag of stats computeLegacyScore needs — shared by snapshot(), getLiveStats(), and v1 migration. */
@@ -105,6 +123,12 @@ export class ScoreboardSystem {
   elitesFelled = 0;
   championsFelled = 0;
   buildingsBuilt = 0;
+  /** SR3 — the Damage axis's "biggest single hit". Melee only (combat.ts's
+   *  resolveHit loop) — echo/tower damage isn't threaded through here, which
+   *  is a real gap for a total but not for THIS purpose: the axis is about
+   *  the swing that hit hardest, and melee is what a player is aiming when
+   *  they read "biggest hit" as a thing to beat. */
+  bestHit = 0;
   private realLastMs = 0;
 
   constructor(private ctx: any) {}
@@ -135,6 +159,9 @@ export class ScoreboardSystem {
     if (elite === 'champion') this.championsFelled++;
     else if (elite === 'elite') this.elitesFelled++;
   }
+
+  /** SR3 — call with the actual (clamped) damage a melee hit landed. */
+  onDamageDealt(dmg: number) { if (dmg > this.bestHit) this.bestHit = dmg; }
 
   /** Call on building placed. */
   onBuild() { this.buildingsBuilt++; }
@@ -199,6 +226,11 @@ export class ScoreboardSystem {
         const best = bestRoll(allRolled());
         return best ? { name: best.name, rarity: best.rarity, affixes: best.affixes.length } : null;
       })(),
+      outcome: state.outcome ?? undefined,
+      gearScore: gearScore(state),
+      reckoningSec: state.reckoning ? Math.round(state.clock - state.reckoning.startClock) : undefined,
+      bestHit: this.bestHit,
+      bossDamageDealt: state.reckoning?.damageDealt,
     };
   }
 
