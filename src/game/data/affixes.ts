@@ -90,6 +90,28 @@ export const PREFIXES: AffixDef[] = [
     mod: 'buildHp', modRange: [1.10, 1.30], weight: 45 },
   { id: 'hungering', name: 'Hungering', kind: 'prefix', on: ['weapon', 'armor', 'ring', 'amulet', 'charm', 'tool'],
     mod: 'soulXp', modRange: [1.12, 1.30], weight: 45 },
+
+  // ---- SR2: elemental damage, as an affix any weapon or ring can roll -----
+  // X1 shipped four swords that each HARD-CODE one element's effect hook —
+  // sword_fire IS fire_on_hit, permanently, on that one blade. These four rows
+  // are the same four hooks (fire/frost/storm/void, i.e. the PoE-shape
+  // fire/cold/lightning/chaos) offered as an ordinary roll on ANY eligible
+  // weapon or ring, the way `keen`/`heavy` already are. `stat`+`effect` on one
+  // row is not a new mechanism — `heavy` above already pairs `stat` with a
+  // second field (`mod`) — so a blade can roll "Molten" and get both a damage
+  // line AND the ignite chance, same as the four X1 swords always have.
+  // Physical is already covered: `keen` and `heavy` above ARE the physical
+  // family, so it gets no fifth row here rather than a duplicate of them.
+  { id: 'molten',   name: 'Molten',    kind: 'prefix', on: ['weapon', 'ring'],
+    stat: 'weaponDmg', add: [2, 5], effect: 'fire_on_hit',   weight: 55 },
+  { id: 'rimed',    name: 'Rimed',     kind: 'prefix', on: ['weapon', 'ring'],
+    stat: 'weaponDmg', add: [2, 5], effect: 'chill_on_hit',  weight: 55 },
+  // Gated at the same minTier as their suffix equivalents (of_the_chain,
+  // of_the_leech) — same hook, same power level, so the same floor applies.
+  { id: 'charged',  name: 'Charged',   kind: 'prefix', on: ['weapon', 'ring'],
+    stat: 'weaponDmg', add: [2, 6], effect: 'chain_on_kill', weight: 40, minTier: 'woven' },
+  { id: 'warped',   name: 'Warped',    kind: 'prefix', on: ['weapon', 'ring'],
+    stat: 'weaponDmg', add: [2, 6], effect: 'lifesteal',     weight: 40, minTier: 'woven' },
 ];
 
 // -------------------------------------------------------------- suffixes ----
