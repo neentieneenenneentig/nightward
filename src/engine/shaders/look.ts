@@ -95,18 +95,31 @@ export function lookFor(i: LookInputs): GradeSettings {
   // rather than a re-tune of numbers other phases already settled.
   const atmo = i.atmosphere ? n : 0;
 
+  // The world is overcast at noon, not just after dusk — a FLAT pull, never
+  // scaled by `n`, so it is there for the ~70% of a run's clock (daySec 240 vs
+  // nightSec 100) that CFG.time spends in daylight. Before this, n=0 produced
+  // the literal NEUTRAL_GRADE plus a weak realm tint, which is why a game
+  // named for the night read as a lovely sunny day for most of every run.
+  // Night's own deltas (below) are untouched and still stack on top of this
+  // floor, so the day→night gap is exactly as wide as it always was — it now
+  // runs dim→darker instead of bright→dark.
+  const OVERCAST_EXPOSURE = 0.08;
+  const OVERCAST_SATURATION = 0.12;
+  const OVERCAST_VIGNETTE = 0.08;
+  const OVERCAST_TINT_STRENGTH = 0.05;
+
   const g: GradeSettings = {
-    exposure: 1.0 - n * 0.18 - i.surge * 0.06 + i.impact * 0.35 - atmo * 0.08,
+    exposure: 1.0 - OVERCAST_EXPOSURE - n * 0.18 - i.surge * 0.06 + i.impact * 0.35 - atmo * 0.08,
     contrast: 1.06 + n * 0.14 + i.impact * 0.10,
-    saturation: r.saturation - n * 0.18 - i.impact * 0.45,
+    saturation: r.saturation - OVERCAST_SATURATION - n * 0.18 - i.impact * 0.45,
     warmth: r.warmth * (1 - n * 0.45) + atmo * 0.14,
     tint,
-    tintStrength: r.tintStrength + n * 0.10,
+    tintStrength: r.tintStrength + OVERCAST_TINT_STRENGTH + n * 0.10,
     // The filmic roll-off is what stops the new bloom from clipping to white.
     // It is the single stage that must never be tier-gated off, because the
     // alternative is not "cheaper", it is "blown out".
     rolloff: 0.55,
-    vignette: 0.16 + n * 0.26 + (i.offline ? 0.14 : 0) + i.surge * 0.22,
+    vignette: 0.16 + OVERCAST_VIGNETTE + n * 0.26 + (i.offline ? 0.14 : 0) + i.surge * 0.22,
     vignetteRadius: 0.52 - n * 0.10,
     // SR6: 7 steps per channel, dithered — the "graded, not banded" line the
     // plan draws at. Off at 'low' for the same reason dither is: a posterise
