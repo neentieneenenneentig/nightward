@@ -16,9 +16,115 @@ import { allRolled } from '../data/items';
 import { bestRoll } from './loot';
 import { legacyWeight } from '../data/covenants';
 import { gearScore } from '../rules';
+import { CHRONICLE_SERIES, type Quality } from './chronicle';
+
+export interface WireSeriesBucket {
+  min: number;
+  med: number;
+  p95: number;
+  max: number;
+  n: number;
+  q: Quality;
+}
+
+/** SR9/SR10 — shareable run conditions, deliberately stripped of identity. */
+export interface WireRecord {
+  v: 1;
+  series: Record<string, WireSeriesBucket>;
+  values: Record<string, number>;
+  shape: {
+    effectiveType: string;
+    saveData: boolean;
+    deepLive: boolean;
+    natClass: string;
+    udpV6: boolean;
+    protoDominant: string;
+    pact: string;
+    soundings: number;
+    downMbps?: number;
+    upMbps?: number;
+    bloatGrade?: string;
+  };
+  vessel: {
+    gpuTier: 'low' | 'mid' | 'high' | 'unknown';
+    cores: number;
+    pressureMean: number;
+    jankP95: number;
+    reducedMotion: boolean;
+  };
+  assist: { index: number; formula: number };
+}
+
+const WIRE_VALUE_TARGETS = [
+  'simSpeed', 'goldRate', 'enemyScale', 'dayPhase', 'realmType', 'damage',
+  'hordeAggression', 'siltDrag', 'fortune', 'aperture', 'gatherSpeed',
+  'xpRate', 'vigorDecay', 'resolveDecay', 'mercy',
+] as const;
+
+function wireSeries(chronicle: any): Record<string, WireSeriesBucket> {
+  const out: Record<string, WireSeriesBucket> = {};
+  for (const meta of CHRONICLE_SERIES) {
+    const buckets = chronicle?.get?.(meta.key)?.buckets;
+    if (!Array.isArray(buckets)) continue;
+    out[meta.key] = buckets.reduce((stats: WireSeriesBucket, bucket: any) => ({
+      min: Math.min(stats.min, bucket.min), med: bucket.med,
+      p95: bucket.p95, max: Math.max(stats.max, bucket.max),
+      n: stats.n + bucket.n, q: bucket.q,
+    }), { min: Infinity, med: 0, p95: 0, max: -Infinity, n: 0, q: 'unavailable' });
+    if (out[meta.key].n === 0) delete out[meta.key];
+  }
+  return out;
+}
+
+function gpuTier(reading: any): WireRecord['vessel']['gpuTier'] {
+  const tier = reading?.gpuTier;
+  return tier === 'low' || tier === 'mid' || tier === 'high' ? tier : 'unknown';
+}
+
+function buildWireRecord(ctx: any): WireRecord {
+  const net = ctx.net;
+  const snap = net?.snap ?? {};
+  const vessel = net?.vessel?.reading ?? {};
+  const sounding = ctx.sounding?.last ?? {};
+  const values: Record<string, number> = {};
+  for (const target of WIRE_VALUE_TARGETS) {
+    const value = Number(net?.getGameValue?.(target));
+    if (Number.isFinite(value)) values[target] = Math.round(value * 100) / 100;
+  }
+  const proto = net?.protocolReality?.()?.dominant;
+  const pressure = Number(vessel.pressureFrac);
+  const jank = Number(vessel.jankMs);
+  return {
+    v: 1,
+    series: wireSeries(ctx.chronicle),
+    values,
+    shape: {
+      effectiveType: typeof snap.effectiveType === 'string' ? snap.effectiveType : 'unknown',
+      saveData: !!snap.saveData,
+      deepLive: !!snap.deepLive,
+      natClass: typeof snap.natClass === 'string' ? snap.natClass : 'unknown',
+      udpV6: !!snap.udpV6,
+      protoDominant: typeof proto === 'string' ? proto : 'unknown',
+      pact: ctx.state?.covenant ?? 'quiet',
+      soundings: Number(ctx.sounding?.count) || 0,
+      downMbps: sounding.live && Number.isFinite(Number(sounding.downMbps)) ? Number(sounding.downMbps) : undefined,
+      upMbps: sounding.live && Number.isFinite(Number(sounding.upMbps)) ? Number(sounding.upMbps) : undefined,
+      bloatGrade: sounding.live && typeof sounding.bloatGrade === 'string' && sounding.bloatGrade !== '?'
+        ? sounding.bloatGrade : undefined,
+    },
+    vessel: {
+      gpuTier: gpuTier(vessel),
+      cores: Number(vessel.cores) || 0,
+      pressureMean: Number.isFinite(pressure) ? Math.round(pressure * 100) / 100 : 0,
+      jankP95: Number.isFinite(jank) ? Math.round(jank * 100) / 100 : 0,
+      reducedMotion: !!vessel.reducedMotion,
+    },
+    assist: { index: 0, formula: 1 },
+  };
+}
 
 export interface RunScorecard {
-  v: 2;
+  v: 2 | 3;
   date: string;              // ISO date string of when the run ended
   connectionAge: number;     // seconds the tab was open (kept as a stat, no longer the sort key)
   dominantRealm: string;     // biome that had the most uptime
@@ -93,6 +199,8 @@ export interface RunScorecard {
    *  no release pipeline that stamps one on, and inventing one only to
    *  satisfy this field would be a row serving no reader but itself. */
   engineVersion?: string;
+  /** SR9/SR10 — privacy-allowlisted conditions from the run's wire and vessel. */
+  wire?: WireRecord;
 }
 
 /** SR9 — see RunScorecard.engineVersion. The full "seed + input log +
@@ -230,7 +338,7 @@ export class ScoreboardSystem {
       causeOfDeath,
     }) * legacyWeight(state.nightsAtCovenant ?? {}, state.covenant ?? 'quiet'));
     return {
-      v: 2,
+      v: 3,
       date: new Date().toISOString(),
       connectionAge: Math.round(this.connectionUptime),
       dominantRealm: this.dominantRealm(),
@@ -262,6 +370,7 @@ export class ScoreboardSystem {
       bossDamageDealt: state.reckoning?.damageDealt,
       seed: state.seed,
       engineVersion: ENGINE_VERSION,
+      wire: buildWireRecord({ ...this.ctx, chronicle: this.ctx.net?.chronicle }),
     };
   }
 
@@ -337,7 +446,7 @@ export class ScoreboardSystem {
  *  default since v1 never tracked god-mode use (generous, not punitive, for
  *  runs that predate the tracking existing at all). */
 function migrate(raw: any): RunScorecard {
-  if (raw && raw.v === 2) return raw as RunScorecard;
+  if (raw && (raw.v === 2 || raw.v === 3)) return raw as RunScorecard;
   const legacyScore = computeLegacyScore({
     nightsSurvived: raw?.nightsSurvived ?? 0,
     enemiesKilled: raw?.enemiesKilled ?? 0,
