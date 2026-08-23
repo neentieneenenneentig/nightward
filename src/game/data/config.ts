@@ -617,6 +617,20 @@ export const CFG = {
     /** How far arrows may nudge the ghost off the facing tile. Bounded, because
      *  an unbounded nudge is a second cursor with worse ergonomics. */
     buildNudgeMaxTiles: 4,
+    // SR1: one curve, three named acts, over CFG.horde's EXISTING knobs — a
+    // multiplier table beside the system it scales, same discipline as A2's
+    // covenant multipliers. `untilSec` is real elapsed seconds (see acts.ts).
+    actCurve: [
+      // The Gathering (0-5min): today's game, quieter. No elites — this is
+      // the build-up, not the swarm.
+      { id: 'gathering', untilSec: 300, countMul: 0.6, rateMul: 0.7, elites: false, champions: false },
+      // The Swelling (5-12min): density climbs toward maxAlive, elites from
+      // here, champions too — the Vampire Survivors half.
+      { id: 'swelling', untilSec: 720, countMul: 1.4, rateMul: 1.5, elites: true, champions: true },
+      // The Reckoning (12-15min): the overworld THINS. The boss is the fight,
+      // not the garnish standing around it.
+      { id: 'reckoning', untilSec: 900, countMul: 0.2, rateMul: 0.3, elites: false, champions: false },
+    ] as { id: string; untilSec: number; countMul: number; rateMul: number; elites: boolean; champions: boolean }[],
   },
 
   // ---------------------------------------------------------------- SR4-SR8 ---

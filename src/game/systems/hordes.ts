@@ -20,6 +20,7 @@ import { BUILDINGS } from '../data/buildings';
 import { Sound } from '../../engine/audio';
 import { levelUpFlourish } from './flourish';
 import { phase, phaseRemaining } from './daynight';
+import { actRowAt, NEUTRAL_ACT_ROW } from './acts';
 import { epithetForRegion, prefixForBirth } from '../data/lexicon';
 
 const SKILL_NAME: Record<string, string> = Object.fromEntries(SKILLS.map((s) => [s.id, s.name]));
@@ -89,6 +90,22 @@ export class HordeSystem {
 
   constructor(private ctx: any) {}
 
+  /** SR1: the current act's multiplier row, read off REAL elapsed time — see
+   *  main.ts's elapsedRealSec (a sim-tick count, not state.clock and not
+   *  performance.now()), so a Gauntlet __nw.step() loop advances the acts
+   *  exactly as many fixed steps as it asks for, deterministically, rather
+   *  than freezing on whatever real time happened to elapse during a test
+   *  suite's own execution overhead. Falls back to the Swelling-shaped middle
+   *  row if that hook isn't wired (a bare HordeSystem built without main.ts's
+   *  ctx), which is CFG.sr.actCurve[1] rather than [0] specifically so a
+   *  caller that skips the act system entirely still gets elites, since
+   *  today's pre-SR1 behaviour assumed they were always live. */
+  private actRow() {
+    if (!CFG.sr.enabled) return NEUTRAL_ACT_ROW;
+    const s = this.ctx.elapsedRealSec?.();
+    return s !== undefined ? actRowAt(s) : CFG.sr.actCurve[1];
+  }
+
   onDusk(nightIndex: number) {
     // B2: the player was here when night fell — record it BEFORE the firstNight
     // early-return, so the dawn credit is gated on presence, not on whether a
@@ -100,11 +117,14 @@ export class HordeSystem {
     const gold = this.ctx.state.player.gold;
     const goldSteps = Math.max(0, Math.floor((gold - CFG.horde.goldThreshold) / CFG.horde.goldThreshold));
     const goldMult = 1 + goldSteps * CFG.horde.goldMultPerThreshold;
+    // SR1: a night that falls during the Reckoning thins itself — the boss is
+    // the fight, not the garnish standing around it.
+    const actCountMul = this.actRow().countMul;
     this.toSpawn = Math.round((
       CFG.horde.baseCount +
       CFG.horde.perNight * (nightIndex - 1) +
       CFG.horde.perTerritory * territoryScore(this.ctx.state)
-    ) * goldMult);
+    ) * goldMult * actCountMul);
     this.spawnT = 0;
     const s = this.ctx.net?.snap;
     this.ctx.toast(`Night ${nightIndex} — ${this.toSpawn} enemies converge`, 'bad');
@@ -150,7 +170,9 @@ export class HordeSystem {
     if (this.ctx.isNight() && this.toSpawn > 0 && this.foes.length < CFG.horde.maxAlive) {
       this.spawnT -= dt;
       if (this.spawnT <= 0) {
-        this.spawnT = CFG.horde.spawnIntervalSec;
+        // SR1: rateMul scales the RATE, so it divides the interval — 1.5x
+        // rate during the Swelling means spawns land every 2/3 the wait.
+        this.spawnT = CFG.horde.spawnIntervalSec / Math.max(0.05, this.actRow().rateMul);
         this.spawn();
       }
     }
@@ -234,8 +256,17 @@ export class HordeSystem {
     if (opts.cairn && !A.inCairns) return null;
     if (this.eliteCount() >= A.maxAlive) return null;
 
-    const champ = championChance(night) * A.rateMul;
-    const elite = eliteChance(night) * A.rateMul;
+    // SR1: the Gathering and the Reckoning are elite-free by design — the
+    // first is the build-up, the second thins the field instead. Checked
+    // before Math.random(), same discipline as A.enabled just above: a gate
+    // that closes silently must close BEFORE it touches the seeded stream,
+    // or a Gauntlet's seed-comparison assertions disagree with themselves
+    // over a boolean the test never mentions.
+    const act = this.actRow();
+    if (!act.elites && !act.champions) return null;
+
+    const champ = act.champions ? championChance(night) * A.rateMul : 0;
+    const elite = act.elites ? eliteChance(night) * A.rateMul : 0;
     const r = Math.random();
     // Champion is tested first and the two windows do not overlap: at night 12
     // that is a 10% champion and a further 30% elite, not 10% of a 30%. A

@@ -65,6 +65,7 @@ import { FloaterSystem } from './game/ui/floaters';
 import { ParticleSystem } from './engine/particles';
 import { PostProcess, type PostProcessConfig, type GlowSpot } from './engine/postprocess';
 import { DecalLayer } from './engine/decals';
+import { actFor, ACT_LABEL } from './game/systems/acts';
 import { lookFor } from './engine/shaders/look';
 import { BUILDING_LIGHT } from './game/data/lights';
 import { isBeamworthy, rarityTint } from './game/ui/rarity';
@@ -158,6 +159,8 @@ async function boot() {
       if (CFG.gfx.feel === false) return;
       hitstopMs = Math.max(hitstopMs, ms);
     },
+    // SR1: see simTicks above.
+    elapsedRealSec: () => simTicks * (STEP / 1000),
   };
 
   // G1: particle system — pre-allocated pool for gather poofs, fire embers, slash trails, etc.
@@ -486,6 +489,12 @@ async function boot() {
       warning: lifespan.isWarning(),
       critical: lifespan.isCritical(),
     }),
+    // SR1: named in the HUD, off CFG.sr.enabled's neutral row when disabled —
+    // same source hordes.ts reads (elapsedRealSec, not connectionUptime), so
+    // the HUD can never claim an act the spawn system isn't actually running.
+    actView: () => ({
+      label: ACT_LABEL[(CFG.sr.enabled ? actFor(simTicks * (STEP / 1000)) : 'gathering')],
+    }),
     gatherView: () => {
       if (gather.active) return { label: labelFor(gather.active.def), frac: gather.active.progress / gather.active.need };
       if (gather.target) return { label: labelFor(gather.target.def) + ' (E)', frac: 0 };
@@ -633,6 +642,16 @@ async function boot() {
   // EACH OTHER, or a laggy connection's already-slow sim would make every hit
   // stop feel like a full pause.
   let hitstopMs = 0;
+  // SR1: elapsed real seconds for the act curve — every sim() CALL counts as
+  // one fixed STEP of real time, whether that call came from the live ticker
+  // or from a Gauntlet __nw.step() loop. This is deliberately NOT wall-clock
+  // performance.now() (which a step() loop barely advances, freezing every
+  // run in the Gathering act forever and non-deterministically depending on
+  // how long the test suite had already been running) and NOT state.clock
+  // (which simSpeed and hit-stop both stretch). A step count times a fixed
+  // step size is real-time-shaped during live play and exactly reproducible
+  // under a seeded test.
+  let simTicks = 0;
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
     // B3.a test seam: movement is composed inside sim(), so the Gauntlet can only
@@ -716,6 +735,7 @@ async function boot() {
   });
 
   function sim(dt: number) {
+    simTicks++;
     if (!state.gameOver) state.clock += dt;
 
     // sim speed = pulse time → lag compensation (high pulse = slow sim)

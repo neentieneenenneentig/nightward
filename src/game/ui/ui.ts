@@ -71,6 +71,9 @@ export interface UIHooks {
   }[];
   /** L1: current age/lifespan-remaining reading — drives the HUD chip+bar. */
   lifespanView(): { age: number; frac: number; minutesRemaining: number; warning: boolean; critical: boolean };
+  /** SR1: the current act — named in the HUD because a player who cannot
+   *  feel the curve cannot plan against it. */
+  actView(): { label: string };
   logEntries(): LogEntry[];
   /** W7: feed an item to a soul-gear slot. Returns FeedResult or null if invalid. */
   feedSoul(itemId: string, count: number, targetSlot: SoulSlot): FeedResult | null;
@@ -1272,9 +1275,11 @@ export class UI {
 
     const ph = phase(this.state.clock);
     const rem = Math.ceil(phaseRemaining(this.state.clock));
-    this.clock.innerHTML = ph.isNight
+    const act = this.hooks.actView();
+    this.clock.innerHTML = (ph.isNight
       ? `<span class="moon">&#9789; NIGHT ${ph.dayIndex}</span> &middot; ${rem}s`
-      : `<span class="sun">&#9788; DAY ${ph.dayIndex}</span> &middot; ${rem}s`;
+      : `<span class="sun">&#9788; DAY ${ph.dayIndex}</span> &middot; ${rem}s`)
+      + ` &middot; <span class="nw-act">${act.label}</span>`;
 
     const dmg = CFG.player.baseDmg + equippedWeaponDmg(this.state);
     const def = armorDef(this.state);
