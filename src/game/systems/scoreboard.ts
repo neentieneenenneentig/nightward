@@ -336,6 +336,40 @@ export function loadLeaderboard(): RunScorecard[] {
   } catch { return []; }
 }
 
+/** SR9 — a category over the board that already exists: a filter plus a
+ *  comparator, which is data, not a new leaderboard. Shipping three rather
+ *  than the plan's full six (§6): categories nobody understands are
+ *  categories nobody plays, and Time/Purity/Legacy are the three that need
+ *  no explanation. Damage (`bestHit`) is shown on the death screen instead
+ *  of ranked — a single-run number, not a "best of your history" claim
+ *  worth its own board. */
+export interface LeaderboardCategory {
+  id: string;
+  label: string;
+  filter: (c: RunScorecard) => boolean;
+  cmp: (a: RunScorecard, b: RunScorecard) => number; // ascending: a before b if negative
+}
+export const CATEGORIES: LeaderboardCategory[] = [
+  { id: 'legacy', label: 'Legacy', filter: () => true, cmp: (a, b) => b.legacyScore - a.legacyScore },
+  { id: 'time', label: 'Fastest Reckoning',
+    filter: (c) => c.outcome === 'reckoned',
+    cmp: (a, b) => (a.reckoningSec ?? Infinity) - (b.reckoningSec ?? Infinity) },
+  // "Purity": the win with the LEAST gear — ascending gearScore, same as
+  // Time's ascending seconds. The category speedrunners actually love,
+  // because it rewards a build decision rather than time invested.
+  { id: 'purity', label: 'Lowest Gear, Won',
+    filter: (c) => c.outcome === 'reckoned',
+    cmp: (a, b) => (a.gearScore ?? Infinity) - (b.gearScore ?? Infinity) },
+];
+
+/** Entries in `cat`'s order, legit runs still ranked before flagged ones
+ *  regardless of category — the same rule saveToLeaderboard's own sort
+ *  already applies for Legacy, now uniform across all three. */
+export function rankFor(catId: string, entries: RunScorecard[]): RunScorecard[] {
+  const cat = CATEGORIES.find((c) => c.id === catId) ?? CATEGORIES[0];
+  return entries.filter(cat.filter).sort((a, b) => (Number(b.legit) - Number(a.legit)) || cat.cmp(a, b));
+}
+
 /** Format seconds into "12h 34m 56s" or "5m 12s" or "42s". */
 export function formatAge(sec: number): string {
   const h = Math.floor(sec / 3600);

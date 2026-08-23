@@ -28,7 +28,7 @@ import type { GameState } from '../state';
 import type { LogEntry } from '../systems/log';
 import { injectStyles } from './styles';
 import { Toasts } from './toast';
-import { loadLeaderboard, formatAge } from '../systems/scoreboard';
+import { loadLeaderboard, formatAge, CATEGORIES, rankFor } from '../systems/scoreboard';
 import { COVENANTS, canSwear } from '../data/covenants';
 import type { SoundingResult } from '../systems/sounding';
 
@@ -171,6 +171,8 @@ export class UI {
   /** SR2: the draft overlay, or null. Same reasoning as pauseEl. */
   private draftEl: HTMLElement | null = null;
   private craftTab = 'crafting';
+  /** SR9: which leaderboard category is showing. */
+  private lbCategory = 'legacy';
   /** A6: which shape the Reliquary is currently quoting. Remembered across
    *  openings — a player shopping for a blade is usually still shopping for a
    *  blade the second time they walk up. */
@@ -1436,12 +1438,35 @@ export class UI {
 
     // ---- historical leaderboard ----
     const histSec = el('div', 'nw-lb-hist');
-    histSec.innerHTML = '<div class="nw-lb-sechd">TOP RUNS &mdash; by Legacy Score</div>';
+    const cat = CATEGORIES.find((c) => c.id === this.lbCategory) ?? CATEGORIES[0];
+    const sechd = el('div', 'nw-lb-sechd');
+    sechd.textContent = `TOP RUNS — ${cat.label}`;
+    histSec.appendChild(sechd);
 
-    const entries = loadLeaderboard();
+    // SR9: category tabs — reuses the exact craft-tab pattern/CSS rather than
+    // a new tab widget. Three, per the plan's own "ship three, not six":
+    // categories nobody understands are categories nobody plays.
+    const tabs = el('div', 'nw-tabs');
+    tabs.style.pointerEvents = 'auto';
+    for (const c of CATEGORIES) {
+      const t = el('div', 'nw-tab' + (c.id === this.lbCategory ? ' on' : ''));
+      t.textContent = c.label;
+      t.tabIndex = 0;
+      t.setAttribute('role', 'tab');
+      t.setAttribute('aria-selected', String(c.id === this.lbCategory));
+      const pick = () => { this.lbCategory = c.id; this.renderPanel(); };
+      t.addEventListener('click', pick);
+      t.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      tabs.appendChild(t);
+    }
+    histSec.appendChild(tabs);
+
+    const entries = rankFor(this.lbCategory, loadLeaderboard());
     if (!entries.length) {
       const empty = el('div', 'nw-empty');
-      empty.textContent = 'No runs recorded yet. Survive, and your name will be written in the static.';
+      empty.textContent = cat.id === 'legacy'
+        ? 'No runs recorded yet. Survive, and your name will be written in the static.'
+        : 'No run has qualified for this category yet — it only counts a Reckoning actually won.';
       histSec.appendChild(empty);
     } else {
       const list = el('div', 'nw-lb-list');
@@ -1451,9 +1476,14 @@ export class UI {
         const row = el('div', 'nw-lb-row' + (e.legit ? '' : ' cheat'));
         const rankIcon = !e.legit ? '&#128128;' : rank === 1 ? '&#129351;' : rank === 2 ? '&#129352;' : rank === 3 ? '&#129353;' : `#${rank}`;
         const causeIcon = e.causeOfDeath === 'old_age' ? '&#9203;' : e.causeOfDeath === 'hall_fallen' ? '&#128128;' : '?';
+        // The headline number changes with the tab — a Purity board that
+        // still leads with Legacy Score is a Legacy board with extra steps.
+        const headline = cat.id === 'time' ? `${(e.reckoningSec ?? 0).toFixed(1)}s`
+          : cat.id === 'purity' ? `${e.gearScore ?? 0} gear`
+          : `${e.legacyScore}`;
         row.innerHTML = `
           <span class="nw-lb-rank">${rankIcon}</span>
-          <span class="nw-lb-score">${e.legacyScore}</span>
+          <span class="nw-lb-score">${headline}</span>
           <span class="nw-lb-age" title="died of ${e.causeOfDeath === 'old_age' ? 'natural causes' : e.causeOfDeath === 'hall_fallen' ? 'the hall falling' : 'unknown causes'}">${causeIcon} age ${e.age}</span>
           <span class="nw-lb-detail">${e.nightsSurvived}n &middot; ${e.enemiesKilled}k &middot; ${e.bossesSlain}b &middot; ${e.goldHoarded}g</span>
           <span class="nw-lb-realm">${e.dominantRealm}${e.legit ? '' : ' &middot; <i>god mode</i>'}</span>`
