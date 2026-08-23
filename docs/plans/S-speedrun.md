@@ -2,8 +2,10 @@
 
 *A fifteen-minute speedrun ARPG that ends in a boss, and a look that stops apologising.*
 
-**Status:** plan. Nothing built. Written 2026-08-22, the day `dev/night-build` merged nineteen
-milestones to `main` and both previous live plans were retired.
+**Status:** in progress, updated 2026-08-23. Written 2026-08-22, the day `dev/night-build` merged
+nineteen milestones to `main` and both previous live plans were retired. All eleven phases have
+now landed at least a first cut — see the status column on the [phasing table](#7-phasing) for
+what each one actually shipped versus what it deliberately scoped down or dropped.
 
 Phases are prefixed `SR` because `S1`, `D4`, `R0–R5`, `B*`, `G*`, `N*`, `A*`, `C*`, `L1`, `U*`
 and `W*` are all taken by shipped work and a collision in a config comment is a bug waiting for
@@ -501,19 +503,25 @@ which is the colour grammar every Diablo game is built on.
 Two tracks. **They are independent and can run in either order** — SR1–SR3 touch systems and
 data, SR4–SR8 touch the renderer, and they do not collide.
 
-| phase | contents | depends on |
-|---|---|---|
-| **SR0 — Keyboard only** | `Input.pressed/held`, tile-space entry to `BuildSystem`, ghost-at-facing + hold-to-paint, arrows-nudge mode, delete the four pointer build handlers, click → pause menu (the one piece of new UI) | — |
-| **SR4 — Shader floor** | `engine/shaders/`, paired WGSL+GLSL convention, `CFG.gfx` gates, real bloom replacing the Canvas2D fake, both backends green | — |
-| **SR5 — Light** | height buffer in `Pix`, Sobel normals at bake, light buffer, the lighting shader, light sources on fires/spells/telegraphs/moon | SR4 |
-| **SR6 — Palette** | hue-shifted ramps, 6–8 steps, dithering, per-biome LUT | SR4 |
-| **SR7 — Feel** | hit-stop, flashes, trails, decals, crit weight, boss-slam distortion | SR4 |
-| **SR8 — Diablo pass** | shafts, ground specular, fog, exposure, warm/cold grading | SR5 |
-| **SR1 — Three Acts** | `CFG.sr.actCurve`, act-driven density and elite gating, the act named in the HUD, instrumentation | SR0 |
-| **SR3 — The Reckoning** | the summons trigger, the boss as a wall, four outcomes, the certificate with axes, Gear Score | SR1 |
-| **SR2 — The Quickening** | the level-up draft over Loom nodes, weapon evolution over A5 weaves, elemental affixes, pickup radius | SR1 |
-| **SR9 — The board** | category comparators over the board that **already exists** (`nw.leaderboard`, `saveToLeaderboard`, `migrate`); the v3 record in FULL — seed + input log + checksum, and the whole `wire` block even where nothing reads it yet; the privacy allowlist and the quota fix | SR3 |
-| **SR10 — Wire history** | the comparison layer: per-metric baselines from your own past records, the assistance index, both vocabularies on the scorecard | SR9 |
+| phase | contents | depends on | status (2026-08-23) |
+|---|---|---|---|
+| **SR0 — Keyboard only** | `Input.pressed/held`, tile-space entry to `BuildSystem`, ghost-at-facing + hold-to-paint, arrows-nudge mode, delete the four pointer build handlers, click → pause menu (the one piece of new UI) | — | **shipped** |
+| **SR4 — Shader floor** | `engine/shaders/`, paired WGSL+GLSL convention, `CFG.gfx` gates, real bloom replacing the Canvas2D fake, both backends green | — | **shipped** |
+| **SR5 — Light** | height buffer in `Pix`, Sobel normals at bake, light buffer, the lighting shader, light sources on fires/spells/telegraphs/moon | SR4 | **partial** — shipped as a mask-based "darkness with pools of light" approximation piggybacked on the glow layer, not the full per-pixel normal-mapped lighting spec'd above; no height buffer, no Sobel bake |
+| **SR6 — Palette** | hue-shifted ramps, 6–8 steps, dithering, per-biome LUT | SR4 | **shipped** |
+| **SR7 — Feel** | hit-stop, flashes, trails, decals, crit weight, boss-slam distortion | SR4 | **shipped** |
+| **SR8 — Diablo pass** | shafts, ground specular, fog, exposure, warm/cold grading | SR5 | **partial** — fog + exposure/warmth grading shipped, plus (2026-08-23) a flat overcast baseline so daytime — ~70% of a run's clock — stops rendering as neutral/undecorated; light shafts and ground specular still not built (need live visual tuning / the normal-map pipeline SR5 didn't build) |
+| **SR1 — Three Acts** | `CFG.sr.actCurve`, act-driven density and elite gating, the act named in the HUD, instrumentation | SR0 | **shipped** |
+| **SR3 — The Reckoning** | the summons trigger, the boss as a wall, four outcomes, the certificate with axes, Gear Score | SR1 | **shipped** |
+| **SR2 — The Quickening** | the level-up draft over Loom nodes, weapon evolution over A5 weaves, elemental affixes, pickup radius | SR1 | **shipped** |
+| **SR9 — The board** | category comparators over the board that **already exists** (`nw.leaderboard`, `saveToLeaderboard`, `migrate`); the v3 record in FULL — seed + input log + checksum, and the whole `wire` block even where nothing reads it yet; the privacy allowlist and the quota fix | SR3 | **partial, and the missing part is the risky part** — see below |
+| **SR10 — Wire history** | the comparison layer: per-metric baselines from your own past records, the assistance index, both vocabularies on the scorecard | SR9 | **partial** — `compareWire` and the Lens comparison UI shipped; `assist.index`/`assist.formula` are hardcoded `{ index: 0, formula: 1 }`, never actually computed, so the "Adjusted" leaderboard axis has nothing to rank on |
+
+**SR9's gap, in detail — found on 2026-08-23 review, not yet fixed:**
+- **The privacy allowlist has no test.** §3's own ruling says *"the allowlist is enforced by a test rather than a comment"* and lists six required tests (§SR10 "Tests"). None exist — `regression.ts` has zero references to `WireRecord`, `buildWireRecord`, `SCORED_TARGETS`, or `compareWire`. `buildWireRecord()` in `src/game/systems/scoreboard.ts` does appear to hand-honor the allowlist (no `ip`/`colo`/`country`/`timezone`/coordinates/mask-evidence fields present in what it reads), but there is nothing that *fails the build* if a future edit adds one back in. This is the one risk the plan called out by name as needing a test, not a comment — and it shipped with only the comment.
+- **The quota-degrade rung regressed.** `saveToLeaderboard()` (fixed 2026-08-23 in an earlier pass, before the wire block existed that same day) retries at shrinking entry caps `[50, 25, 10, 3, 1]`, exactly as the plan's *"budget it"* rung asks — but the plan's *second* rung, *"strip `wire` from the oldest half of the board"* before shrinking the count, was never added even though the wire block shipped an hour later in the same session. Right now a quota failure loses whole records before it tries losing the cheaper thing first.
+- **`assist.index` is a stub, not a placeholder.** §3 specs it as *"a weighted product of the score-affecting mapping outputs against their neutral values"* — a pure, computable-from-`values` formula, not something needing live tuning. Shipping `{ index: 0, formula: 1 }` unconditionally means every stored record already has the wrong number baked in under `formula: 1`, and the "Adjusted" category (§3's fifth leaderboard axis) can't be built until this is real. Worth fixing before more records accumulate under a formula version that was never the real formula.
+- **Two of five leaderboard axes never shipped.** `CATEGORIES` in `scoreboard.ts` has `legacy` / `time` / `purity` only. `pact` (covenant-weighted) and `adjusted` (blocked on `assist.index` above) are both still missing — consistent with the risk table's own *"ship three... add the rest only if asked for"* mitigation, so this may be intentional rather than a gap, but it's worth confirming against the plan's original five-axis intent rather than assuming.
 
 **First: SR0.** It is the smallest phase in the batch, it is mostly deletion, and every phase
 after it assumes a control model. Building SR1's acts against a mouse and then removing the
