@@ -274,11 +274,23 @@ export class ScoreboardSystem {
     // runs are still recorded but sort after ALL legit runs regardless of
     // score — a god-mode run can never look like a top legit finish.
     entries.sort((a, b) => (Number(b.legit) - Number(a.legit)) || (b.legacyScore - a.legacyScore));
-    // Prune to max
-    const pruned = entries.slice(0, MAX_ENTRIES);
-    try {
-      localStorage.setItem(LS_KEY, JSON.stringify(pruned));
-    } catch { /* quota exceeded — silently drop */ }
+
+    // SR9 — quota exceeded degrades instead of silently dropping the run
+    // that just triggered it. `card` was inserted into the sorted list on
+    // its own merits above, so shrinking the CAP (not hand-picking which
+    // record to cut) never specifically sacrifices the run that's saving —
+    // it drops from the bottom of the ranking, same as a normal prune, just
+    // a harder one. Once the wire block exists, stripping it from OLDER
+    // records is a cheaper rung to try before this one — see the plan's
+    // own risk table — but today's records carry nothing that large to
+    // strip, so the count is the only lever there is.
+    for (const cap of [MAX_ENTRIES, 25, 10, 3, 1]) {
+      try {
+        localStorage.setItem(LS_KEY, JSON.stringify(entries.slice(0, cap)));
+        return card;
+      } catch { /* try the next, smaller cap */ }
+    }
+    this.ctx.toast?.('This run finished, but the leaderboard could not save it — local storage is full.', 'bad');
     return card;
   }
 
