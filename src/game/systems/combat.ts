@@ -259,6 +259,11 @@ export class CombatSystem {
     }
 
     const totalMul = dmgMul * critMul;
+    // SR7: crit weight. A resonance crit always reads as heavy; short of that,
+    // a hit's severity is how far the roll climbed above 1x — the SAME number
+    // that already decided the damage, so a boss fight and a trash pack agree
+    // on what "heavy" looks like without a second, HP-relative calculation.
+    const severity = resonance ? 1 : Math.min(1, Math.max(0, (totalMul - 1) * 2));
 
     const baseDmg = CFG.player.baseDmg + equippedWeaponDmg(state) + Math.floor(skillLevel(state, 'combat') / CFG.combat.dmgBonusPerLevel);
     // C3: Loom melee damage modifier and arc width
@@ -324,6 +329,10 @@ export class CombatSystem {
         }
       }
       views.addHitFlash(f.x, f.y);
+      // SR7: a floating number and a spray of blood, both scaled by the same
+      // severity the damage roll already produced.
+      this.ctx.floaters?.spawnDamage?.(f.x, f.y - 14, Math.min(dmg, hpBefore), severity, this.ctx.cam);
+      this.ctx.particles?.spawn?.('blood', f.x, f.y - 6, 3 + Math.round(severity * 4), fa);
       landed = true;
       hitLines.push(`${f.def.name} for ${Math.min(dmg, hpBefore)} (${Math.max(0, f.hp)}/${f.maxHp} hp left)`);
     }
@@ -336,6 +345,8 @@ export class CombatSystem {
       const hpBefore = b.hp;
       wb.hurt(b, dmg);
       views.addHitFlash(b.x, b.y - size / 4);
+      this.ctx.floaters?.spawnDamage?.(b.x, b.y - size / 2, Math.min(dmg, hpBefore), severity, this.ctx.cam);
+      this.ctx.particles?.spawn?.('blood', b.x, b.y - size / 4, 3 + Math.round(severity * 4), fa);
       landed = true;
       hitLines.push(`${b.name} for ${Math.min(dmg, hpBefore)} (${Math.max(0, b.hp)}/${b.maxHp} hp left)`);
     }
@@ -365,6 +376,8 @@ export class CombatSystem {
       }
       // G2: screen shake on hit (stronger on crits)
       this.ctx.cam.shake?.(resonance ? 5 : 3);
+      // SR7: hit-stop, the same beat shake already marks
+      this.ctx.requestHitstop?.(resonance ? CFG.combat.hitstopCritMs : CFG.combat.hitstopMs);
     } else {
       this.ctx.log?.push('combat', 'Swung and missed', state.clock);
     }

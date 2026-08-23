@@ -130,6 +130,14 @@ export class WorldBossSystem {
           if (dPlyNow < CFG.worldBoss.attackReachPx + slack) {
             this.ctx.damagePlayer(b.dmg, b.name);
             this.ctx.cam.shake?.(7);
+            // SR7: the boss slam — the biggest single hit in the game gets the
+            // biggest hit-stop and the one screen distortion in the batch.
+            // The distortion is gated on motionScale, same as cam.shake() —
+            // it isn't ROUTED through shake() (it's a filter, not a camera
+            // offset) so it doesn't inherit the gate for free and needs its
+            // own check.
+            this.ctx.requestHitstop?.(CFG.combat.hitstopCritMs);
+            if (CFG.gfx.feel !== false && (this.ctx.cam?.motionScale ?? 1) > 0) this.ctx.post?.triggerSlam?.();
           } else {
             this.ctx.log?.push('boss', `${b.name} lunges and misses`, state.clock);
           }

@@ -39,7 +39,8 @@ export type ParticleKind =
   | 'death'      // enemy killed
   | 'heal'       // player healed
   | 'crit'       // critical hit
-  | 'levelup';   // B6: skill level gained — rises off the player
+  | 'levelup'    // B6: skill level gained — rises off the player
+  | 'blood';     // SR7: a landed melee hit
 
 /** Particle definitions — data-driven, tweakable at runtime. */
 export const PARTICLE_DEFS: Record<ParticleKind, ParticleDef> = {
@@ -95,6 +96,15 @@ export const PARTICLE_DEFS: Record<ParticleKind, ParticleDef> = {
     lifetime: [0.7, 1.2], speed: [25, 70], direction: [-Math.PI / 2, -Math.PI / 2],
     color: 0xFFE08A, alpha: [1.0, 0], scale: [1.1, 0.2],
     gravity: -40, spread: Math.PI / 2.2,
+  },
+  // SR7: short and heavy — a spray that drops fast reads as liquid, one that
+  // drifts (like ember) reads as smoke. Direction is set per-swing by combat.ts
+  // (baseDir = swing angle) so blood flies AWAY from the hit, not from the foe's
+  // own facing.
+  blood: {
+    lifetime: [0.25, 0.5], speed: [40, 140], direction: [0, 0],
+    color: 0x8A1616, alpha: [0.9, 0], scale: [0.9, 0.2],
+    gravity: 220, spread: Math.PI / 2.4,
   },
 };
 

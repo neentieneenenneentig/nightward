@@ -44,6 +44,10 @@ export const CFG = {
     telegraphSlackPx: 8,     // grace distance when an enemy's telegraphed hit resolves
     dmgBonusPerLevel: 5,     // +1 base dmg per N combat levels (M2.2: combat skill now matters)
     restartMinIntervalSec: 0.12, // min time between click-restarts (caps autoclickers, preserves high-APM skill)
+    // SR7: hit-stop. A real landed hit gets slightly more weight than a
+    // resonance crit's flashier one — the cheapest "impact" a game can buy.
+    hitstopMs: 45,
+    hitstopCritMs: 80,
   },
 
   // Soul Gear: every equip slot is a soul-bound tool that levels on its own

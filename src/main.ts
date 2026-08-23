@@ -56,7 +56,7 @@ import * as rulesMod from './game/rules';
 import * as lootMod from './game/systems/loot';
 import * as itemsMod from './game/data/items';
 import * as effectsMod from './game/systems/effects';
-import { nightFrac, phase, tintAt, startClock } from './game/systems/daynight';
+import { nightFrac, phase, phaseRemaining, tintAt, startClock } from './game/systems/daynight';
 import { Fog } from './game/world/fog';
 import { domainAt, regionOf, regionKey } from './game/world/domains';
 import { Sound } from './engine/audio';
@@ -64,6 +64,7 @@ import { gfxTier, vesselLine } from './game/systems/vessel';
 import { FloaterSystem } from './game/ui/floaters';
 import { ParticleSystem } from './engine/particles';
 import { PostProcess, type PostProcessConfig, type GlowSpot } from './engine/postprocess';
+import { DecalLayer } from './engine/decals';
 import { lookFor } from './engine/shaders/look';
 import { BUILDING_LIGHT } from './game/data/lights';
 import { isBeamworthy, rarityTint } from './game/ui/rarity';
@@ -149,6 +150,14 @@ async function boot() {
     onGold: () => {},
     damagePlayer: (d: number, src?: string, foe?: any) => combat.damagePlayer(d, src, foe),
     onHallDestroyed: () => triggerGameOver('hall_fallen'),
+    // SR7: hit-stop request — the caller doesn't own the timer, it just names
+    // how much weight it wants; concurrent requests take the longer one.
+    // CFG.gfx.feel is the real revert: false means every SR7 juice call in
+    // this codebase becomes a no-op at its own single choke point.
+    requestHitstop: (ms: number) => {
+      if (CFG.gfx.feel === false) return;
+      hitstopMs = Math.max(hitstopMs, ms);
+    },
   };
 
   // G1: particle system — pre-allocated pool for gather poofs, fire embers, slash trails, etc.
@@ -165,6 +174,11 @@ async function boot() {
   // its rings (views.fx, world-space) and none of its motes.
   const particles = new ParticleSystem(stage.world, 400);
   ctx.particles = particles;
+
+  // SR7: ground decals — blood pools under entities, gone by the dawn that
+  // outlives them. Separate ring buffer from particles; see decals.ts for why.
+  const decals = new DecalLayer(stage.world, stage.entities);
+  ctx.decals = decals;
 
   // SR4: post-processing. The glow layer goes inside `stage.world` — the camera
   // container — which is what makes world-space light sources land on the thing
@@ -613,6 +627,12 @@ async function boot() {
   let acc = STEP;
   let wasNight = phase(state.clock).isNight;
   let frames = 0;
+  // SR7: hit-stop. Remaining REAL milliseconds to run the sim in slow motion.
+  // Decremented by STEP (not by effectiveDt) because it is a real-time freeze
+  // — simSpeed and hitstop both scale the same effectiveDt but must not scale
+  // EACH OTHER, or a laggy connection's already-slow sim would make every hit
+  // stop feel like a full pause.
+  let hitstopMs = 0;
   (window as any).__nw = {
     get frames() { return frames; }, state, ctx, app: stage.app, ui,
     // B3.a test seam: movement is composed inside sim(), so the Gauntlet can only
@@ -700,7 +720,15 @@ async function boot() {
 
     // sim speed = pulse time → lag compensation (high pulse = slow sim)
     const simMul = net.getGameValue('simSpeed');
-    const effectiveDt = dt * simMul;
+    let effectiveDt = dt * simMul;
+    // SR7: hit-stop rides the SAME product rather than adding a second dt path
+    // — one multiplier, two callers. Decrements in real ms regardless of how
+    // slow simSpeed already made this tick, so the freeze always reads as the
+    // same ~45-80ms no matter the connection.
+    if (hitstopMs > 0) {
+      effectiveDt *= 0.05;
+      hitstopMs = Math.max(0, hitstopMs - STEP);
+    }
 
     const ph = phase(state.clock);
     if (ph.isNight && !wasNight) { hordes.onDusk(ph.dayIndex); Sound.play('nightfall'); net.snapshotDuskRtt(); }
@@ -713,6 +741,7 @@ async function boot() {
       const fought = state.nightEntered;
       state.nightEntered = false;
       hordes.onDawn(fought);
+      decals.clear();  // SR7: the night's blood pools go with the night
       Sound.play('dawn');
       if (fought) {
         net.computeNightRttStability();
@@ -952,6 +981,7 @@ async function boot() {
     }
 
     particles.render();
+    decals.render();
 
     // SR4: post-processing. Light sources are collected in WORLD pixels and the
     // grade is authored in one table — see engine/shaders/look.ts.

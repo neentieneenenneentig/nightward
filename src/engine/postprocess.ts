@@ -33,6 +33,7 @@ import { Application, Container, Filter, RenderTexture } from 'pixi.js';
 import { Sprite, Texture } from 'pixi.js';
 import { GlowLayer, type GlowSpot } from './shaders/glow';
 import { applyGrade, makeGradeFilter, NEUTRAL_GRADE, type GradeSettings } from './shaders/grade';
+import { makeSlamFilter, setSlamStrength } from './shaders/slam';
 
 export type { GlowSpot, GradeSettings };
 export { NEUTRAL_GRADE };
@@ -226,6 +227,15 @@ export class PostProcess {
   /** The glow layer's per-frame budget. A boss arena on fire can hand us four
    *  hundred lights and the last three hundred are behind the first hundred. */
   maxSpots = 128;
+  /** SR7 — chromatic aberration + radial pull, live only while a boss slam is
+   *  decaying. `slamT` is REMAINING seconds, not a 0..1 strength — apply()
+   *  derives strength from it against SLAM_DURATION so the curve lives in one
+   *  place. Real time, not sim time: a slam should punch the same regardless
+   *  of what simSpeed the wire is asking for right now. */
+  private slamFilter: Filter;
+  private slamT = 0;
+  private slamLastMs = 0;
+  private static readonly SLAM_DURATION = 0.22;
 
   constructor(
     private app: Application,
@@ -248,7 +258,15 @@ export class PostProcess {
     // top-left quadrant off the edge of a texture that never got told to scale.
     this.lightMask = RenderTexture.create({ width: w, height: h, resolution: this.maskScale });
     this.gradeFilter = makeGradeFilter(this.lightMask.source);
+    this.slamFilter = makeSlamFilter();
     this.painterly = new PainterlyPass(app.stage, w, h);
+  }
+
+  /** SR7 — a boss slam landed. Idempotent against overlap: a second slam
+   *  before the first decays just restarts the clock rather than stacking. */
+  triggerSlam() {
+    this.slamT = PostProcess.SLAM_DURATION;
+    this.slamLastMs = performance.now();
   }
 
   /** The grade filter sits on the stage, so it colours the world, the glow and
@@ -302,5 +320,22 @@ export class PostProcess {
     if (cfg.painterly && sourceCanvas) {
       this.painterly.apply(sourceCanvas, cfg.painterly.enabled, cfg.painterly.strength, cfg.painterly.radius);
     }
+    this.tickSlam();
+  }
+
+  private tickSlam() {
+    const now = performance.now();
+    const dt = this.slamLastMs > 0 ? (now - this.slamLastMs) / 1000 : 0;
+    this.slamLastMs = now;
+    const s = this.app.stage;
+    if (this.slamT <= 0) {
+      const cur = s.filters as Filter[] | null;
+      if (cur && cur.includes(this.slamFilter)) s.filters = cur.filter((f) => f !== this.slamFilter);
+      return;
+    }
+    this.slamT = Math.max(0, this.slamT - dt);
+    setSlamStrength(this.slamFilter, this.slamT / PostProcess.SLAM_DURATION);
+    const cur = (s.filters as Filter[] | null) ?? [];
+    if (!cur.includes(this.slamFilter)) s.filters = [...cur, this.slamFilter];
   }
 }

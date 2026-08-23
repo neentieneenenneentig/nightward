@@ -19,6 +19,7 @@ import { TILE } from '../world/worldgen';
 import { BUILDINGS } from '../data/buildings';
 import { Sound } from '../../engine/audio';
 import { levelUpFlourish } from './flourish';
+import { phase, phaseRemaining } from './daynight';
 import { epithetForRegion, prefixForBirth } from '../data/lexicon';
 
 const SKILL_NAME: Record<string, string> = Object.fromEntries(SKILLS.map((s) => [s.id, s.name]));
@@ -1326,5 +1327,12 @@ export class HordeSystem {
     this.ctx.log?.push('combat', `Slew a ${f.def.name}`, state.clock);
     // G1: death poof particles at foe location
     this.ctx.particles?.spawn?.('death', f.x, f.y, 12);
+    // SR7: a blood pool, night kills only — a corpse in daylight doesn't
+    // need one, and phaseRemaining() during the day answers "until dusk",
+    // not "until dawn", which is the wrong question here. CFG.gfx.feel is
+    // the real revert.
+    if (CFG.gfx.feel !== false && phase(state.clock).isNight) {
+      this.ctx.decals?.spawn?.(f.x, f.y, phaseRemaining(state.clock));
+    }
   }
 }

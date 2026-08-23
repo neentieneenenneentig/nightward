@@ -84,6 +84,30 @@ export class FloaterSystem {
     });
   }
 
+  /** SR7 — a landed-hit damage number. Bigger, warmer and slower the heavier
+   *  the hit, so a crit reads as a crit before the player parses the digits.
+   *  `severity` 0..1 is the caller's own damage-multiplier headroom, not a
+   *  fresh HP-relative calc — reusing combat's existing totalMul means a
+   *  boss fight and a trash pack agree on what "heavy" means. */
+  spawnDamage(wx: number, wy: number, amount: number, severity: number, cam: Camera) {
+    const s = Math.max(0, Math.min(1, severity));
+    const size = FONT_SIZE + s * 10;
+    const color = s > 0.6 ? '#ffcc00' : s > 0.25 ? '#ffffff' : '#dddddd';
+    const style = new TextStyle({ ...this.style, fontSize: size, fill: color, fontWeight: s > 0.6 ? 'bold' : 'normal' });
+    const text = new Text({ text: `${Math.round(amount)}`, style });
+    text.anchor.set(0.5, 0.5);
+    const [sx, sy] = cam.worldToScreen(wx, wy);
+    text.position.set(sx + (Math.random() - 0.5) * 8, sy - 22);
+    this.layer.addChild(text);
+    this.floaters.push({
+      text,
+      born: performance.now() / 1000,
+      life: 0.85 + s * 0.6,
+      vx: (Math.random() - 0.5) * (10 + s * 20),
+      vy: FLOAT_RISE * (1 + s * 0.6),
+    });
+  }
+
   /** S1: spawn a vital-change floater (smaller, quicker). */
   spawnVital(wx: number, wy: number, _label: string, msg: string, color: string, cam: Camera) {
     this.spawnInfo(wx, wy, msg, color, cam);
