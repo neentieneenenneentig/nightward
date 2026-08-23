@@ -60,6 +60,16 @@ export interface GradeSettings {
    *  maps, no per-light shading, just an ambient floor and a mask saying
    *  where the floor doesn't apply. */
   nightAmbient: number;
+  /** SR8 — distance fog, the half of the Diablo pass that doesn't need a depth
+   *  buffer. Rides the SAME edge-distance curve the vignette already computes
+   *  (see uVig.y below) rather than owning a second radius: both read as
+   *  "far from the lit centre", so they share the falloff and only the target
+   *  colour differs — one mixes toward black, this one toward haze. 0 =
+   *  untouched. The depth-blur half of the plan's bullet is not implemented:
+   *  a 2D top-down camera has no real depth buffer to blur against, and a
+   *  fake one is a visual-tuning call nobody can make without eyes on it. */
+  fogTint: [number, number, number];
+  fogStrength: number;
 }
 
 export const NEUTRAL_GRADE: GradeSettings = {
@@ -68,6 +78,7 @@ export const NEUTRAL_GRADE: GradeSettings = {
   rolloff: 0, vignette: 0, vignetteRadius: 0.55,
   steps: 0, dither: 0,
   nightAmbient: 1,
+  fogTint: [180, 196, 220], fogStrength: 0,
 };
 
 // The two bodies are kept LINE-ALIGNED on purpose. When one backend renders
@@ -90,7 +101,9 @@ const WGSL = `
   let t = (rgb * (2.51 * rgb + vec3<f32>(0.03))) / (rgb * (2.43 * rgb + vec3<f32>(0.59)) + vec3<f32>(0.14));
   rgb = mix(rgb, clamp(t, vec3<f32>(0.0), vec3<f32>(1.0)), u.uVig.z);
   let d = distance(screenUV(uv), vec2<f32>(0.5, 0.5)) * 1.41421;
-  rgb = rgb * (1.0 - u.uVig.x * smoothstep(u.uVig.y, 1.0, d));
+  let vigT = smoothstep(u.uVig.y, 1.0, d);
+  rgb = rgb * (1.0 - u.uVig.x * vigT);
+  rgb = mix(rgb, uFog.rgb, uFog.w * vigT);
   let n = dither(pos.xy);
   if (u.uPal.x > 0.5) { rgb = floor(rgb * u.uPal.x + n * 0.9 + 0.5) / u.uPal.x; }
   rgb = clamp(rgb + n * u.uVig.w, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -114,7 +127,9 @@ const GLSL = `
   vec3 t = (rgb * (2.51 * rgb + vec3(0.03))) / (rgb * (2.43 * rgb + vec3(0.59)) + vec3(0.14));
   rgb = mix(rgb, clamp(t, vec3(0.0), vec3(1.0)), uVig.z);
   float d = distance(screenUV(uv), vec2(0.5, 0.5)) * 1.41421;
-  rgb = rgb * (1.0 - uVig.x * smoothstep(uVig.y, 1.0, d));
+  float vigT = smoothstep(uVig.y, 1.0, d);
+  rgb = rgb * (1.0 - uVig.x * vigT);
+  rgb = mix(rgb, uFog.rgb, uFog.w * vigT);
   float n = dither(gl_FragCoord.xy);
   if (uPal.x > 0.5) { rgb = floor(rgb * uPal.x + n * 0.9 + 0.5) / uPal.x; }
   rgb = clamp(rgb + n * uVig.w, vec3(0.0), vec3(1.0));
@@ -137,6 +152,8 @@ export function makeGradeFilter(lightMask: TextureSource): Filter {
       uVig: { value: new Float32Array([0, 0.55, 0, 0]), type: 'vec4<f32>' },
       // posterise steps, night ambient floor (SR5), spare, spare
       uPal: { value: new Float32Array([0, 1, 0, 0]), type: 'vec4<f32>' },
+      // SR8 — fog tint rgb 0..1, strength
+      uFog: { value: new Float32Array([1, 1, 1, 0]), type: 'vec4<f32>' },
     },
     textures: [{ name: 'uLightMask', source: lightMask }],
     wgsl: WGSL,
@@ -156,6 +173,8 @@ export function applyGrade(f: Filter, g: GradeSettings) {
   c[0] = g.vignette; c[1] = g.vignetteRadius; c[2] = g.rolloff; c[3] = g.dither;
   const d = u.uPal as Float32Array;
   d[0] = g.steps; d[1] = g.nightAmbient;
+  const e = u.uFog as Float32Array;
+  e[0] = g.fogTint[0] / 255; e[1] = g.fogTint[1] / 255; e[2] = g.fogTint[2] / 255; e[3] = g.fogStrength;
   // Pixi tracks dirty state per uniform group, not per element, so an in-place
   // array write needs the group flagged by hand or the GPU keeps last frame's
   // values — the classic "my uniform never updates" bug.

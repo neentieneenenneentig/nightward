@@ -1110,10 +1110,16 @@ async function boot() {
           night: nightFrac(state.clock),
           offline: !net.snap.online,
           surge,
-          impact: 0,
+          // SR7 — the impact flash rides the SAME hit-stop timer combat already
+          // set, rather than a second "just got hit" clock: hitstopMs counts
+          // down from up to hitstopCritMs after a hit, so normalising against
+          // that ceiling gives a spike that's full-strength on impact and
+          // gone by the time the freeze itself ends.
+          impact: Math.min(1, hitstopMs / CFG.combat.hitstopCritMs),
           tier: post.tier,
           lights: post.lightsEnabled,
           palette: CFG.gfx.palette !== false,
+          atmosphere: CFG.gfx.atmosphere !== false,
         }),
         painterly: { enabled: painterlyEnabled, strength: painterlyStrength, radius: painterlyRadius },
       };

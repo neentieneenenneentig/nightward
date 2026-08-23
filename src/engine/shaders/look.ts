@@ -57,6 +57,12 @@ export interface LookInputs {
    *  for the look and stay on regardless — see PostProcess.setGraded for the
    *  actual real revert (the whole filter comes off the stage). */
   palette: boolean;
+  /** SR8 — CFG.gfx.atmosphere. The exposure/warmth/fog half of the Diablo
+   *  pass: darker night, harder warm-fire/cold-haze split, a cold fog at the
+   *  frame's edge. Off means these three deltas are zero, not halved — the
+   *  base night curve above (tint, nightAmbient, the existing vignette) stays
+   *  exactly as it was before SR8 either way. */
+  atmosphere: boolean;
 }
 
 /**
@@ -83,11 +89,17 @@ export function lookFor(i: LookInputs): GradeSettings {
     r.tint[2] * (1 - n * 0.7) + moon[2] * n * 0.7,
   ];
 
+  // SR8 — the Diablo pass's grading half: darker exposure, harder warm/cold
+  // split, a cold haze at distance. All three are DELTAS added to the SR4/SR6
+  // curve above, zero when atmosphere is off, so the gate is a real revert
+  // rather than a re-tune of numbers other phases already settled.
+  const atmo = i.atmosphere ? n : 0;
+
   const g: GradeSettings = {
-    exposure: 1.0 - n * 0.18 - i.surge * 0.06 + i.impact * 0.35,
+    exposure: 1.0 - n * 0.18 - i.surge * 0.06 + i.impact * 0.35 - atmo * 0.08,
     contrast: 1.06 + n * 0.14 + i.impact * 0.10,
     saturation: r.saturation - n * 0.18 - i.impact * 0.45,
-    warmth: r.warmth * (1 - n * 0.45),
+    warmth: r.warmth * (1 - n * 0.45) + atmo * 0.14,
     tint,
     tintStrength: r.tintStrength + n * 0.10,
     // The filmic roll-off is what stops the new bloom from clipping to white.
@@ -110,6 +122,11 @@ export function lookFor(i: LookInputs): GradeSettings {
     // crush alone (see config.ts) — the difference is this floor lifts back
     // toward 1 near a light and the old flat multiply never could.
     nightAmbient: i.lights ? 1 - n * 0.55 : 1,
+    // SR8 — cold ambient haze at the frame's edge, sharing the vignette's own
+    // falloff curve (see grade.ts's vigT) rather than a second radius. Rides
+    // ONLY the atmosphere gate, not night alone, so day never fogs.
+    fogTint: [138, 156, 196],
+    fogStrength: atmo * 0.22,
   };
 
   // A Surge turns the world hostile — the omen already darkens and shakes, and

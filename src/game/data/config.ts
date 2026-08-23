@@ -655,6 +655,7 @@ export const CFG = {
     lights: true,
     palette: true,
     feel: true,
+    // SR8: exposure/warmth/fog deltas in look.ts — see LookInputs.atmosphere.
     atmosphere: true,
     /** SR5: the light mask renders at this fraction of screen. Light is low
      *  frequency — half-res costs a quarter of the fill and nobody can see it. */
