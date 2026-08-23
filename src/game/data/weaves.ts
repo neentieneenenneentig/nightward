@@ -18,7 +18,7 @@
 // slotting, the inventory movement and the typed bonus getters live in
 // systems/weaves.ts; the balance NUMBERS live in CFG.weaves like every other
 // number in this game.
-import type { RarityId } from './rarity';
+import { rarityIndex, type RarityId } from './rarity';
 
 /** The five thread elements. They are the five Echoes, one step removed — a
  *  thread is the echo's residue, something you can hold and weave. */
@@ -65,6 +65,25 @@ export const BOSS_THREAD: Record<string, ThreadId> = {
   nullmaw: 'null',
 };
 
+/** SR2 — weapon evolution. A5 already has sockets, threads and completed
+ *  weaves; this is that table read backwards. `rarityFloor` doubles as the
+ *  weave's own sockets requirement in practice — Ironwake and Hollow Song
+ *  need 2 sockets (Woven-and-up per SOCKET_RANGE below), Long Night needs 3
+ *  (Hallowed-and-up) — so evolution never gates behind a rarity a weapon
+ *  carrying the weave couldn't already have reached. `dmgMul` rides the
+ *  SAME multiplier slot `nightDmgMul` already occupies in combat's dmg
+ *  formula (see WeaveSystem.evolvedDmgMul, combat.ts's `weaveDmgMul`) — one
+ *  more factor in a chain that already exists, not a second one. */
+export interface WeaveEvolution {
+  rarityFloor: RarityId;
+  /** The weapon's new name, replacing the rolled prefix+base+suffix in the
+   *  tooltip only — the underlying ItemDef and its uid are untouched, the
+   *  same way a rework changes what an item does without changing what it
+   *  IS (see loot.ts reforgeAffix). */
+  name: string;
+  dmgMul: number;
+}
+
 export interface WeaveDef {
   id: string;
   name: string;
@@ -72,6 +91,7 @@ export interface WeaveDef {
   sequence: ThreadId[];
   /** One line, what the completed weave does. */
   desc: string;
+  evolution?: WeaveEvolution;
 }
 
 export const WEAVES: WeaveDef[] = [
@@ -80,18 +100,21 @@ export const WEAVES: WeaveDef[] = [
     name: 'The Long Night',
     sequence: ['rime', 'rime', 'ember'],
     desc: '+25% damage while it is night',
+    evolution: { rarityFloor: 'hallowed', name: 'Nightfang', dmgMul: 1.15 },
   },
   {
     id: 'hollow_song',
     name: 'Hollow Song',
     sequence: ['null', 'tide'],
     desc: 'kills restore 4 Resolve',
+    evolution: { rarityFloor: 'woven', name: 'Hollowmourn', dmgMul: 1.08 },
   },
   {
     id: 'ironwake',
     name: 'Ironwake',
     sequence: ['thorn', 'thorn'],
     desc: 'reflected damage also stuns',
+    evolution: { rarityFloor: 'woven', name: 'Wardbriar', dmgMul: 1.08 },
   },
 ];
 
@@ -117,6 +140,21 @@ function containsRun(sockets: ThreadId[], seq: ThreadId[]): boolean {
  *  disagree about what is and is not a weave. */
 export function matchWeaves(sockets: ThreadId[]): WeaveDef[] {
   return WEAVES.filter((w) => containsRun(sockets, w.sequence));
+}
+
+/** SR2 — is THIS specific rolled weapon (its rarity, its current socket row)
+ *  evolved, and by which weave? One pure function so combat's damage
+ *  multiplier and the tooltip's display name can never drift apart the way
+ *  the Glass Echo remap once did (§17) by each keeping their own copy of
+ *  the same check. Sockets change as threads go in and out, so this is
+ *  computed live off state rather than cached on the roll at drop time. */
+export function weaponEvolution(rarity: RarityId, sockets: ThreadId[]): WeaveEvolution & { weaveId: string } | null {
+  for (const w of matchWeaves(sockets)) {
+    if (w.evolution && rarityIndex(rarity) >= rarityIndex(w.evolution.rarityFloor)) {
+      return { ...w.evolution, weaveId: w.id };
+    }
+  }
+  return null;
 }
 
 /** Socket count by tier. Plain gear never rolls at all (it stays an authored

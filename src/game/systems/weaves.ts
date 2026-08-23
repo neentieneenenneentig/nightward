@@ -10,8 +10,8 @@ import { CFG } from '../data/config';
 import { invAdd, carriedGearIds } from '../rules';
 import { itemDef, rolledOf, threadOf } from '../data/items';
 import {
-  BOSS_THREAD, THREAD_ITEM, matchWeaves, threadById,
-  type ThreadId, type WeaveDef,
+  BOSS_THREAD, THREAD_ITEM, matchWeaves, threadById, weaponEvolution,
+  type ThreadId, type WeaveDef, type WeaveEvolution,
 } from '../data/weaves';
 
 export class WeaveSystem {
@@ -118,6 +118,28 @@ export class WeaveSystem {
     const p = this.state.player;
     p.resolve = Math.max(0, Math.min(CFG.vitals.resolveMax, p.resolve + extra));
     this.ctx.floaters?.spawnVital?.(p.x, p.y - 32, 'resolve', `+${extra}`, '#da5', this.ctx.cam);
+  }
+
+  /** SR2 — the equipped weapon's evolution, if its rarity and current socket
+   *  row earn it one. Reads `rolledOf` directly rather than through
+   *  `carriedGearIds`/`activeWeaves` because evolution is deliberately
+   *  narrower than either: a completed weave on a RING doesn't rename your
+   *  SWORD, and an off-hand tool completing one doesn't either — "a blade
+   *  becomes a named weapon" (the plan's own words) means the equipped
+   *  weapon slot alone. */
+  evolvedWeapon(): (WeaveEvolution & { weaveId: string }) | null {
+    const uid = this.state.player.equip?.weapon;
+    if (!uid) return null;
+    const roll = rolledOf(uid);
+    if (!roll) return null;
+    return weaponEvolution(roll.rarity, this.slotted(uid));
+  }
+
+  /** Read by combat.resolveHit next to nightDmgMul, in the SAME multiplier
+   *  chain — an evolved blade's bonus is not a separate damage line, it is
+   *  one more factor in the one the game already computes. */
+  evolvedDmgMul(): number {
+    return this.evolvedWeapon()?.dmgMul ?? 1;
   }
 
   /** Ironwake: melee attackers take a share of their hit back, and are stunned.

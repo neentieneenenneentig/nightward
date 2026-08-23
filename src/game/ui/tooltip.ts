@@ -16,7 +16,7 @@ import { itemDef, itemName, rolledOf } from '../data/items';
 import { slotOf } from '../rules';
 import { CFG } from '../data/config';
 import { affixLines, escapeHtml, primaryStat, rarityDef, rarityOf } from './rarity';
-import { matchWeaves, threadById } from '../data/weaves';
+import { matchWeaves, threadById, weaponEvolution } from '../data/weaves';
 
 let host: HTMLElement | null = null;
 
@@ -59,9 +59,15 @@ export function itemTooltipHtml(state: any, id: string): string {
   const rd = rarityDef(rarity);
   const rolled = rolledOf(id);
   const prim = primaryStat(id);
+  // SR2 — weapon evolution reads live off rarity + current sockets (see
+  // data/weaves.ts weaponEvolution), so the SAME rolled uid can carry a
+  // different name over a run as threads go in and the weave completes.
+  const evo = rolled && slotOf(id) === 'weapon'
+    ? weaponEvolution(rolled.rarity, state.sockets?.[id] ?? [])
+    : null;
 
-  let h = `<div class="nw-tip-name" style="color:${rd.color}">${escapeHtml(itemName(id))}</div>`;
-  h += `<div class="nw-tip-sub">${rolled ? escapeHtml(rd.name) + ' · ' : ''}${escapeHtml(itemDef(rolled?.base ?? id)?.name ?? '')}</div>`;
+  let h = `<div class="nw-tip-name" style="color:${rd.color}">${escapeHtml(evo ? evo.name : itemName(id))}</div>`;
+  h += `<div class="nw-tip-sub">${rolled ? escapeHtml(rd.name) + ' · ' : ''}${escapeHtml(itemDef(rolled?.base ?? id)?.name ?? '')}${evo ? ' — once ' + escapeHtml(itemName(id)) : ''}</div>`;
 
   const body: string[] = [];
   if (prim && prim.value) body.push(`<div class="nw-tip-stat">${fmt(prim.value)} ${prim.label}</div>`);
@@ -90,6 +96,9 @@ export function itemTooltipHtml(state: any, id: string): string {
     body.push(`<div class="nw-tip-sockets">${row}<span class="nw-tip-socklabel">${slotted.length}/${rolled.sockets} socketed</span></div>`);
     for (const w of matchWeaves(slotted)) {
       body.push(`<div class="nw-tip-weave">✦ ${escapeHtml(w.name)} — ${escapeHtml(w.desc)}</div>`);
+    }
+    if (evo) {
+      body.push(`<div class="nw-tip-weave" style="color:${rd.color}">✦ Evolved: ${escapeHtml(evo.name)}, ×${evo.dmgMul.toFixed(2)} damage</div>`);
     }
   }
   if (d.thread) {

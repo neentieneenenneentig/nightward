@@ -270,7 +270,9 @@ export class CombatSystem {
     const loomDmgMul = loomMods ? (1 + (loomMods.meleeDmgPct ?? 0) / 100) : 1;
     // A5: The Long Night weave — flat +25%, but only after dusk. The getter
     // returns 1 by day, so a daylight swing is bit-identical to pre-A5.
-    const weaveDmgMul = this.ctx.weaves?.nightDmgMul?.() ?? 1;
+    // SR2: an evolved weapon's bonus rides the SAME chain — see
+    // WeaveSystem.evolvedDmgMul.
+    const weaveDmgMul = (this.ctx.weaves?.nightDmgMul?.() ?? 1) * (this.ctx.weaves?.evolvedDmgMul?.() ?? 1);
     const dmg = Math.round(baseDmg * totalMul * loomDmgMul * weaveDmgMul);
     const loomArcMul = loomMods ? (1 + (loomMods.arcWidthPct ?? 0) / 100) : 1;
     const arc = (CFG.combat.arcDeg * Math.PI * loomArcMul) / 180;
