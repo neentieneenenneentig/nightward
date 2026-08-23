@@ -78,7 +78,36 @@ export interface RunScorecard {
   /** Damage dealt to the summoned lord specifically — what an Outlasted
    *  ending is scored on, and what makes a loss still a number to beat. */
   bossDamageDealt?: number;
+  /** SR9 — the run's world seed. The same carve-out as trophy/pact: optional
+   *  so every card written before this field existed stays valid. Unlike
+   *  the wire block (network/geo readings — see the leaderboard's own
+   *  privacy risk in the plan), a seed identifies a WORLD, not a player —
+   *  it is the one field that turns "I don't believe that run" into
+   *  "load ?seed=N and see for yourself", which a legacyScore number alone
+   *  can never offer. */
+  seed?: number;
+  /** SR9 — which record contract wrote this card. Bumped by hand when the
+   *  scoring formula or the shape changes meaningfully enough that an old
+   *  card should be flagged rather than silently compared against a new
+   *  one — see ENGINE_VERSION below. Not a build number; this project has
+   *  no release pipeline that stamps one on, and inventing one only to
+   *  satisfy this field would be a row serving no reader but itself. */
+  engineVersion?: string;
 }
+
+/** SR9 — see RunScorecard.engineVersion. The full "seed + input log +
+ *  checksum" verification insurance the plan describes stops here for now:
+ *  a real input-replay hash needs a single capture point for EVERY input
+ *  surface that can affect a run (movement, the attack click, the ability
+ *  bar's digit keys, the build/pause menus), and today those live in
+ *  separate listeners across input.ts, main.ts and ui.ts with no shared
+ *  tap. Hashing only the movement axis — the one surface with an existing
+ *  enumerable read — would make `inputHash` match on runs whose COMBAT
+ *  diverged completely, which is worse than no hash: a verification field
+ *  that lies about what it verifies. Seed alone is honest about what it
+ *  proves (the world), and is the piece that ships without borrowing that
+ *  claim. */
+export const ENGINE_VERSION = 'sr9.0';
 
 /** Bag of stats computeLegacyScore needs — shared by snapshot(), getLiveStats(), and v1 migration. */
 export interface LegacyInputs {
@@ -231,6 +260,8 @@ export class ScoreboardSystem {
       reckoningSec: state.reckoning ? Math.round(state.clock - state.reckoning.startClock) : undefined,
       bestHit: this.bestHit,
       bossDamageDealt: state.reckoning?.damageDealt,
+      seed: state.seed,
+      engineVersion: ENGINE_VERSION,
     };
   }
 

@@ -1681,6 +1681,7 @@ export class UI {
           <div><span style="color:var(--metal-hi)">Peak RTT:</span> ${card.peakRtt}ms · <span style="color:var(--metal-hi)">Lowest BW:</span> ${card.lowestDownlink}Mbps</div>
           <div><span style="color:var(--metal-hi)">Loom points:</span> ${card.loomPointsEarned}</div>
           <div><span style="color:var(--metal-hi)">Connection age:</span> ${ageStr}</div>
+          ${card.seed != null ? `<div><span style="color:var(--metal-hi)">Seed:</span> ${card.seed} <span style="color:var(--ink-dim)">(?seed=${card.seed} to replay this world)</span></div>` : ''}
         </div>
         ${card.outcome ? `
         <div style="font-size:11px;color:var(--ink-dim);margin-top:10px;line-height:1.6;text-align:left;max-width:300px;border-top:1px solid var(--metal-lo);padding-top:8px;">
