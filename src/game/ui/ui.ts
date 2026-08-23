@@ -28,7 +28,7 @@ import type { GameState } from '../state';
 import type { LogEntry } from '../systems/log';
 import { injectStyles } from './styles';
 import { Toasts } from './toast';
-import { loadLeaderboard, formatAge, CATEGORIES, rankFor } from '../systems/scoreboard';
+import { loadLeaderboard, formatAge, CATEGORIES, rankFor, compareWire } from '../systems/scoreboard';
 import { COVENANTS, canSwear } from '../data/covenants';
 import type { SoundingResult } from '../systems/sounding';
 
@@ -1435,6 +1435,28 @@ export class UI {
       curSec.innerHTML += '<div class="nw-empty">Stats will appear as you play.</div>';
     }
     body.appendChild(curSec);
+
+    // SR10: show personal wire context only when this run has measured values.
+    // The sample count stays visible so a small history cannot masquerade as a
+    // meaningful baseline.
+    if (sb?.snapshot) {
+      const current = sb.snapshot();
+      const history = loadLeaderboard();
+      const comparisons = compareWire(current, history)
+        .filter((entry) => ['simSpeed', 'damage', 'goldRate'].includes(entry.metric));
+      if (comparisons.length) {
+        const wireSec = el('div', 'nw-lb-cur');
+        wireSec.innerHTML = '<div class="nw-lb-sechd">YOUR WIRE</div>';
+        const minimum = CFG.sr.wireBaselineMinRuns;
+        wireSec.innerHTML += comparisons.map((entry) => {
+          const label = entry.metric === 'simSpeed' ? 'pace' : entry.metric === 'goldRate' ? 'gold rate' : 'damage';
+          if (entry.n < minimum) return `<div class="nw-lb-wire"><b>${label}</b> ${entry.now.toFixed(2)} · not enough history (${entry.n}/${minimum})</div>`;
+          const sign = entry.deltaPct >= 0 ? '+' : '';
+          return `<div class="nw-lb-wire"><b>${label}</b> ${entry.now.toFixed(2)} · ${sign}${entry.deltaPct.toFixed(0)}% vs median (n=${entry.n})</div>`;
+        }).join('');
+        body.appendChild(wireSec);
+      }
+    }
 
     // ---- historical leaderboard ----
     const histSec = el('div', 'nw-lb-hist');

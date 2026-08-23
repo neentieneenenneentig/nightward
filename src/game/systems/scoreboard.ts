@@ -55,11 +55,14 @@ export interface WireRecord {
   assist: { index: number; formula: number };
 }
 
-const WIRE_VALUE_TARGETS = [
+/** SR9/SR10: the explicit mapping outputs allowed into a shareable record. */
+export const SCORED_TARGETS = [
   'simSpeed', 'goldRate', 'enemyScale', 'dayPhase', 'realmType', 'damage',
   'hordeAggression', 'siltDrag', 'fortune', 'aperture', 'gatherSpeed',
   'xpRate', 'vigorDecay', 'resolveDecay', 'mercy',
 ] as const;
+
+type WireAccumulator = { sum: number; sec: number };
 
 function wireSeries(chronicle: any): Record<string, WireSeriesBucket> {
   const out: Record<string, WireSeriesBucket> = {};
@@ -87,8 +90,9 @@ function buildWireRecord(ctx: any): WireRecord {
   const vessel = net?.vessel?.reading ?? {};
   const sounding = ctx.sounding?.last ?? {};
   const values: Record<string, number> = {};
-  for (const target of WIRE_VALUE_TARGETS) {
-    const value = Number(net?.getGameValue?.(target));
+  for (const target of SCORED_TARGETS) {
+    const sampled = ctx.wireAcc?.[target];
+    const value = sampled?.sec > 0 ? sampled.sum / sampled.sec : Number(net?.getGameValue?.(target));
     if (Number.isFinite(value)) values[target] = Math.round(value * 100) / 100;
   }
   const proto = net?.protocolReality?.()?.dominant;
@@ -203,6 +207,47 @@ export interface RunScorecard {
   wire?: WireRecord;
 }
 
+export interface WireComparison {
+  metric: string;
+  now: number;
+  baselineMed: number;
+  deltaPct: number;
+  percentile: number;
+  n: number;
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  if (!sorted.length) return 0;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/** Compare this run's measured mapping outputs with the player's own history. */
+export function compareWire(card: RunScorecard, history: RunScorecard[]): WireComparison[] {
+  const nowValues = card.wire?.values;
+  if (!nowValues) return [];
+  const result: WireComparison[] = [];
+  for (const metric of Object.keys(nowValues)) {
+    const now = nowValues[metric];
+    const past = history
+      .filter((entry) => entry !== card && Number.isFinite(entry.wire?.values?.[metric]))
+      .map((entry) => entry.wire!.values[metric]);
+    const baselineMed = median(past);
+    const deltaPct = baselineMed === 0 ? 0 : ((now - baselineMed) / Math.abs(baselineMed)) * 100;
+    const below = past.filter((value) => value < now).length;
+    result.push({
+      metric,
+      now,
+      baselineMed,
+      deltaPct,
+      percentile: past.length ? (below / past.length) * 100 : 0,
+      n: past.length,
+    });
+  }
+  return result;
+}
+
 /** SR9 — see RunScorecard.engineVersion. The full "seed + input log +
  *  checksum" verification insurance the plan describes stops here for now:
  *  a real input-replay hash needs a single capture point for EVERY input
@@ -267,6 +312,7 @@ export class ScoreboardSystem {
    *  they read "biggest hit" as a thing to beat. */
   bestHit = 0;
   private realLastMs = 0;
+  private wireAcc: Record<string, WireAccumulator> = {};
 
   constructor(private ctx: any) {}
 
@@ -276,6 +322,7 @@ export class ScoreboardSystem {
     const dt = (realMs - this.realLastMs) / 1000;
     this.realLastMs = realMs;
     if (this.ctx.state.gameOver) return;
+    this.sampleWire(dt);
     this.connectionUptime += dt;
 
     // Track realm uptime
@@ -287,6 +334,19 @@ export class ScoreboardSystem {
     if (rtt > this.peakRtt) this.peakRtt = rtt;
     const dl = this.ctx.net?.snap?.downlink ?? Infinity;
     if (dl < this.lowestDownlink) this.lowestDownlink = dl;
+  }
+
+  /** Keep consequences as time-weighted means; a death-time read would lie. */
+  private sampleWire(dtSec: number) {
+    const net = this.ctx.net;
+    if (!net?.getGameValue || dtSec <= 0) return;
+    for (const target of SCORED_TARGETS) {
+      const value = Number(net.getGameValue(target));
+      if (!Number.isFinite(value)) continue;
+      const sample = this.wireAcc[target] ??= { sum: 0, sec: 0 };
+      sample.sum += value * dtSec;
+      sample.sec += dtSec;
+    }
   }
 
   /** Call on enemy kill. `elite` is the A2 rank, absent on an ordinary foe. */
@@ -370,7 +430,7 @@ export class ScoreboardSystem {
       bossDamageDealt: state.reckoning?.damageDealt,
       seed: state.seed,
       engineVersion: ENGINE_VERSION,
-      wire: buildWireRecord({ ...this.ctx, chronicle: this.ctx.net?.chronicle }),
+      wire: buildWireRecord({ ...this.ctx, chronicle: this.ctx.net?.chronicle, wireAcc: this.wireAcc }),
     };
   }
 
