@@ -1,0 +1,117 @@
+// ============================================================================
+// SR4/SR6/SR8 — The look, as data.
+//
+// Everything that decides how NIGHTWARD is COLOURED lives here, in one table
+// and one function, for the same reason NET_GAME_MAP is a table: a look you can
+// only change by editing three call sites is a look nobody ever tunes.
+//
+// The reference is Diablo, and what Diablo actually does is narrower than it
+// looks. It is not "dark". A dark frame is a frame you cannot read. It is:
+//
+//   * warm highlights against cool shadows — torchlight versus stone;
+//   * crushed but never black shadows, so the dark still has texture in it;
+//   * a heavy vignette that puts the character at the centre of a lit circle;
+//   * saturation held BACK on the world so that spell colour reads as an event.
+//
+// That last one is the discipline most pixel games miss. If the grass is
+// vivid, a fireball is just more vivid. The world here is pulled toward its
+// greys and the glow layer is where the colour goes.
+// ============================================================================
+import type { GradeSettings } from './grade';
+
+/** The realms the wire puts you in, and how each one is lit. Tint is what the
+ *  BIOME does to the light; warmth is the split-tone strength on top. */
+export interface RealmLook {
+  tint: [number, number, number];
+  tintStrength: number;
+  warmth: number;
+  saturation: number;
+}
+
+export const REALM_LOOK: Record<string, RealmLook> = {
+  // Copper and lamplight. The only realm that is genuinely warm.
+  ethernet: { tint: [255, 226, 188], tintStrength: 0.13, warmth: 0.55, saturation: 0.98 },
+  // Moonlight through glass. Cool, and the least saturated of the four.
+  wifi: { tint: [186, 206, 255], tintStrength: 0.15, warmth: 0.28, saturation: 0.90 },
+  // A red sky. Cellular is where the wire is worst and the world should feel it.
+  cellular: { tint: [255, 186, 176], tintStrength: 0.17, warmth: 0.62, saturation: 1.02 },
+  unknown: { tint: [214, 214, 214], tintStrength: 0.06, warmth: 0.30, saturation: 0.95 },
+};
+
+export interface LookInputs {
+  realm: string;
+  /** 0 = full day, 1 = deepest night. */
+  night: number;
+  /** The wire is offline. */
+  offline: boolean;
+  /** N4.3 Surge strength, 0..1 — packet loss made visible. */
+  surge: number;
+  /** SR7 — a short spike after a heavy hit. 0..1. */
+  impact: number;
+  tier: 'low' | 'mid' | 'high';
+}
+
+/**
+ * One function, called once a frame, that turns the world's current state into
+ * twelve floats.
+ *
+ * The night curve is the interesting part. Naively you dim the exposure, and
+ * the result is a frame that is uniformly darker and no more nocturnal — the
+ * grass is just grey grass at 60%. What actually reads as night is exposure
+ * down A LITTLE, contrast UP, saturation down, the tint pulled cold, and the
+ * vignette closed in hard. The eye reads "night" off the colour of the shadows
+ * and the size of the lit circle, not off the brightness of the midtones.
+ */
+export function lookFor(i: LookInputs): GradeSettings {
+  const r = REALM_LOOK[i.realm] ?? REALM_LOOK.unknown;
+  const n = Math.max(0, Math.min(1, i.night));
+
+  // Cold pull at night: the biome tint is crossfaded toward moonlight rather
+  // than replaced, so an Ethernet night still reads warmer than a WiFi one.
+  const moon: [number, number, number] = [150, 176, 230];
+  const tint: [number, number, number] = [
+    r.tint[0] * (1 - n * 0.7) + moon[0] * n * 0.7,
+    r.tint[1] * (1 - n * 0.7) + moon[1] * n * 0.7,
+    r.tint[2] * (1 - n * 0.7) + moon[2] * n * 0.7,
+  ];
+
+  const g: GradeSettings = {
+    exposure: 1.0 - n * 0.18 - i.surge * 0.06 + i.impact * 0.35,
+    contrast: 1.06 + n * 0.14 + i.impact * 0.10,
+    saturation: r.saturation - n * 0.18 - i.impact * 0.45,
+    warmth: r.warmth * (1 - n * 0.45),
+    tint,
+    tintStrength: r.tintStrength + n * 0.10,
+    // The filmic roll-off is what stops the new bloom from clipping to white.
+    // It is the single stage that must never be tier-gated off, because the
+    // alternative is not "cheaper", it is "blown out".
+    rolloff: 0.55,
+    vignette: 0.16 + n * 0.26 + (i.offline ? 0.14 : 0) + i.surge * 0.22,
+    vignetteRadius: 0.52 - n * 0.10,
+    steps: 0,
+    dither: i.tier === 'low' ? 0 : 1 / 160,
+  };
+
+  // A Surge turns the world hostile — the omen already darkens and shakes, and
+  // this is the colour half of the same event. Hue toward blood, saturation up
+  // rather than down, because a Surge should look like the world is WRONG, not
+  // like the lights went out.
+  if (i.surge > 0) {
+    const k = i.surge;
+    g.tint = [
+      g.tint[0] * (1 - k) + 255 * k,
+      g.tint[1] * (1 - k) + 120 * k,
+      g.tint[2] * (1 - k) + 112 * k,
+    ];
+    g.tintStrength = Math.min(0.42, g.tintStrength + 0.16 * k);
+    g.saturation += 0.20 * k;
+    g.warmth += 0.25 * k;
+  }
+
+  // A hit desaturates and lifts for a few frames — the classic ARPG impact
+  // flash, done to the whole frame rather than to one sprite, which is what
+  // makes a boss slam feel like it happened to YOU.
+  g.saturation = Math.max(0, g.saturation);
+  g.exposure = Math.max(0.35, g.exposure);
+  return g;
+}

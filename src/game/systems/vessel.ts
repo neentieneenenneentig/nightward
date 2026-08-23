@@ -440,6 +440,50 @@ export class Vessel {
 // labours", and the Lens is the one place allowed to print both.
 // ---------------------------------------------------------------------------
 
+/** SR4: which graphics tier this machine gets.
+ *
+ *  This is the cheapest feature in the batch and the one worth pointing at.
+ *  Every input below is a reading N4.6 ALREADY TAKES, for a completely
+ *  different reason — `jankMs` and `pressureFrac` exist to drive `mercy`, the
+ *  GPU string exists so the Lens can name the vessel, `reducedMotion` exists
+ *  because the browser asked. Choosing a graphics tier from them costs one
+ *  function and no new measurement, no benchmark frame, and no settings screen
+ *  the player has to find before the game looks right.
+ *
+ *  A machine that has told us it wants less motion is a machine that gets the
+ *  low tier regardless of how fast it is. That is not a performance decision.
+ *
+ *  Everything unknown reads as 'mid' (pillar 5): a vessel that refused to
+ *  describe itself must never be punished for it, and must never be handed the
+ *  expensive path on the strength of a guess either. */
+export function gfxTier(r: VesselReading): 'low' | 'mid' | 'high' {
+  if (r.reducedMotion) return 'low';
+
+  const gpu = `${r.gpuRenderer} ${r.gpuVendor} ${r.gpuArchitecture}`.toLowerCase();
+  // Software rasterisers name themselves, and they are the one case where a
+  // wrong guess is catastrophic rather than merely disappointing.
+  if (/swiftshader|llvmpipe|softwarerasterizer|microsoft basic/.test(gpu)) return 'low';
+
+  const cores = (navigator as any).hardwareConcurrency ?? 0;
+  // Live evidence of a struggling machine outranks any static capability guess:
+  // a fast GPU behind a busy CPU still drops frames, and the player cannot see
+  // the difference between the two causes.
+  if (r.pressureFrac >= 0.66) return 'low';
+  if (r.jankLive && r.jankMs >= 120) return 'low';
+
+  let score = 0;
+  if (/rtx|radeon rx|arc a|apple m[1-9]|adreno 7|mali-g7|geforce gtx 16|geforce rtx/.test(gpu)) score += 2;
+  else if (/geforce|radeon|intel iris|apple gpu|adreno|mali/.test(gpu)) score += 1;
+  if (cores >= 8) score += 1;
+  else if (cores > 0 && cores <= 4) score -= 1;
+  // A 4K panel at DPR 2 is four times the fill of a 1080p one at DPR 1, and the
+  // GPU that drives it is not four times faster.
+  if (r.screenW * r.screenH * r.dpr * r.dpr >= 1920 * 1080 * 4) score -= 1;
+  if (r.jankLive && r.jankMs > 0 && r.jankMs < 40) score += 1;
+
+  return score >= 3 ? 'high' : score <= 0 ? 'low' : 'mid';
+}
+
 export function pressureFiction(p: PressureState | 'unknown'): string {
   switch (p) {
     case 'nominal': return 'the vessel rests easy';

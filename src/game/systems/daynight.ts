@@ -60,6 +60,24 @@ const lerp3 = (a: C3, b: C3, t: number): C3 => [
   a[2] + (b[2] - a[2]) * t,
 ];
 
+/** SR4 — how far into night we are, 0..1, with the SAME transition windows the
+ *  tint uses. The grade needs a continuous number rather than `isNight`, because
+ *  a boolean makes the whole frame change colour on one tick, and the eye reads
+ *  a hard cut as a bug even when it is the sunset.
+ *
+ *  Deliberately derived from the same `daySec`/`transitionSec` arithmetic as
+ *  tintAt rather than re-timed: two clocks disagreeing about when night starts
+ *  is exactly the kind of drift that produces a frame where the grade is night
+ *  and the tint is dusk. */
+export function nightFrac(clock: number): number {
+  const { tc } = phase(clock);
+  const D = CFG.time.daySec, T = CFG.time.transitionSec, cy = cycleLen();
+  if (tc < D - T) return 0;
+  if (tc < D) return (tc - (D - T)) / T;
+  if (tc < cy - T) return 1;
+  return 1 - (tc - (cy - T)) / T;
+}
+
 /** Ambient tint for a moment in time: day → dusk → night → dawn → day. */
 export function tintAt(clock: number): C3 {
   const { tc } = phase(clock);

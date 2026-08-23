@@ -56,14 +56,17 @@ import * as rulesMod from './game/rules';
 import * as lootMod from './game/systems/loot';
 import * as itemsMod from './game/data/items';
 import * as effectsMod from './game/systems/effects';
-import { phase, tintAt, startClock } from './game/systems/daynight';
+import { nightFrac, phase, tintAt, startClock } from './game/systems/daynight';
 import { Fog } from './game/world/fog';
 import { domainAt, regionOf, regionKey } from './game/world/domains';
 import { Sound } from './engine/audio';
-import { vesselLine } from './game/systems/vessel';
+import { gfxTier, vesselLine } from './game/systems/vessel';
 import { FloaterSystem } from './game/ui/floaters';
 import { ParticleSystem } from './engine/particles';
-import { PostProcess, type PostProcessConfig } from './engine/postprocess';
+import { PostProcess, type PostProcessConfig, type GlowSpot } from './engine/postprocess';
+import { lookFor } from './engine/shaders/look';
+import { BUILDING_LIGHT } from './game/data/lights';
+import { isBeamworthy, rarityTint } from './game/ui/rarity';
 import { initScale } from './game/ui/scale';
 import * as regression from './game/systems/regression';
 
@@ -163,9 +166,17 @@ async function boot() {
   const particles = new ParticleSystem(stage.world, 400);
   ctx.particles = particles;
 
-  // G1: post-processing — bloom, color grading, vignette (between world and UI)
-  const post = new PostProcess(stage.app.stage, stage.app.screen.width, stage.app.screen.height);
+  // SR4: post-processing. The glow layer goes inside `stage.world` — the camera
+  // container — which is what makes world-space light sources land on the thing
+  // that emits them without a single coordinate conversion. The grade goes on
+  // the stage, above everything Pixi draws and below the HUD, which is DOM.
+  const post = new PostProcess(stage.app, stage.world, stage.app.screen.width, stage.app.screen.height);
   ctx.post = post;
+  // 'auto' waits for the vessel to describe itself (see below); an explicit tier
+  // is honoured immediately and never overridden, because a person who set it
+  // meant it.
+  if (CFG.gfx.tier !== 'auto') post.applyTier(CFG.gfx.tier);
+  post.setGraded(CFG.gfx.palette !== false);
   stage.app.renderer.on('resize', () => {
     post.resize(stage.app.screen.width, stage.app.screen.height);
   });
@@ -641,6 +652,15 @@ async function boot() {
   setTimeout(() => {
     net.vessel.start(Sound.context);
     log.push('system', `The vessel: ${vesselLine(net.vessel.reading)}`, state.clock);
+    // SR4: the graphics tier falls out of a measurement N4.6 already takes for
+    // `mercy`. No benchmark frame, no settings screen, no guess — and the one
+    // input that outranks every performance signal is the browser having said
+    // it wants less motion.
+    if (CFG.gfx.tier === 'auto') {
+      const t = gfxTier(net.vessel.reading);
+      post.applyTier(t);
+      log.push('system', `The eye opens at the ${t} degree.`, state.clock);
+    }
     if (net.vessel.reading.reducedMotion) {
       log.push('system', 'Reduced motion is set — the camera will hold still', state.clock);
     }
@@ -927,48 +947,51 @@ async function boot() {
 
     particles.render();
 
-    // G1: post-processing — collect bloom spots, apply color grade & vignette
+    // SR4: post-processing. Light sources are collected in WORLD pixels and the
+    // grade is authored in one table — see engine/shaders/look.ts.
     {
-      const bloomSpots: Array<{ x: number; y: number; radius: number; intensity: number; color: [number, number, number] }> = [];
+      const spots: GlowSpot[] = [];
+      const nowS = performance.now() / 1000;
 
-      // Beacon buildings emit a warm glow
+      // Hearths and fires. The pulse is a slow breath rather than a flicker:
+      // a flame that strobes at frame rate reads as a rendering fault, and the
+      // eye only accepts fire from something that moves slower than it does.
       for (const b of state.buildings) {
-        if (b.type === 'campfire') {
-          const bx = (b.tx + 0.5) * TILE, by = (b.ty + 0.5) * TILE;
-          bloomSpots.push({ x: bx, y: by, radius: 48, intensity: 0.7, color: [255, 160, 40] });
-        }
+        const L = BUILDING_LIGHT[b.type];
+        if (!L) continue;
+        const pulse = 1 + Math.sin(nowS * L.hz + b.tx * 1.7 + b.ty * 2.3) * L.flicker;
+        spots.push({
+          x: (b.tx + 0.5) * TILE, y: (b.ty + 0.5) * TILE,
+          radius: L.radius * pulse, intensity: L.intensity * pulse, color: L.color,
+        });
       }
 
-      // Color grade from biome
-      const biome = net.getBiome();
-      const gradeColors: Record<string, [number, number, number]> = {
-        'ethernet': [255, 224, 192],  // warm amber
-        'wifi': [192, 208, 255],      // cool blue
-        'cellular': [255, 192, 192],  // harsh red
-        'unknown': [200, 200, 200],   // neutral
-      };
-      let gradeTint = gradeColors[biome.id] ?? gradeColors['unknown'];
-      let gradeStrength = 0.06; // subtle — per G1 spec (5-10%)
-
-      // Vignette: darker at night, darker when offline
-      let vignetteI = ph.isNight ? 0.25 : 0.10;
-      if (!net.snap.online) vignetteI += 0.15;
-      // N4.3: a Surge is packet loss made visible. The plan asks for loss to be
-      // FRIGHTENING, and a number in a panel is not frightening — the vignette
-      // closes in and the grade turns hostile for as long as the wire is
-      // fraying. Scaled by CFG.omens.surgeFxStrength so it is one number to
-      // turn down if it reads as too much in playtest.
-      if (omens.has('surge')) {
-        const k = Math.max(0, Math.min(1, CFG.omens.surgeFxStrength));
-        vignetteI += 0.22 * k;
-        gradeTint = [255, 120, 120];
-        gradeStrength = 0.06 + 0.10 * k;
+      // A4 already decided which drops deserve a light shaft and what colour it
+      // is. Reusing isBeamworthy/rarityTint here rather than re-deriving rarity
+      // means the beam and the glow can never disagree about an item — and a
+      // loot glow that says "rare" over something the beam calls common is the
+      // single most confusing thing an ARPG can do.
+      for (const d of state.drops) {
+        if (!d.gear || !isBeamworthy(d.id, 'woven')) continue;
+        const t = rarityTint(d.id);
+        const breathe = 0.78 + Math.sin(nowS * 2.2 + d.uid) * 0.22;
+        spots.push({
+          x: d.x, y: d.y - 6, radius: 34 * breathe, intensity: 0.55 * breathe,
+          color: [(t >> 16) & 255, (t >> 8) & 255, t & 255],
+        });
       }
 
+      const surge = omens.has('surge') ? Math.max(0, Math.min(1, CFG.omens.surgeFxStrength)) : 0;
       const ppCfg: PostProcessConfig = {
-        bloomSpots,
-        grade: { tint: gradeTint, strength: gradeStrength },
-        vignetteIntensity: vignetteI,
+        bloomSpots: spots,
+        grade: lookFor({
+          realm: net.getBiome().id,
+          night: nightFrac(state.clock),
+          offline: !net.snap.online,
+          surge,
+          impact: 0,
+          tier: post.tier,
+        }),
         painterly: { enabled: painterlyEnabled, strength: painterlyStrength, radius: painterlyRadius },
       };
       post.apply(stage.app.screen.width, stage.app.screen.height, ppCfg, stage.app.canvas);

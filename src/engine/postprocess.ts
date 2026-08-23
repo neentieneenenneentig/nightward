@@ -1,199 +1,41 @@
 // ============================================================================
-// G1 — Post-Processing Pipeline. Bloom (additive glow layer), color grading
-// (tinted overlay driven by biome + time-of-day), and vignette (screen-edge
-// darkening). All effects sit between the world and the UI — the HUD stays
-// crisp. WebGPU + WebGL compatible: zero shaders, pure Canvas2D + PixiJS
-// blend-mode compositing.
+// G1 -> SR4 — Post-processing.
+//
+// The header of this file used to say "zero shaders" as a FEATURE. That
+// sentence is why the game looked like 1993, and it is now false on purpose.
+//
+// What went, and what took its place:
+//
+//   BloomPass      Canvas2D radial gradients + a THREE-PASS 3x3 box blur run in
+//                  JavaScript over every pixel, bracketed by a getImageData
+//                  stall     ->  shaders/glow.ts, a pooled sprite layer under
+//                  the camera with a real Gaussian on it. Also fixes a
+//                  coordinate bug that had the campfire glow landing nowhere
+//                  near the campfire — see that file.
+//
+//   GradePass      a multiply-blended full-screen Graphics rect, rebuilt every
+//                  frame                     ->  one stage of shaders/grade.ts
+//
+//   VignettePass   TWELVE concentric filled circles, rebuilt every frame,
+//                  approximating a radial falloff the GPU evaluates exactly in
+//                  one instruction              ->  one stage of the same pass
+//
+// Three per-frame CPU passes became one fragment shader that also does
+// exposure, contrast, saturation, split-tone, a filmic roll-off and a dithered
+// posterise — none of which were affordable before, and all of which are what
+// separates a 2025 pixel game from a 1993 one.
+//
+// PainterlyPass survives untouched. It is a deliberate screenshot mode, it is
+// honest in its own docstring about not being real-time, and porting it is
+// SR8's problem, not SR4's.
 // ============================================================================
-import { Container, Graphics, Sprite, Texture, BLEND_MODES } from 'pixi.js';
+import { Application, Container, Filter } from 'pixi.js';
+import { Sprite, Texture } from 'pixi.js';
+import { GlowLayer, type GlowSpot } from './shaders/glow';
+import { applyGrade, makeGradeFilter, NEUTRAL_GRADE, type GradeSettings } from './shaders/grade';
 
-// ---- bloom ----------------------------------------------------------------
-
-interface GlowSpot {
-  x: number;
-  y: number;
-  radius: number;
-  intensity: number; // 0..1
-  color: [number, number, number]; // RGB 0..255
-}
-
-/**
- * Manages a full-screen additive-blend glow layer for bloom.
- * Systems register glow spots each frame (fire tiles, beacon buildings,
- * rift particles, crit effects) and the bloom pass blurs + composites them.
- *
- * Approach: render glow spots to a small offscreen canvas (1/4 res), apply a
- * cheap two-pass box blur, then overlay at full res with additive blending.
- * This is the same pattern the fire glow in chunkmap.ts already uses, just
- * centralized and blitted once per frame instead of per-chunk.
- */
-export class BloomPass {
-  private canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D;
-  private tex: Texture;
-  private sprite: Sprite;
-  private downscale = 4; // render glow at 1/4 resolution
-  private blurPasses = 3;
-
-  constructor(private parent: Container, screenW: number, screenH: number) {
-    const cw = Math.ceil(screenW / this.downscale);
-    const ch = Math.ceil(screenH / this.downscale);
-    this.canvas = document.createElement('canvas');
-    this.canvas.width = cw;
-    this.canvas.height = ch;
-    this.ctx = this.canvas.getContext('2d', { willReadFrequently: true })!;
-    this.tex = Texture.from(this.canvas);
-    this.tex.source.scaleMode = 'linear'; // bloom should be soft
-    this.sprite = new Sprite(this.tex);
-    this.sprite.blendMode = 'add';
-    this.sprite.setSize(screenW, screenH); // stretch back to full res
-    this.sprite.zIndex = 60; // above entities, below UI
-    this.sprite.alpha = 0.4; // subtle — per the G1 spec
-    parent.addChild(this.sprite);
-  }
-
-  resize(w: number, h: number) {
-    const cw = Math.ceil(w / this.downscale);
-    const ch = Math.ceil(h / this.downscale);
-    this.canvas.width = cw;
-    this.canvas.height = ch;
-    this.sprite.setSize(w, h);
-  }
-
-  /** Render a list of glow spots into the bloom texture and composite. */
-  render(spots: GlowSpot[]) {
-    const { ctx, canvas, downscale } = this;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Draw each spot as a radial gradient
-    for (const s of spots) {
-      const sx = s.x / downscale;
-      const sy = s.y / downscale;
-      const sr = Math.max(1, s.radius / downscale);
-      const [r, g, b] = s.color;
-      const alpha = s.intensity;
-      const grad = ctx.createRadialGradient(sx, sy, sr * 0.1, sx, sy, sr);
-      grad.addColorStop(0, `rgba(${r},${g},${b},${alpha})`);
-      grad.addColorStop(0.5, `rgba(${r},${g},${b},${alpha * 0.4})`);
-      grad.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = grad;
-      ctx.fillRect(sx - sr, sy - sr, sr * 2, sr * 2);
-    }
-
-    // Cheap box blur (multiple passes) for a soft bloom
-    this.boxBlur(this.blurPasses);
-
-    this.tex.source.update();
-  }
-
-  /** Simple 3×3 box blur — repeated passes approximate Gaussian. */
-  private boxBlur(passes: number) {
-    const { ctx, canvas } = this;
-    const w = canvas.width, h = canvas.height;
-    const src = ctx.getImageData(0, 0, w, h);
-    const dst = new ImageData(w, h);
-    for (let p = 0; p < passes; p++) {
-      const data = src.data;
-      const out = dst.data;
-      const stride = w * 4;
-      for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-          const i = (y * w + x) * 4;
-          for (let c = 0; c < 4; c++) {
-            out[i + c] = (
-              data[i + c - 4] + data[i + c + 4] +
-              data[i + c - stride] + data[i + c + stride] +
-              data[i + c] * 4
-            ) / 8;
-          }
-        }
-      }
-      src.data.set(out);
-    }
-    ctx.putImageData(src, 0, 0);
-  }
-}
-
-// ---- color grading --------------------------------------------------------
-
-export interface GradeColors {
-  /** Tint color as [r, g, b] 0..255. */
-  tint: [number, number, number];
-  /** Strength of the tint, 0..1. */
-  strength: number;
-}
-
-/**
- * Color grading via a full-screen multiply-blend overlay. The existing
- * day/night tint in main.ts already does this — GradePass extends the concept
- * with biome-specific color shifts (warm amber for Ethernet, cool blue for
- * WiFi, harsh red for Cellular).
- */
-export class GradePass {
-  private gfx: Graphics;
-
-  constructor(private parent: Container) {
-    this.gfx = new Graphics();
-    this.gfx.blendMode = 'multiply';
-    this.gfx.zIndex = 55; // above entities, below bloom
-    parent.addChild(this.gfx);
-  }
-
-  /** Apply color grading. Called every frame with the current grade config. */
-  apply(w: number, h: number, grade: GradeColors) {
-    const { gfx } = this;
-    gfx.clear();
-    if (grade.strength <= 0) return;
-    const [r, g, b] = grade.tint;
-    // Multiply-blend: a white rect has no effect, a tinted rect shifts colors.
-    // We use the tint color at (1 - strength) so full white = no change.
-    const inv = 1 - grade.strength;
-    gfx.rect(0, 0, w, h).fill({
-      r: r * inv + 255 * grade.strength,
-      g: g * inv + 255 * grade.strength,
-      b: b * inv + 255 * grade.strength,
-      a: 255,
-    });
-  }
-}
-
-// ---- vignette -------------------------------------------------------------
-
-/**
- * Vignette: darkens screen edges. Intensifies at night, during offline mode,
- * and during data storms. Implemented as a full-screen Graphics with a
- * radial alpha gradient (approximated with concentric rings).
- */
-export class VignettePass {
-  private gfx: Graphics;
-
-  constructor(private parent: Container) {
-    this.gfx = new Graphics();
-    this.gfx.blendMode = 'multiply';
-    this.gfx.zIndex = 65; // above bloom, below UI
-    parent.addChild(this.gfx);
-  }
-
-  /** intensity: 0 = none, 1 = full black edges. */
-  apply(w: number, h: number, intensity: number) {
-    const { gfx } = this;
-    gfx.clear();
-    if (intensity <= 0) return;
-
-    const cx = w / 2, cy = h / 2;
-    const maxR = Math.sqrt(cx * cx + cy * cy);
-    const rings = 12;
-    const smoothStart = 0.35; // fraction of maxR where darkening begins
-
-    for (let i = rings; i >= 1; i--) {
-      const t = i / rings;
-      const r = maxR * (smoothStart + (1 - smoothStart) * t);
-      // alpha peaks at the corners, zero in the center
-      const alpha = intensity * (1 - smoothStart) * (t * t) * (i / rings);
-      gfx.circle(cx, cy, r).fill({ color: 0x000000, alpha: Math.min(alpha, intensity) });
-    }
-  }
-}
+export type { GlowSpot, GradeSettings };
+export { NEUTRAL_GRADE };
 
 // ---- oil-painting filter (Kuwahara) -------------------------------------
 
@@ -350,35 +192,83 @@ export class PainterlyPass {
 // ---- combined post-processing manager -------------------------------------
 
 export interface PostProcessConfig {
+  /** WORLD-space glow sources. See shaders/glow.ts on why that word matters. */
   bloomSpots: GlowSpot[];
-  grade: GradeColors;
-  vignetteIntensity: number;
-  /** Oil-painting Kuwahara filter. `enabled` toggles it; `strength` (0–1) blends with original. */
+  grade: GradeSettings;
+  /** Oil-painting Kuwahara filter. `enabled` toggles it; `strength` (0-1) blends with original. */
   painterly?: { enabled: boolean; strength?: number; radius?: number };
 }
 
 export class PostProcess {
-  bloom: BloomPass;
-  grade: GradePass;
-  vignette: VignettePass;
+  glow: GlowLayer;
+  gradeFilter: Filter;
   painterly: PainterlyPass;
+  /** Set false to take the grade off the stage entirely — CFG.gfx.palette is a
+   *  real revert, so it removes the filter rather than feeding it neutral
+   *  numbers. A neutral shader still costs a full-screen render target. */
+  private graded = false;
+  tier: 'low' | 'mid' | 'high' = 'mid';
+  /** The glow layer's per-frame budget. A boss arena on fire can hand us four
+   *  hundred lights and the last three hundred are behind the first hundred. */
+  maxSpots = 128;
 
-  constructor(parent: Container, w: number, h: number) {
-    this.bloom = new BloomPass(parent, w, h);
-    this.grade = new GradePass(parent);
-    this.vignette = new VignettePass(parent);
-    this.painterly = new PainterlyPass(parent, w, h);
+  constructor(
+    private app: Application,
+    /** The CAMERA container. The glow layer goes inside it, which is the whole
+     *  reason world coordinates work without arithmetic. */
+    worldParent: Container,
+    w: number, h: number,
+    opts: { glowStrength?: number; glowQuality?: number; glowResolution?: number } = {},
+  ) {
+    this.glow = new GlowLayer(worldParent, {
+      strength: opts.glowStrength,
+      quality: opts.glowQuality,
+      resolution: opts.glowResolution,
+    });
+    this.gradeFilter = makeGradeFilter();
+    this.painterly = new PainterlyPass(app.stage, w, h);
+  }
+
+  /** The grade filter sits on the stage, so it colours the world, the glow and
+   *  the grain together — which is the point; a grade that misses half the
+   *  frame is a tint, not a grade. The HUD is DOM and is never touched. */
+  setGraded(on: boolean) {
+    if (on === this.graded) return;
+    this.graded = on;
+    const s = this.app.stage;
+    const cur = (s.filters as Filter[] | null) ?? [];
+    s.filters = on
+      ? [...cur.filter((f) => f !== this.gradeFilter), this.gradeFilter]
+      : cur.filter((f) => f !== this.gradeFilter);
+  }
+
+  /** SR4: quality follows the vessel, and the vessel is a reading the game
+   *  already takes for `mercy` — see vessel.ts `gfxTier`. Called once when the
+   *  vessel finishes describing itself, so a slow machine spends its first two
+   *  seconds on the mid path and then steps down, rather than the game blocking
+   *  the boot on a benchmark nobody asked for. */
+  applyTier(tier: 'low' | 'mid' | 'high') {
+    this.tier = tier;
+    const blur = (this.glow.container.filters as any[])?.[0];
+    if (blur) {
+      // Low does not turn glow OFF. A world with no light in it is not a
+      // cheaper-looking world, it is a broken one — so low gets a smaller,
+      // coarser, quarter-res glow and keeps every light source it had.
+      blur.strength = tier === 'low' ? 8 : tier === 'high' ? 18 : 14;
+      blur.quality = tier === 'low' ? 1 : tier === 'high' ? 3 : 2;
+      blur.resolution = tier === 'low' ? 0.3 : 0.5;
+    }
+    this.glow.alpha = tier === 'low' ? 0.7 : 0.85;
+    this.maxSpots = tier === 'low' ? 48 : tier === 'high' ? 256 : 128;
   }
 
   resize(w: number, h: number) {
-    this.bloom.resize(w, h);
     this.painterly.resize(w, h);
   }
 
   apply(w: number, h: number, cfg: PostProcessConfig, sourceCanvas?: HTMLCanvasElement) {
-    this.bloom.render(cfg.bloomSpots);
-    this.grade.apply(w, h, cfg.grade);
-    this.vignette.apply(w, h, cfg.vignetteIntensity);
+    this.glow.render(cfg.bloomSpots, this.maxSpots);
+    if (this.graded) applyGrade(this.gradeFilter, cfg.grade);
     if (cfg.painterly && sourceCanvas) {
       this.painterly.apply(sourceCanvas, cfg.painterly.enabled, cfg.painterly.strength, cfg.painterly.radius);
     }
