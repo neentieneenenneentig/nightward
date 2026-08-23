@@ -182,6 +182,7 @@ async function boot() {
   // SR5: the ambient-darkening half of "darkness with pools of light" is a real
   // revert too — see PostProcess.apply and look.ts's `lights` gate.
   post.lightsEnabled = CFG.gfx.lights !== false;
+  post.bloomEnabled = CFG.gfx.bloom !== false;
   stage.app.renderer.on('resize', () => {
     post.resize(stage.app.screen.width, stage.app.screen.height);
   });
@@ -997,6 +998,7 @@ async function boot() {
           impact: 0,
           tier: post.tier,
           lights: post.lightsEnabled,
+          palette: CFG.gfx.palette !== false,
         }),
         painterly: { enabled: painterlyEnabled, strength: painterlyStrength, radius: painterlyRadius },
       };

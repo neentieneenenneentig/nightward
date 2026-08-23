@@ -52,6 +52,11 @@ export interface LookInputs {
   /** SR5 — CFG.gfx.lights. Off means no ambient darkening either: a night with
    *  no light pools to hold back the dark is a broken frame, not a cheap one. */
   lights: boolean;
+  /** SR6 — CFG.gfx.palette. Gates the posterise step count; the split-tone
+   *  warmth stage and the per-realm LUT (REALM_LOOK, below) are load-bearing
+   *  for the look and stay on regardless — see PostProcess.setGraded for the
+   *  actual real revert (the whole filter comes off the stage). */
+  palette: boolean;
 }
 
 /**
@@ -91,7 +96,12 @@ export function lookFor(i: LookInputs): GradeSettings {
     rolloff: 0.55,
     vignette: 0.16 + n * 0.26 + (i.offline ? 0.14 : 0) + i.surge * 0.22,
     vignetteRadius: 0.52 - n * 0.10,
-    steps: 0,
+    // SR6: 7 steps per channel, dithered — the "graded, not banded" line the
+    // plan draws at. Off at 'low' for the same reason dither is: a posterise
+    // with no dither to break its edges is the ONE combination that looks
+    // worse than doing nothing, so the two share a gate rather than each
+    // getting their own.
+    steps: i.palette && i.tier !== 'low' ? 7 : 0,
     dither: i.tier === 'low' ? 0 : 1 / 160,
     // SR5 — darkness with pools of light, minus the pools: the mask that says
     // WHERE the pools are lives in the shader (uLightMask), sampled straight

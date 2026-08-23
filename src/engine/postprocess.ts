@@ -213,6 +213,11 @@ export class PostProcess {
   private lightMask: RenderTexture;
   private maskScale = 0.5;
   lightsEnabled = true;
+  /** CFG.gfx.bloom — the WORLD-visible glow only. The same sprites still
+   *  render into the light mask when `lightsEnabled`, because a machine that
+   *  wants darkness-with-light-pools but not the pretty additive sprites is a
+   *  real combination (SR5's darkening doesn't need bloom's look to work). */
+  bloomEnabled = true;
   /** Set false to take the grade off the stage entirely — CFG.gfx.palette is a
    *  real revert, so it removes the filter rather than feeding it neutral
    *  numbers. A neutral shader still costs a full-screen render target. */
@@ -286,6 +291,7 @@ export class PostProcess {
 
   apply(w: number, h: number, cfg: PostProcessConfig, sourceCanvas?: HTMLCanvasElement) {
     this.glow.render(cfg.bloomSpots, this.maxSpots);
+    if (!this.bloomEnabled) this.glow.container.visible = false;
     // SR5: re-render the same sprites the glow layer just positioned into the
     // mask target. Skipped when lights are off — look.ts already forces
     // nightAmbient to 1 in that case, so an unlit mask would be pure waste.
