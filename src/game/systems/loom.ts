@@ -12,6 +12,10 @@ export class LoomSystem {
   /** Live modifiers — systems read these every frame. Rebuilt on allocation. */
   mods: LoomModifiers = { ...DEFAULT_MODIFIERS };
   private _rebuildNeeded = true;
+  /** SR2: the three (CFG.sr.draftCards) node ids currently on offer. UI reads
+   *  this rather than re-rolling on every render — a draft has to hold still
+   *  while the player looks at it. */
+  pendingDraft: string[] = [];
 
   constructor(private ctx: any) {}
 
@@ -33,6 +37,17 @@ export class LoomSystem {
     state.player.loomPoints = (state.player.loomPoints ?? 0) + bonus;
     this.ctx.toast?.(`The Loom strengthens — ${bonus} point${bonus > 1 ? 's' : ''}`, 'good');
     this.ctx.log?.push('loom', `+${bonus} Loom point (night ${state.nightsSurvived})`, state.clock);
+    this.offerIfSr();
+  }
+
+  /** SR2: the draft fires at the point-grant moment, not from a panel the
+   *  player has to remember to open mid-fight. CFG.sr.enabled is the real
+   *  revert — off, and a point just sits spendable in the (still-present)
+   *  Loom panel exactly like before this batch. */
+  private offerIfSr() {
+    if (!CFG.sr.enabled) return;
+    if (!this.offerDraft().length) return;  // tree fully spent — nothing to offer
+    this.ctx.ui?.openDraft?.();
   }
 
   /** L1: a second Loom-point income source — nights-survived alone (1/night) is
@@ -49,6 +64,7 @@ export class LoomSystem {
     state.player.loomPoints = (state.player.loomPoints ?? 0) + bonus;
     this.ctx.toast?.(`The Loom drinks deep — +${bonus} points`, 'good');
     this.ctx.log?.push('loom', `+${bonus} Loom points (boss slain)`, state.clock);
+    this.offerIfSr();
   }
 
   /** Check if the Long Thread keystone grants extra points from total levels. */
@@ -73,6 +89,7 @@ export class LoomSystem {
       state.player.loomPoints = (state.player.loomPoints ?? 0) + diff;
       state.player._longThreadPoints = earned;
       this.ctx.log?.push('loom', `+${diff} Loom point (Long Thread: ${totalLevels} total levels)`, state.clock);
+      this.offerIfSr();
     }
   }
 
@@ -126,6 +143,62 @@ export class LoomSystem {
       }
     }
     return true;
+  }
+
+  /** SR2 — the draft. Fired from the point-grant moment, not opened from a
+   *  panel: `LOOM_NODES.filter(canAllocate)` is the eligible pool, and the
+   *  offer is `CFG.sr.draftCards` of them, weighted toward depth (a payoff
+   *  further into a branch reads as more of an event than a root node does)
+   *  and away from nodes already ranked (so the offer skews toward breadth
+   *  rather than repeating the same card every time, without forbidding a
+   *  genuine "one more rank of this" pick).
+   *
+   *  M4: a keystone the player can currently afford is GUARANTEED one of the
+   *  three slots. B3.b resized the Loom to 15 nodes specifically so "one
+   *  keystone is a real choice" would be true, and an offer that can roll
+   *  three regular nodes while a keystone sits affordable and unseen quietly
+   *  undoes that — the tree-shape tests only pin the TREE, not the OFFER, so
+   *  nothing else catches this. */
+  offerDraft(): string[] {
+    const eligible = LOOM_NODES.filter((n) => this.canAllocate(n.id));
+    if (!eligible.length) { this.pendingDraft = []; return []; }
+    const keystones = eligible.filter((n) => n.keystone);
+    const picks: LoomNode[] = [];
+    if (keystones.length) picks.push(keystones[(Math.random() * keystones.length) | 0]);
+    const rest = eligible.filter((n) => !picks.includes(n));
+    picks.push(...this.weightedSample(rest, CFG.sr.draftCards - picks.length));
+    this.pendingDraft = picks.map((n) => n.id);
+    return this.pendingDraft;
+  }
+
+  /** Gold-priced re-roll — the A6 hub already prices things this way. */
+  rerollDraft(): boolean {
+    const { state } = this.ctx;
+    const cost = CFG.sr.draftRerollGold;
+    if ((state.player.gold ?? 0) < cost) return false;
+    state.player.gold -= cost;
+    this.offerDraft();
+    return true;
+  }
+
+  private weightedSample(pool: LoomNode[], n: number): LoomNode[] {
+    const remaining = [...pool];
+    const held = this.allocated;
+    const picked: LoomNode[] = [];
+    for (let i = 0; i < n && remaining.length; i++) {
+      const weights = remaining.map((node) => {
+        const depthW = (node.row + 1) * (node.row + 1);
+        const heldW = (held[node.id] ?? 0) > 0 ? 0.4 : 1;
+        return depthW * heldW;
+      });
+      const total = weights.reduce((a, b) => a + b, 0);
+      let r = Math.random() * total;
+      let idx = weights.length - 1;
+      for (let j = 0; j < weights.length; j++) { r -= weights[j]; if (r <= 0) { idx = j; break; } }
+      picked.push(remaining[idx]);
+      remaining.splice(idx, 1);
+    }
+    return picked;
   }
 
   /** Rebuild the modifier map. Called lazily when mods are read. */

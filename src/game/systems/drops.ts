@@ -48,6 +48,9 @@ interface DropCtx {
    *  constructed, which is fine — spawn() reads it at call time, not at
    *  construction. Optional because the Gauntlet builds drop systems headless. */
   net?: { getGameValue?(target: string): number; lastRiftTime?: number };
+  /** SR2: pickup radius reads pickupRadiusPct off here. Optional for the same
+   *  reason `net` is — a headless drop system in a test has no Loom either. */
+  loom?: { ensureMods(): { pickupRadiusPct?: number } };
 }
 
 export class DropSystem {
@@ -217,7 +220,12 @@ export class DropSystem {
     if (!drops.length) { this.flushToasts(); return; }
 
     const D = CFG.drops;
-    const magnetR = D.magnetTiles * TILE;
+    // SR2: pickup radius. Multiplicative on the base rather than a Loom-driven
+    // replacement of it — at zero investment (pickupRadiusPct 0) this is
+    // bit-identical to the pre-SR2 constant, which existing reach-distance
+    // tests read directly off CFG.drops.magnetTiles.
+    const pickupMul = 1 + (this.ctx.loom?.ensureMods?.().pickupRadiusPct ?? 0) / 100;
+    const magnetR = D.magnetTiles * pickupMul * TILE;
     const magnetR2 = magnetR * magnetR;
     const pickR2 = D.pickupPx * D.pickupPx;
 

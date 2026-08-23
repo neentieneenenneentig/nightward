@@ -57,6 +57,7 @@ export interface LoomModifiers {
   towerDmgPct: number;
   towerRange: number;         // additive tiles
   territoryIncomePct: number;
+  pickupRadiusPct: number;    // SR2: drops.ts magnet radius, multiplicative on CFG.drops.magnetTiles
   // keystone flags
   glassEcho: boolean;         // damage rolls only use TOP half of D5 band; max HP halved
   deepRoots: boolean;         // buildings +50% HP, towers +1 range; move speed −12%
@@ -79,6 +80,7 @@ export const DEFAULT_MODIFIERS: LoomModifiers = {
   towerDmgPct: 0,
   towerRange: 0,
   territoryIncomePct: 0,
+  pickupRadiusPct: 0,
   glassEcho: false,
   deepRoots: false,
   nightMarket: false,
@@ -103,8 +105,12 @@ export const LOOM_NODES: LoomNode[] = [
   // every keystone at the same depth.
   { id: 'f1', name: 'Harvester', branch: 'field', col: 0, row: 0, maxRank: 5,
     effects: { gatherSpeedPct: 5 } },
+  // SR2: pickupRadiusPct rides along here rather than on a new node — a
+  // fifteenth-node addition risks the exact tree shape B3.b tuned (M4), and
+  // "loot finds its way to you a little easier" is the same fantasy Lucky
+  // Find already sells.
   { id: 'f2', name: 'Lucky Find', branch: 'field', col: 0, row: 1, maxRank: 4,
-    effects: { doubleYieldChance: 3, gatherSpeedPct: 2 }, req: ['f1'] },
+    effects: { doubleYieldChance: 3, gatherSpeedPct: 2, pickupRadiusPct: 8 }, req: ['f1'] },
   { id: 'f3', name: 'Master Crafter', branch: 'field', col: 0, row: 2, maxRank: 3,
     effects: { craftCostReduction: 5 }, req: ['f2'] },
   { id: 'f4', name: 'Swift Feet', branch: 'field', col: 1, row: 1, maxRank: 4,

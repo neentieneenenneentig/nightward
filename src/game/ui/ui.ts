@@ -108,6 +108,11 @@ export interface UIHooks {
     allocated: Record<string, number>;
     canAllocate(nodeId: string): boolean;
   };
+  /** SR2: the current draft offer — node ids from loom.pendingDraft. */
+  draftView(): string[];
+  /** SR2: gold-priced re-roll. Returns false (and changes nothing) if the
+   *  player can't afford CFG.sr.draftRerollGold. */
+  rerollDraft(): boolean;
 }
 
 type Panel = 'bag' | 'craft' | 'skills' | 'loom' | 'log' | 'leaderboard' | 'reliquary' | 'forge' | 'sounding' | 'covenant' | null;
@@ -138,6 +143,7 @@ const LOOM_EFFECT_LABEL: Record<string, string> = {
   moveSpeedPct: 'move speed', armorPct: 'armour', regenPct: 'daylight regen',
   buildingHpPct: 'building HP', towerDmgPct: 'tower damage',
   towerRange: 'tower range', territoryIncomePct: 'tribute',
+  pickupRadiusPct: 'pickup radius',
 };
 function effectSummary(n: LoomNode): string {
   const parts: string[] = [];
@@ -159,6 +165,8 @@ export class UI {
   /** SR0: the pause overlay, or null. Held rather than queried from the DOM so
    *  `isPaused()` is a cheap read the sim loop can make every frame. */
   private pauseEl: HTMLElement | null = null;
+  /** SR2: the draft overlay, or null. Same reasoning as pauseEl. */
+  private draftEl: HTMLElement | null = null;
   private craftTab = 'crafting';
   /** A6: which shape the Reliquary is currently quoting. Remembered across
    *  openings — a player shopping for a blade is usually still shopping for a
@@ -436,6 +444,19 @@ export class UI {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
     const k = e.key;
 
+    // SR2: the draft takes priority over everything, including the ability
+    // bar's own Digit1-4 — a level-up is a bigger interrupt than a slot swap,
+    // and the two can never overlap in practice since the sim is frozen.
+    if (this.draftEl) {
+      const digit = /^Digit([1-9])$/.exec(e.code ?? '');
+      if (digit) {
+        e.preventDefault();
+        const id = this.draftIds[+digit[1] - 1];
+        if (id) this.pickDraftCard(id);
+      }
+      return; // no other key does anything while the Loom is calling
+    }
+
     // ---- panel keyboard navigation (Tab / Enter / Escape) ----
     if (this.panel) {
       if (k === 'Escape') { e.preventDefault(); this.close(); return; }
@@ -548,7 +569,7 @@ export class UI {
   private hidePanel() { this.panel = null; this.panelHost.innerHTML = ''; }
   /** Dismiss the panel AND cancel any in-progress build (Esc / ✕ / scrim). */
   close() { hideItemTooltip(); this.hidePanel(); this.hooks.enterBuild(''); }
-  isOpen() { return this.panel !== null; }
+  isOpen() { return this.panel !== null || this.isDrafting(); }
 
   private renderPanel() {
     hideItemTooltip();   // A4: a rebuild orphans the cell the tooltip was anchored to
@@ -1440,7 +1461,7 @@ export class UI {
 
   // ----------------------------------------------------------- SR0: pause ----
 
-  isPaused() { return this.pauseEl !== null; }
+  isPaused() { return this.pauseEl !== null || this.isDrafting(); }
 
   togglePause() {
     if (this.pauseEl) this.closePause();
@@ -1450,6 +1471,80 @@ export class UI {
   closePause() {
     this.pauseEl?.remove();
     this.pauseEl = null;
+  }
+
+  isDrafting() { return this.draftEl !== null; }
+  /** The offer currently on screen, in card order — onKey's 1/2/3 reads this
+   *  rather than duplicating openDraft()'s pick logic. */
+  private draftIds: string[] = [];
+
+  private closeDraft() {
+    this.draftEl?.remove();
+    this.draftEl = null;
+    this.draftIds = [];
+  }
+
+  private pickDraftCard(id: string) {
+    if (!this.hooks.allocateLoom(id)) return;
+    this.closeDraft();
+    // A Long Thread grant can be worth several points at once — if one is
+    // still unspent, the Loom calls again rather than leaving it sitting in
+    // the panel this phase exists to route around.
+    if (this.hooks.loomView().points > 0) this.openDraft();
+  }
+
+  /** SR2 — the draft. "On level-up, the game STOPS and offers three cards":
+   *  loom.ts has already rolled `pendingDraft` and paused via isPaused()/
+   *  isOpen() before this is ever called, so this is purely the rendering and
+   *  the pick. Chooseable by click (SR0 left menu buttons clickable — the
+   *  mouse's job is stopping the game, not aiming it, and a pause-shaped menu
+   *  is not aiming) or by pressing 1/2/3, the number matching the card's
+   *  position, which is faster and is the one this exists to make possible. */
+  openDraft() {
+    if (this.draftEl || this.state.gameOver) return;
+    const ids = this.hooks.draftView();
+    if (!ids.length) return;
+    this.draftIds = ids;
+    const lv = this.hooks.loomView();
+
+    const over = el('div', 'nw-gameover nw-draft');
+    over.innerHTML = `<h1>THE LOOM CALLS</h1>
+      <div style="color:var(--ink-dim);max-width:420px">${lv.points} point${lv.points === 1 ? '' : 's'} to weave. Choose one.</div>`;
+
+    const grid = el('div', 'nw-draft-grid');
+    ids.forEach((id, i) => {
+      const node = nodeById(id);
+      if (!node) return;
+      const rank = lv.allocated[id] ?? 0;
+      const card = el('div', 'nw-draft-card' + (node.keystone ? ' keystone' : ''));
+      card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+      card.innerHTML = `
+        <div class="nw-draft-key">${i + 1}</div>
+        <div class="nm">${node.name}${node.keystone ? '<span class="ks">keystone</span>' : ''}</div>
+        <div class="ef">${node.keystone ? (node.keystoneDesc ?? '') : effectSummary(node)}</div>
+        <div class="rk">${rank}/${node.maxRank}</div>`;
+      card.addEventListener('click', (e) => { e.stopPropagation(); this.pickDraftCard(id); });
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.pickDraftCard(id); }
+      });
+      grid.appendChild(card);
+    });
+    over.appendChild(grid);
+
+    const reroll = el('div', 'nw-btn');
+    reroll.textContent = `Re-roll (${CFG.sr.draftRerollGold}g)`;
+    reroll.style.pointerEvents = 'auto';
+    reroll.style.marginTop = '8px';
+    reroll.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (this.hooks.rerollDraft()) { this.closeDraft(); this.openDraft(); }
+      else this.toast('Not enough gold to re-roll', 'bad');
+    });
+    over.appendChild(reroll);
+
+    this.root.appendChild(over);
+    this.draftEl = over;
   }
 
   /** The pause screen. It exists because SR0 took the mouse's gameplay job away

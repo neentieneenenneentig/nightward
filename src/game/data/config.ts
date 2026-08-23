@@ -402,7 +402,8 @@ export const CFG = {
     bobPx: 1.5,              // idle bob amplitude once settled
     bobHz: 1.1,              // idle bob rate
     armDelaySec: 0.25,       // no magnet before this — you always see it land
-    magnetTiles: 1.6,        // attract radius; a pure walk-over turns a night wave into pixel-hunting
+    magnetTiles: 1.6,        // attract radius at zero investment; a pure walk-over turns a night wave into
+                             // pixel-hunting. SR2: grown by the Loom's Lucky Find (pickupRadiusPct) — see drops.ts
     magnetAccel: 420,        // px/s²
     magnetMaxSpeed: 260,     // px/s
     pickupPx: 10,            // collected inside this
@@ -631,6 +632,10 @@ export const CFG = {
       // not the garnish standing around it.
       { id: 'reckoning', untilSec: 900, countMul: 0.2, rateMul: 0.3, elites: false, champions: false },
     ] as { id: string; untilSec: number; countMul: number; rateMul: number; elites: boolean; champions: boolean }[],
+    // SR2: the draft. A Loom point grant pauses and offers this many cards
+    // instead of leaving the point sitting in a panel nobody opens mid-fight.
+    draftCards: 3,
+    draftRerollGold: 40,
   },
 
   // ---------------------------------------------------------------- SR4-SR8 ---

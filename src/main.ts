@@ -458,6 +458,9 @@ async function boot() {
       allocated: loom.allocated,
       canAllocate: (id: string) => loom.canAllocate(id),
     }),
+    // SR2: the draft.
+    draftView: () => loom.pendingDraft,
+    rerollDraft: () => loom.rerollDraft(),
     useItem: (id: string) => { useItem(id); ui.rebuildPanel(); },
     equip: (id: string) => { equipItem(id); ui.rebuildPanel(); },
     feedSoul: (itemId: string, count: number, targetSlot: import('./game/data/soulgear').SoulSlot) => {
@@ -540,6 +543,11 @@ async function boot() {
       }] : []),
     ],
   });
+
+  // SR2: the draft calls back into the UI from the point-grant moment
+  // (loom.ts), which is deep inside the system graph and has no other route
+  // to a DOM overlay.
+  ctx.ui = ui;
 
   // hand the build system a way to drive the placement carousel banner
   ctx.setBuildBanner = (sel: { def: any; afford: number } | null) => ui.setBuildBanner(sel);

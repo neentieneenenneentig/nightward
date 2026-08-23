@@ -795,6 +795,36 @@ html, body, #nw-observatory, .nw-pbody {
   letter-spacing: 3px; color: var(--metal-hi); margin-top: 9px;
   border-bottom: 1px solid rgba(255,255,255,.07); padding-bottom: 3px; }
 
+/* ---- SR2: the draft ----------------------------------------------------- */
+/* Shares .nw-gameover's layout again — same "the game stops" grammar as the
+   pause screen, in the Loom's own purple rather than pause's blue-grey or
+   death's red. Three readings, three palettes, none of them confusable. */
+.nw-draft { background: radial-gradient(ellipse at center, rgba(20,10,28,.90), rgba(6,3,9,.97)); }
+.nw-draft h1 { color: #c9b6e6; text-shadow: 0 0 24px rgba(140,110,200,.4); }
+.nw-draft-grid { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
+  max-width: 640px; }
+.nw-draft-card { position: relative; width: 168px; padding: 14px 10px 10px; text-align: left;
+  border: 1px solid var(--metal-lo); border-radius: 4px; cursor: pointer;
+  background: linear-gradient(180deg, #17111d, #0d0a12);
+  box-shadow: inset 0 0 0 1px var(--metal-lo), 0 3px 14px rgba(0,0,0,.5);
+  pointer-events: auto; transition: box-shadow .15s, transform .15s; }
+.nw-draft-card:hover, .nw-draft-card:focus-visible { transform: translateY(-2px);
+  box-shadow: inset 0 0 0 1px var(--metal), 0 6px 18px rgba(0,0,0,.55), 0 0 10px rgba(140,110,200,.2);
+  outline: none; }
+.nw-draft-card.keystone { border-color: #6b53a0;
+  box-shadow: inset 0 0 0 1px #6b53a0, 0 0 14px rgba(140,110,200,.25); }
+.nw-draft-key { position: absolute; top: 6px; right: 8px; font-family: var(--font-display);
+  font-size: 10px; color: var(--metal-hi); border: 1px solid var(--metal-lo); border-radius: 3px;
+  padding: 0 4px; }
+.nw-draft-card .nm { color: var(--ink-bright); font-size: 13px; display: flex;
+  align-items: baseline; gap: 6px; padding-right: 16px; }
+.nw-draft-card .ks { font-size: 8px; letter-spacing: 1px; text-transform: uppercase;
+  color: #c9b6e6; border: 1px solid #c9b6e655; border-radius: 3px; padding: 0 4px; }
+.nw-draft-card .ef { color: var(--ink-dim); font-size: 10px; line-height: 1.4; margin-top: 6px; min-height: 34px; }
+.nw-draft-card .ef i { font-style: normal; opacity: .6; }
+.nw-draft-card .rk { color: var(--gold); font-size: 10px; font-variant-numeric: tabular-nums;
+  margin-top: 6px; display: block; }
+
 /* ---- A6: the hub (Reliquary + Forge-Warden) ----------------------------- */
 .nw-hub-purse { display: flex; justify-content: space-between; align-items: baseline;
   padding: 6px 8px; margin-bottom: 8px; border-bottom: 1px solid var(--metal-lo);
