@@ -170,13 +170,18 @@ async function boot() {
   // container — which is what makes world-space light sources land on the thing
   // that emits them without a single coordinate conversion. The grade goes on
   // the stage, above everything Pixi draws and below the HUD, which is DOM.
-  const post = new PostProcess(stage.app, stage.world, stage.app.screen.width, stage.app.screen.height);
+  const post = new PostProcess(stage.app, stage.world, stage.app.screen.width, stage.app.screen.height, {
+    lightBufferScale: CFG.gfx.lightBufferScale,
+  });
   ctx.post = post;
   // 'auto' waits for the vessel to describe itself (see below); an explicit tier
   // is honoured immediately and never overridden, because a person who set it
   // meant it.
   if (CFG.gfx.tier !== 'auto') post.applyTier(CFG.gfx.tier);
   post.setGraded(CFG.gfx.palette !== false);
+  // SR5: the ambient-darkening half of "darkness with pools of light" is a real
+  // revert too — see PostProcess.apply and look.ts's `lights` gate.
+  post.lightsEnabled = CFG.gfx.lights !== false;
   stage.app.renderer.on('resize', () => {
     post.resize(stage.app.screen.width, stage.app.screen.height);
   });
@@ -991,6 +996,7 @@ async function boot() {
           surge,
           impact: 0,
           tier: post.tier,
+          lights: post.lightsEnabled,
         }),
         painterly: { enabled: painterlyEnabled, strength: painterlyStrength, radius: painterlyRadius },
       };

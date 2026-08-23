@@ -29,7 +29,7 @@
 // honest in its own docstring about not being real-time, and porting it is
 // SR8's problem, not SR4's.
 // ============================================================================
-import { Application, Container, Filter } from 'pixi.js';
+import { Application, Container, Filter, RenderTexture } from 'pixi.js';
 import { Sprite, Texture } from 'pixi.js';
 import { GlowLayer, type GlowSpot } from './shaders/glow';
 import { applyGrade, makeGradeFilter, NEUTRAL_GRADE, type GradeSettings } from './shaders/grade';
@@ -203,6 +203,16 @@ export class PostProcess {
   glow: GlowLayer;
   gradeFilter: Filter;
   painterly: PainterlyPass;
+  /** SR5 — "darkness with pools of light" without normal maps: the SAME glow
+   *  sprites that composite additively into the world (see GlowLayer) are ALSO
+   *  rendered, unmodified, into this small offscreen target. The grade shader
+   *  samples it as a mask — bright where a light sits, black in open dark — and
+   *  uses it to pull a night-dimmed pixel back up toward full brightness. One
+   *  set of light sources, two consumers: the visible glow and the exposure
+   *  mask, so there is no second light list to keep in sync with the first. */
+  private lightMask: RenderTexture;
+  private maskScale = 0.5;
+  lightsEnabled = true;
   /** Set false to take the grade off the stage entirely — CFG.gfx.palette is a
    *  real revert, so it removes the filter rather than feeding it neutral
    *  numbers. A neutral shader still costs a full-screen render target. */
@@ -218,14 +228,21 @@ export class PostProcess {
      *  reason world coordinates work without arithmetic. */
     worldParent: Container,
     w: number, h: number,
-    opts: { glowStrength?: number; glowQuality?: number; glowResolution?: number } = {},
+    opts: { glowStrength?: number; glowQuality?: number; glowResolution?: number; lightBufferScale?: number } = {},
   ) {
     this.glow = new GlowLayer(worldParent, {
       strength: opts.glowStrength,
       quality: opts.glowQuality,
       resolution: opts.glowResolution,
     });
-    this.gradeFilter = makeGradeFilter();
+    this.maskScale = opts.lightBufferScale ?? 0.5;
+    // width/height stay in the SAME logical space as the screen — `resolution`
+    // is what shrinks the backing texture. Get this backwards (pre-scale the
+    // width/height instead) and glow.container's worldTransform, which maps
+    // world space to full-screen pixels, draws everything past the target's
+    // top-left quadrant off the edge of a texture that never got told to scale.
+    this.lightMask = RenderTexture.create({ width: w, height: h, resolution: this.maskScale });
+    this.gradeFilter = makeGradeFilter(this.lightMask.source);
     this.painterly = new PainterlyPass(app.stage, w, h);
   }
 
@@ -264,10 +281,17 @@ export class PostProcess {
 
   resize(w: number, h: number) {
     this.painterly.resize(w, h);
+    this.lightMask.resize(w, h);
   }
 
   apply(w: number, h: number, cfg: PostProcessConfig, sourceCanvas?: HTMLCanvasElement) {
     this.glow.render(cfg.bloomSpots, this.maxSpots);
+    // SR5: re-render the same sprites the glow layer just positioned into the
+    // mask target. Skipped when lights are off — look.ts already forces
+    // nightAmbient to 1 in that case, so an unlit mask would be pure waste.
+    if (this.lightsEnabled) {
+      this.app.renderer.render({ container: this.glow.container, target: this.lightMask, clear: true });
+    }
     if (this.graded) applyGrade(this.gradeFilter, cfg.grade);
     if (cfg.painterly && sourceCanvas) {
       this.painterly.apply(sourceCanvas, cfg.painterly.enabled, cfg.painterly.strength, cfg.painterly.radius);

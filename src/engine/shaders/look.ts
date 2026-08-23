@@ -49,6 +49,9 @@ export interface LookInputs {
   /** SR7 — a short spike after a heavy hit. 0..1. */
   impact: number;
   tier: 'low' | 'mid' | 'high';
+  /** SR5 — CFG.gfx.lights. Off means no ambient darkening either: a night with
+   *  no light pools to hold back the dark is a broken frame, not a cheap one. */
+  lights: boolean;
 }
 
 /**
@@ -90,6 +93,13 @@ export function lookFor(i: LookInputs): GradeSettings {
     vignetteRadius: 0.52 - n * 0.10,
     steps: 0,
     dither: i.tier === 'low' ? 0 : 1 / 160,
+    // SR5 — darkness with pools of light, minus the pools: the mask that says
+    // WHERE the pools are lives in the shader (uLightMask), sampled straight
+    // off SR4's glow layer. This is only the floor a pixel is held to without
+    // one. It now carries most of what tintNight used to do by brightness
+    // crush alone (see config.ts) — the difference is this floor lifts back
+    // toward 1 near a light and the old flat multiply never could.
+    nightAmbient: i.lights ? 1 - n * 0.55 : 1,
   };
 
   // A Surge turns the world hostile — the omen already darkens and shakes, and

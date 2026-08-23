@@ -104,7 +104,12 @@ export const CFG = {
     // day/night overlay tints (css colors, multiply-blended over the world)
     tintDay: [255, 255, 255] as [number, number, number],
     tintDusk: [255, 150, 110] as [number, number, number],
-    tintNight: [58, 70, 140] as [number, number, number],   // deeper, colder dark
+    // SR5: softened from [58,70,140]. The old value did ALL of night's darkening
+    // by itself; now the grade shader's nightAmbient floor (look.ts) carries
+    // most of that job and can be pulled back up near a light. Leaving this at
+    // its old crush would stack two darkenings and light pools would barely
+    // register — see PostProcess's light mask.
+    tintNight: [150, 158, 192] as [number, number, number],  // colder, no longer doing the crushing
     tintDawn: [255, 200, 150] as [number, number, number],
     transitionSec: 18,       // how long dusk/dawn blends take
   },
@@ -622,10 +627,15 @@ export const CFG = {
     palette: true,
     feel: true,
     atmosphere: true,
-    /** SR5: the light buffer renders at this fraction of screen. Light is low
+    /** SR5: the light mask renders at this fraction of screen. Light is low
      *  frequency — half-res costs a quarter of the fill and nobody can see it. */
     lightBufferScale: 0.5,
-    maxLights: 32,
+    // maxLights (32) was planned for a per-pixel light-array shader loop. SR5
+    // shipped as a rendered light mask instead (PostProcess.lightMask), which
+    // reuses PostProcess.maxSpots — the SAME tier-based cap the glow layer
+    // already enforces — so a second, smaller cap on the identical sprite list
+    // would be a number nothing distinguishes from the first. Dropped rather
+    // than kept as a row nothing reads.
   },
 };
 

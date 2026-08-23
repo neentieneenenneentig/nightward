@@ -128,6 +128,13 @@ export interface FilterSpec {
   /** Padding in pixels around the filtered area, for effects that read outside
    *  their own footprint (blurs). */
   padding?: number;
+  /** Extra sampled textures beyond `uTexture` — a light mask, a map, whatever
+   *  the body needs to read as a second image. Bound the same way Pixi's own
+   *  DisplacementFilter binds its map: texture and sampler as two resources
+   *  under the SAME group as the uniform block, one after the other. `source`
+   *  is a live `TextureSource` — swap `filter.resources[name] = newSource` any
+   *  frame the content changes; the binding itself never moves. */
+  textures?: { name: string; source: any }[];
 }
 
 /**
@@ -137,14 +144,20 @@ export interface FilterSpec {
  */
 export function makeFilter(spec: FilterSpec): Filter {
   const names = Object.keys(spec.uniforms);
+  const textures = spec.textures ?? [];
 
   const wgslStruct = `struct FilterUniforms {\n`
     + names.map((n) => `  ${n}: ${spec.uniforms[n].type},`).join('\n')
-    + `\n};\n@group(1) @binding(0) var<uniform> u: FilterUniforms;\n`;
+    + `\n};\n@group(1) @binding(0) var<uniform> u: FilterUniforms;\n`
+    + textures.map((t, i) =>
+        `@group(1) @binding(${1 + i * 2}) var ${t.name}: texture_2d<f32>;\n`
+        + `@group(1) @binding(${2 + i * 2}) var ${t.name}Sampler: sampler;\n`,
+      ).join('');
 
   const glslUniforms = names
     .map((n) => `uniform ${GLSL_TYPE[spec.uniforms[n].type]} ${n};`)
-    .join('\n');
+    .join('\n')
+    + (textures.length ? '\n' + textures.map((t) => `uniform sampler2D ${t.name};`).join('\n') : '');
 
   const wgslSource = WGSL_HEAD + wgslStruct + WGSL_LIB + (spec.wgslHelpers ?? '') + `
 @fragment
@@ -177,7 +190,13 @@ ${spec.glsl}
       fragment: glslSource,
       name: spec.name,
     }),
-    resources: { u: new UniformGroup(spec.uniforms as any) },
+    resources: {
+      u: new UniformGroup(spec.uniforms as any),
+      ...Object.fromEntries(textures.flatMap((t) => [
+        [t.name, t.source],
+        [`${t.name}Sampler`, t.source.style],
+      ])),
+    },
     resolution: spec.resolution ?? 1,
     padding: spec.padding ?? 0,
   });

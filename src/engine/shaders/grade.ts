@@ -28,7 +28,7 @@
 // saturation 1, warmth 0, tint strength 0, roll-off 0, vignette 0, steps 0 is
 // a byte-for-byte passthrough.
 // ============================================================================
-import type { Filter } from 'pixi.js';
+import type { Filter, TextureSource } from 'pixi.js';
 import { makeFilter, uni } from './filter';
 
 export interface GradeSettings {
@@ -53,6 +53,13 @@ export interface GradeSettings {
   steps: number;
   /** Dither amplitude, in units of 1.0 = full range. ~1/128 is right. */
   dither: number;
+  /** SR5 — the brightness floor a pixel with NO light on it is held to. 1 =
+   *  untouched (day: night hasn't dimmed anything). A pixel inside the light
+   *  mask is pulled back up toward full brightness regardless — see uLightMask
+   *  below. This is the whole of "darkness with pools of light": no normal
+   *  maps, no per-light shading, just an ambient floor and a mask saying
+   *  where the floor doesn't apply. */
+  nightAmbient: number;
 }
 
 export const NEUTRAL_GRADE: GradeSettings = {
@@ -60,6 +67,7 @@ export const NEUTRAL_GRADE: GradeSettings = {
   tint: [255, 255, 255], tintStrength: 0,
   rolloff: 0, vignette: 0, vignetteRadius: 0.55,
   steps: 0, dither: 0,
+  nightAmbient: 1,
 };
 
 // The two bodies are kept LINE-ALIGNED on purpose. When one backend renders
@@ -70,6 +78,10 @@ const WGSL = `
   if (c.a <= 0.0) { return c; }
   var rgb = c.rgb / c.a;
   rgb = rgb * u.uGrade.x;
+  let mask = textureSample(uLightMask, uLightMaskSampler, screenUV(uv)).rgb;
+  let lit = max(mask.r, max(mask.g, mask.b));
+  let litFloor = clamp(u.uPal.y + lit * (1.0 - u.uPal.y), u.uPal.y, 1.0);
+  rgb = rgb * litFloor;
   rgb = (rgb - vec3<f32>(0.5)) * u.uGrade.y + vec3<f32>(0.5);
   let l = luma(rgb);
   rgb = mix(vec3<f32>(l), rgb, u.uGrade.z);
@@ -90,6 +102,10 @@ const GLSL = `
   if (c.a <= 0.0) { finalColor = c; return; }
   vec3 rgb = c.rgb / c.a;
   rgb = rgb * uGrade.x;
+  vec3 mask = texture(uLightMask, screenUV(uv)).rgb;
+  float lit = max(mask.r, max(mask.g, mask.b));
+  float litFloor = clamp(uPal.y + lit * (1.0 - uPal.y), uPal.y, 1.0);
+  rgb = rgb * litFloor;
   rgb = (rgb - vec3(0.5)) * uGrade.y + vec3(0.5);
   float l = luma(rgb);
   rgb = mix(vec3(l), rgb, uGrade.z);
@@ -105,7 +121,11 @@ const GLSL = `
   finalColor = vec4(rgb * c.a, c.a);
 `;
 
-export function makeGradeFilter(): Filter {
+/** SR5 — the caller passes its light-mask RenderTexture's `.source` in, built
+ *  before this filter so there's never a frame with nothing bound. Rendering
+ *  into that same texture object each frame (rather than swapping it) means
+ *  the binding never has to move — see PostProcess. */
+export function makeGradeFilter(lightMask: TextureSource): Filter {
   return makeFilter({
     name: 'nw-grade',
     uniforms: {
@@ -115,9 +135,10 @@ export function makeGradeFilter(): Filter {
       uTint: { value: new Float32Array([1, 1, 1, 0]), type: 'vec4<f32>' },
       // vignette intensity, vignette radius, roll-off, dither
       uVig: { value: new Float32Array([0, 0.55, 0, 0]), type: 'vec4<f32>' },
-      // posterise steps, spare, spare, spare
-      uPal: { value: new Float32Array([0, 0, 0, 0]), type: 'vec4<f32>' },
+      // posterise steps, night ambient floor (SR5), spare, spare
+      uPal: { value: new Float32Array([0, 1, 0, 0]), type: 'vec4<f32>' },
     },
+    textures: [{ name: 'uLightMask', source: lightMask }],
     wgsl: WGSL,
     glsl: GLSL,
   });
@@ -134,7 +155,7 @@ export function applyGrade(f: Filter, g: GradeSettings) {
   const c = u.uVig as Float32Array;
   c[0] = g.vignette; c[1] = g.vignetteRadius; c[2] = g.rolloff; c[3] = g.dither;
   const d = u.uPal as Float32Array;
-  d[0] = g.steps;
+  d[0] = g.steps; d[1] = g.nightAmbient;
   // Pixi tracks dirty state per uniform group, not per element, so an in-place
   // array write needs the group flagged by hand or the GPU keeps last frame's
   // values — the classic "my uniform never updates" bug.
