@@ -540,27 +540,23 @@ async function boot() {
     ui.showGameOver(() => { location.reload(); }, card);
   }
 
-  // --- canvas pointer: build placement, and click-to-attack on desktop ---
-  // placement is press-to-aim, RELEASE-to-place: the ghost follows while the
-  // button is down (dragging paints walls), and the building lands on pointerup
+  // --- canvas pointer ---
+  // SR0: the mouse has exactly one gameplay job left, and it is to stop the game.
+  //
+  // Everything it used to do is now a key, and none of it was a loss: the ghost
+  // follows `aimAngle`, which was always movement-derived, so aiming with the
+  // mouse was aiming with a second, worse device that disagreed with the one the
+  // attack already used. Click-to-attack was a redundant Space. What is gone is
+  // the disagreement, not a verb.
+  //
+  // The touch path keeps its pixel-space entries (build.hover/place/paint are
+  // still exported) — a phone has no keyboard and no Escape key.
   const canvas = stage.app.canvas;
-  canvas.addEventListener('pointermove', (e) => {
-    if (!build.mode) return;
-    if (e.buttons & 1) build.paint(e.clientX, e.clientY);
-    else build.hover(e.clientX, e.clientY);
-  });
   canvas.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return; // only the primary button places/attacks
-    if (build.mode) { build.hover(e.clientX, e.clientY); return; } // aim; place happens on release
-    if (e.pointerType === 'mouse') combat.attack();
-  });
-  canvas.addEventListener('pointerup', (e) => {
-    if (e.button !== 0 || !build.mode) return;
-    build.place(e.clientX, e.clientY);
-  });
-  // right-click always backs out of placement instead of opening the browser menu
-  canvas.addEventListener('contextmenu', (e) => {
-    if (build.mode) { e.preventDefault(); build.cancel(); }
+    if (e.button !== 0 || e.pointerType !== 'mouse') return;
+    if (!CFG.sr.keyboardOnly) return;
+    if (state.gameOver || ui.isOpen()) return;
+    ui.togglePause();
   });
   // wheel flips through blueprints while placing (zoom will gate on !build.mode later)
   canvas.addEventListener('wheel', (e) => {
@@ -661,6 +657,11 @@ async function boot() {
     scoreboard.updateReal(performance.now());  // W6: track connection uptime
     lifespan.updateReal(performance.now());    // L1: age the character, hard run-length cap
     acc = Math.min(acc + tk.deltaMS, 250);
+    // SR0: pause stops the fixed step and nothing else. Rendering continues, so
+    // the world is still visible behind the menu, and the accumulator is DROPPED
+    // rather than banked — otherwise a two-minute pause would spend itself as a
+    // burst of catch-up steps the moment you resumed.
+    if (ui.isPaused()) acc = 0;
     while (acc >= STEP) {
       sim(STEP / 1000);
       acc -= STEP;
@@ -700,6 +701,25 @@ async function boot() {
     wasNight = ph.isNight;
     // S1: collect RTT samples during the night for stability tracking
     if (ph.isNight) net.sampleNightRtt();
+
+    // SR0: build mode is driven from the fixed step, not from DOM events, so
+    // placement obeys the same clock the world does. Arrows change meaning here
+    // and the banner announces it — see BuildSystem.aimFromPlayer.
+    input.setArrowsAsNudge(!!build.mode && !ui.isOpen());
+    if (build.mode && !ui.isOpen()) {
+      if (input.pressed('arrowleft')) build.nudge(-1, 0);
+      if (input.pressed('arrowright')) build.nudge(1, 0);
+      if (input.pressed('arrowup')) build.nudge(0, -1);
+      if (input.pressed('arrowdown')) build.nudge(0, 1);
+      if (input.pressed('[')) build.cycle(-1);
+      if (input.pressed(']')) build.cycle(1);
+      build.aimFromPlayer();
+      // Enter is press-to-place and hold-to-paint. The edge fires first so a
+      // single tap always places exactly once; the held branch only ever commits
+      // on a tile CHANGE, so the two can never double-place the same tile.
+      if (input.pressed('enter')) build.placeTile();
+      else if (input.held('enter')) build.paintTile();
+    }
 
     const a = (ui.isOpen() || matFx.isStunned) ? { x: 0, y: 0 } : input.axis();
     const feetSpeed = world.speedAt(Math.floor(player.x / TILE), Math.floor(player.y / TILE));
@@ -757,6 +777,11 @@ async function boot() {
         : realmName === 'WiFi Wilds' ? 1.2 : 1.0;
       worldCore.pushFireParams({ spreadMul: Math.min(3, spreadMul), windMul });
     }
+
+    // SR0: edges live for exactly one fixed step. Cleared here, at the END of
+    // sim(), rather than per render frame — a machine drawing at 30 fps runs two
+    // sim steps per frame, and clearing on the frame would eat one of them.
+    input.endTick();
   }
 
   function enterRegion(ptx: number, pty: number, rk: string) {

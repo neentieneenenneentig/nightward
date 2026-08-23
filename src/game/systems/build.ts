@@ -22,6 +22,11 @@ export class BuildSystem {
   mode: BuildMode | null = null;
   private enteredAt = 0; // guards against the entry click falling through to the canvas
   private idx = 0;       // carousel position, remembered across build sessions
+  // SR0: offset in tiles from the tile the player is facing. Arrows move this,
+  // and it resets whenever the aim reference changes (new session, new blueprint)
+  // so a nudge never survives into a placement the player did not aim.
+  nudgeX = 0;
+  nudgeY = 0;
 
   constructor(private ctx: any) {}
 
@@ -71,6 +76,7 @@ export class BuildSystem {
     const tx = this.mode ? this.mode.tx : Math.floor(state.player.x / TILE);
     const ty = this.mode ? this.mode.ty : Math.floor(state.player.y / TILE) - 1;
     this.mode = { def, tx, ty, valid: false, lastTx: NaN, lastTy: NaN };
+    this.nudgeX = this.nudgeY = 0;
     this.enteredAt = performance.now();
     this.validate();
     this.updateBanner();
@@ -86,6 +92,7 @@ export class BuildSystem {
     this.idx = ((cur >= 0 ? cur : this.idx) + dir + list.length) % list.length;
     m.def = list[this.idx];
     m.lastTx = NaN; m.lastTy = NaN;
+    this.nudgeX = this.nudgeY = 0;
     this.validate();
     this.updateBanner();
   }
@@ -104,17 +111,74 @@ export class BuildSystem {
 
   cancel() {
     this.mode = null;
+    this.nudgeX = this.nudgeY = 0;
     this.ctx.views.setGhost(null);
     this.ctx.setBuildBanner?.(null);
   }
 
-  /** Pointer moved over the canvas (screen px). */
+  // ------------------------------------------------------------ SR0: tiles ----
+  // The real verbs take TILES. The screen-pixel versions below are thin wrappers
+  // kept because the touch path still speaks in pixels — "keyboard only" is a
+  // statement about the desktop scheme, not a removal of touch.
+
+  /** Move the ghost to a tile and re-check it. */
+  hoverTile(tx: number, ty: number) {
+    if (!this.mode) return;
+    this.mode.tx = tx;
+    this.mode.ty = ty;
+    this.validate();
+  }
+
+  /** SR0: the ghost sits one tile along the way the player is facing, plus any
+   *  arrow nudge. `aimAngle` has always been movement-derived (player.ts:56) and
+   *  HOLDS its last value when you stop — so standing still aims where you were
+   *  last walking, which is exactly the behaviour this needs. */
+  aimFromPlayer() {
+    if (!this.mode) return;
+    const p = this.ctx.state.player;
+    const r = CFG.sr.buildReachTiles;
+    const tx = Math.floor((p.x + Math.cos(p.aimAngle) * r * TILE) / TILE) + this.nudgeX;
+    const ty = Math.floor((p.y + Math.sin(p.aimAngle) * r * TILE) / TILE) + this.nudgeY;
+    if (tx !== this.mode.tx || ty !== this.mode.ty) this.hoverTile(tx, ty);
+  }
+
+  /** Arrow keys while placing: shift the ghost off the facing tile. Clamped so
+   *  the ghost can never wander somewhere the player could not have aimed. */
+  nudge(dx: number, dy: number) {
+    if (!this.mode) return;
+    const lim = CFG.sr.buildNudgeMaxTiles;
+    this.nudgeX = Math.max(-lim, Math.min(lim, this.nudgeX + dx));
+    this.nudgeY = Math.max(-lim, Math.min(lim, this.nudgeY + dy));
+    this.aimFromPlayer();
+  }
+
+  /** Enter: commit at wherever the ghost currently is. */
+  placeTile() {
+    const m = this.mode;
+    if (!m) return;
+    if (performance.now() - this.enteredAt < 350) return;
+    if (!m.valid) {
+      if (m.tx !== m.lastTx || m.ty !== m.lastTy) this.ctx.toast(this.placeError(), 'bad');
+      return;
+    }
+    this.commit();
+  }
+
+  /** Enter HELD, for blueprints that paint. Commits only when the ghost has
+   *  MOVED to a new tile — a guard on the tile, not a timer, so holding Enter
+   *  while standing still places exactly one building. */
+  paintTile() {
+    const m = this.mode;
+    if (!m || !m.def.dragPaint) return;
+    if (performance.now() - this.enteredAt < 350) return;
+    if (m.valid && (m.tx !== m.lastTx || m.ty !== m.lastTy)) this.commit();
+  }
+
+  /** Pointer moved over the canvas (screen px). Touch path. */
   hover(sx: number, sy: number) {
     if (!this.mode) return;
     const [wx, wy] = this.ctx.cam.toWorld(sx, sy);
-    this.mode.tx = Math.floor(wx / TILE);
-    this.mode.ty = Math.floor(wy / TILE);
-    this.validate();
+    this.hoverTile(Math.floor(wx / TILE), Math.floor(wy / TILE));
   }
 
   private validate() {

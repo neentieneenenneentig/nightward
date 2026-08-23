@@ -592,6 +592,41 @@ export const CFG = {
     // and leaves A2 room to be read. Retuned 2026-08-22 by user verdict.
     surgeFxStrength: 0.35,
   },
+
+  // ---------------------------------------------------------------- SR0-SR3 ---
+  // Batch SR: the speedrun ARPG pivot. `enabled: false` reverts the whole batch
+  // to the pre-SR game, the same discipline as CFG.a6 / CFG.a8 / CFG.n45.
+  sr: {
+    enabled: true,
+    /** SR0: the desktop control scheme is keyboard. The mouse keeps exactly one
+     *  job — click opens the pause menu — and the touch path is untouched. */
+    keyboardOnly: true,
+    /** How far along `aimAngle` the build ghost sits, in tiles. One tile means
+     *  "the thing in front of me", which is the only reading that survives a
+     *  player who is also being chased. */
+    buildReachTiles: 1,
+    /** How far arrows may nudge the ghost off the facing tile. Bounded, because
+     *  an unbounded nudge is a second cursor with worse ergonomics. */
+    buildNudgeMaxTiles: 4,
+  },
+
+  // ---------------------------------------------------------------- SR4-SR8 ---
+  // The look. Every effect gates independently so a machine that cannot afford
+  // one still gets the others, and so a regression can be bisected by flag
+  // rather than by git. `tier: 'auto'` picks from the vessel reading (N4.6) —
+  // the same measurement that already drives `mercy`, doing a second job.
+  gfx: {
+    tier: 'auto' as 'auto' | 'low' | 'mid' | 'high',
+    bloom: true,
+    lights: true,
+    palette: true,
+    feel: true,
+    atmosphere: true,
+    /** SR5: the light buffer renders at this fraction of screen. Light is low
+     *  frequency — half-res costs a quarter of the fill and nobody can see it. */
+    lightBufferScale: 0.5,
+    maxLights: 32,
+  },
 };
 
 export type Config = typeof CFG;

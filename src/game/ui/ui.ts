@@ -153,6 +153,9 @@ export class UI {
   private root: HTMLElement;
   private toasts: Toasts;
   private panel: Panel = null;
+  /** SR0: the pause overlay, or null. Held rather than queried from the DOM so
+   *  `isPaused()` is a cheap read the sim loop can make every frame. */
+  private pauseEl: HTMLElement | null = null;
   private craftTab = 'crafting';
   /** A6: which shape the Reliquary is currently quoting. Remembered across
    *  openings — a player shopping for a blade is usually still shopping for a
@@ -320,7 +323,14 @@ export class UI {
       return `<span class="${ok ? 'have' : 'lack'}">${s.n} ${itemName(s.id)}</span>`;
     }).join(' &middot; ');
     const tower = d.tower ? ` &middot; ${d.tower.dmg} dmg / ${d.tower.rangeTiles}t` : '';
-    this.buildBar.querySelector('.cost')!.innerHTML = cost + tower;
+    // SR0: while this banner is up, the arrow keys STOP being movement. That is
+    // a real mode switch and the only honest place to say so is the surface that
+    // is already on screen for exactly as long as the switch is in effect.
+    const keys = CFG.sr.keyboardOnly
+      ? ` &middot; <span class="nw-ctl-k">Enter</span> place${d.dragPaint ? ' <i>(hold to paint)</i>' : ''}`
+        + ` &middot; <span class="nw-ctl-k">Arrows</span> nudge &middot; <span class="nw-ctl-k">&#91; &#93;</span> swap`
+      : '';
+    this.buildBar.querySelector('.cost')!.innerHTML = cost + tower + keys;
     this.buildBar.classList.add('on');
   }
 
@@ -455,7 +465,14 @@ export class UI {
     }
 
     // ---- game keys (only when no panel is open) ----
-    if (k === 'Escape') { this.close(); return; }
+    if (k === 'Escape') {
+      // SR0: Escape has a priority order, and it is the order of least surprise:
+      // back out of placement first, then out of the pause menu, and only open
+      // the pause menu when there was nothing to back out of.
+      if (this.hooks.isPlacing()) { this.close(); return; }
+      this.togglePause();
+      return;
+    }
     if (k === 'Tab' && this.hooks.isPlacing()) {
       e.preventDefault();
       this.hooks.cycleBuild(e.shiftKey ? -1 : 1);
@@ -1414,6 +1431,90 @@ export class UI {
     }
 
     body.appendChild(histSec);
+  }
+
+  // ----------------------------------------------------------- SR0: pause ----
+
+  isPaused() { return this.pauseEl !== null; }
+
+  togglePause() {
+    if (this.pauseEl) this.closePause();
+    else this.openPause();
+  }
+
+  closePause() {
+    this.pauseEl?.remove();
+    this.pauseEl = null;
+  }
+
+  /** The pause screen. It exists because SR0 took the mouse's gameplay job away
+   *  and a game with no cursor needs somewhere to put "how do I play this".
+   *  The controls table is the real payload — the stats are there because the
+   *  scoreboard already computes them and a run you cannot check on is a run you
+   *  are playing blind. */
+  openPause() {
+    if (this.pauseEl || this.state.gameOver) return;
+    const over = el('div', 'nw-gameover nw-pause');
+    const sb = (window as any).__nw?.sys?.scoreboard;
+    const s = sb?.getLiveStats?.() ?? null;
+
+    const row = (keys: string, what: string) =>
+      `<div class="nw-ctl"><span class="nw-ctl-k">${keys}</span><span class="nw-ctl-w">${what}</span></div>`;
+
+    const stats = s ? `
+      <div class="nw-lb-grid" style="margin:10px 0 4px">
+        <div class="nw-lb-stat"><span class="nw-lb-val">${s.age}</span><span class="nw-lb-lbl">age</span></div>
+        <div class="nw-lb-stat"><span class="nw-lb-val">${s.minutesRemaining.toFixed(1)}m</span><span class="nw-lb-lbl">left</span></div>
+        <div class="nw-lb-stat"><span class="nw-lb-val">${s.nightsSurvived}</span><span class="nw-lb-lbl">nights</span></div>
+        <div class="nw-lb-stat"><span class="nw-lb-val">${s.enemiesKilled}</span><span class="nw-lb-lbl">kills</span></div>
+        <div class="nw-lb-stat"><span class="nw-lb-val">${s.buildingsBuilt}</span><span class="nw-lb-lbl">built</span></div>
+        <div class="nw-lb-stat"><span class="nw-lb-val">${s.legacyScore}</span><span class="nw-lb-lbl">legacy</span></div>
+      </div>` : '';
+
+    over.innerHTML = `<h1>PAUSED</h1>
+      <div style="color:var(--ink-dim);max-width:360px">The dream holds still.</div>
+      ${stats}
+      <div class="nw-ctl-grid">
+        <div class="nw-ctl-hd">MOVE &amp; FIGHT</div>
+        ${row('W A S D', 'move &mdash; and your last direction is your aim')}
+        ${row('Space', 'attack')}
+        ${row('1 &ndash; 4', 'abilities &middot; Shift+digit rebinds a slot')}
+        ${row('E', 'interact / gather')}
+        ${row('F', 'ignite')}
+        <div class="nw-ctl-hd">BUILD</div>
+        ${row('B', 'enter placement')}
+        ${row('&#91; &#93;', 'previous / next blueprint')}
+        ${row('Arrows', 'nudge the ghost off your facing tile')}
+        ${row('Enter', 'place &mdash; hold to paint walls as you walk')}
+        ${row('Esc', 'cancel placement')}
+        <div class="nw-ctl-hd">PANELS</div>
+        ${row('I C K M L P', 'bag &middot; craft &middot; skills &middot; loom &middot; log &middot; pact')}
+        ${row('&#59;', 'leaderboard')}
+        ${row('Esc / click', 'pause')}
+      </div>`;
+
+    const mk = (label: string, primary: boolean, fn: () => void) => {
+      const b = el('div', 'nw-btn' + (primary ? ' primary' : ''));
+      b.textContent = label;
+      b.style.pointerEvents = 'auto';
+      b.style.marginTop = '4px';
+      b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+      over.appendChild(b);
+    };
+    mk('Resume', true, () => this.closePause());
+    mk('Leaderboard', false, () => { this.closePause(); this.open('leaderboard'); });
+    mk('Abandon run', false, () => {
+      // Deliberately two-step. A one-click "restart" on a pause menu you can
+      // open by clicking the canvas is a way to lose a fifteen-minute run to a
+      // stray mouse.
+      if (over.dataset.confirm === '1') { location.reload(); return; }
+      over.dataset.confirm = '1';
+      const b = over.querySelector('.nw-btn:last-child') as HTMLElement;
+      if (b) { b.textContent = 'Really abandon? Click again'; b.style.color = '#c66'; }
+    });
+
+    this.root.appendChild(over);
+    this.pauseEl = over;
   }
 
   showGameOver(onRestart: () => void, card?: any) {

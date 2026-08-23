@@ -777,6 +777,23 @@ html, body, #nw-observatory, .nw-pbody {
   font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
 }
 
+/* ---- SR0: the pause screen -------------------------------------------- */
+/* Shares .nw-gameover's layout, overrides its colour: death is red, a pause is
+   the game merely holding its breath, and using the death palette for a menu you
+   open by clicking the canvas would be alarming three times a run. */
+.nw-pause { background: radial-gradient(ellipse at center, rgba(10,14,20,.88), rgba(3,5,8,.96)); }
+.nw-pause h1 { color: var(--accent); text-shadow: 0 0 24px rgba(200,170,110,.35); }
+.nw-ctl-grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px;
+  align-items: baseline; text-align: left; margin: 6px 0 2px;
+  font-size: 11px; max-width: 380px; }
+.nw-ctl { display: contents; }
+.nw-ctl-k { font-family: var(--font-display); color: var(--accent);
+  letter-spacing: 1px; white-space: nowrap; }
+.nw-ctl-w { color: var(--ink-dim); }
+.nw-ctl-hd { grid-column: 1 / -1; font-family: var(--font-display); font-size: 9px;
+  letter-spacing: 3px; color: var(--metal-hi); margin-top: 9px;
+  border-bottom: 1px solid rgba(255,255,255,.07); padding-bottom: 3px; }
+
 /* ---- A6: the hub (Reliquary + Forge-Warden) ----------------------------- */
 .nw-hub-purse { display: flex; justify-content: space-between; align-items: baseline;
   padding: 6px 8px; margin-bottom: 8px; border-bottom: 1px solid var(--metal-lo);
