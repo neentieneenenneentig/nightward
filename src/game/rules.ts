@@ -10,6 +10,15 @@ import { SOULGEAR, baseStatFor, type SoulSlot } from './data/soulgear';
 import type { GameState } from './state';
 import type { LootTable, Stack } from './types';
 
+// ---------------------------------------------------------------- scaling ----
+
+/** Scale `base` by `mul` and round, but never let a positive base round down
+ *  to 0 — a scaled hit, DoT tick, or split-spawn stat that rounds to nothing
+ *  reads as a bug (or a free kill), not as "the multiplier was small". */
+export function scaleMin1(base: number, mul: number): number {
+  return Math.max(1, Math.round(base * mul));
+}
+
 // ------------------------------------------------------------ inventory ----
 
 export function invAdd(state: GameState, id: string, n: number) {

@@ -4,7 +4,7 @@ import { CFG } from '../data/config';
 import { itemName } from '../data/items';
 import { SKILLS } from '../data/skills';
 import type { FeatureDef } from '../data/features';
-import { addXp, awardSoulXp, bestTool, rollLoot, skillLevel, soulStat } from '../rules';
+import { addXp, awardSoulXp, bestTool, rollLoot, scaleMin1, skillLevel, soulStat } from '../rules';
 import { BUILDINGS } from '../data/buildings';
 import type { SoulSlot } from '../data/soulgear';
 import { TILE, type MegaCluster } from '../world/worldgen';
@@ -178,7 +178,7 @@ export class GatherSystem {
     if (a.def.skill === 'foraging') {
       const gDef = BUILDINGS.find((b) => b.id === 'granary');
       if (gDef?.granary && state.buildings.some((b: any) => b.type === 'granary')) {
-        for (const d of drops) d.n = Math.max(1, Math.round(d.n * gDef.granary.foodYieldMul));
+        for (const d of drops) d.n = scaleMin1(d.n, gDef.granary.foodYieldMul);
       }
     }
     // X1: 'Battery Scarcity' Lens mapping — a starving vessel gathers thinner
@@ -203,7 +203,7 @@ export class GatherSystem {
     // N2b: material effect — Verdant Bloom tiles boost gather yield
     const matYieldMul = this.ctx.matFx?.mods?.gatherYieldMult ?? 1;
     if (matYieldMul !== 1) {
-      for (const d of drops) d.n = Math.max(1, Math.round(d.n * matYieldMul));
+      for (const d of drops) d.n = scaleMin1(d.n, matYieldMul);
     }
     // B5: the yield leaves the node and lands on the floor. Every modifier above
     // has already run — this only changes WHERE the finished Stack[] goes. A

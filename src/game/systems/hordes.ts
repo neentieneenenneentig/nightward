@@ -12,7 +12,7 @@ import {
   eliteName, rollAffixes, rollEliteGear, type EliteRank,
 } from '../data/elites';
 import { SKILLS } from '../data/skills';
-import { addXp, awardSoulXp, hall, rollLoot, territoryScore } from '../rules';
+import { addXp, awardSoulXp, hall, rollLoot, scaleMin1, territoryScore } from '../rules';
 import { activeEffects, armMoveBurst } from './effects';
 import type { Building } from '../state';
 import { TILE } from '../world/worldgen';
@@ -340,8 +340,8 @@ export class HordeSystem {
         placed = world.canStand(mx, my, 5);
       }
       if (!placed) continue;
-      const hp = Math.max(1, Math.round(champion.maxHp * 0.45));
-      const dmg = Math.max(1, Math.round(champion.baseDmg * 0.7));
+      const hp = scaleMin1(champion.maxHp, 0.45);
+      const dmg = scaleMin1(champion.baseDmg, 0.7);
       const minion: any = {
         uid: state.nextUid++, def: champion.def,
         x: mx, y: my, px: mx, py: my,
@@ -390,8 +390,8 @@ export class HordeSystem {
       // silently fails to split in a corridor is a mechanic that stops working
       // exactly where the player most expects it to.
       if (!placed) { sx = parent.x; sy = parent.y; }
-      const hp = Math.max(1, Math.round(parent.maxHp * P.splitHpMul));
-      const dmg = Math.max(1, Math.round((parent.baseDmg ?? parent.def.dmg) * P.splitDmgMul));
+      const hp = scaleMin1(parent.maxHp, P.splitHpMul);
+      const dmg = scaleMin1(parent.baseDmg ?? parent.def.dmg, P.splitDmgMul);
       const copy: any = {
         uid: state.nextUid++, def: parent.def,
         x: sx, y: sy, px: sx, py: sy,
@@ -602,7 +602,7 @@ export class HordeSystem {
       }
       if (!placed) continue; // hostile geography — that one stays buried
       const dmg = Math.round(def.dmg * dmgMul * netScale * cov.dmgMul);
-      const hp = Math.max(1, Math.round(def.hp * hpMul * netScale * cov.hpMul));
+      const hp = scaleMin1(def.hp, hpMul * netScale * cov.hpMul);
       const foe: any = {
         uid: state.nextUid++, def,
         x: fx, y: fy, px: fx, py: fy,

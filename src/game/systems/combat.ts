@@ -5,7 +5,7 @@ import { CFG } from '../data/config';
 import { BUILDINGS } from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
 import { AFFIX_POWER } from '../data/elites';
-import { armorDef, awardSoulXp, charmRegen, equippedWeaponDmg, gearMod, hall, playerMaxHp, skillLevel } from '../rules';
+import { armorDef, awardSoulXp, charmRegen, equippedWeaponDmg, gearMod, hall, playerMaxHp, scaleMin1, skillLevel } from '../rules';
 import { activeEffects, applyVenom, tickVenom } from './effects';
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
@@ -508,7 +508,7 @@ export class CombatSystem {
           const hit = new Set<number>([bestFoe.uid]);
           let from = bestFoe, arcDmg = dmg;
           for (let j = 0; j < def.chain.jumps; j++) {
-            arcDmg = Math.max(1, Math.round(arcDmg * def.chain.falloff));
+            arcDmg = scaleMin1(arcDmg, def.chain.falloff);
             let next: Foe | null = null, nd = 3.5 * TILE;
             for (const g of hordes.foes as Foe[]) {
               if (hit.has(g.uid)) continue;
@@ -529,7 +529,7 @@ export class CombatSystem {
           const clock = this.ctx.state.clock;
           const stacks = Math.min(def.poisonFx.maxStacks, (ef._poisonUntil > clock ? (ef._poisonStacks ?? 1) : 0) + 1);
           ef._poisonStacks = stacks;
-          ef._poisonDps = Math.max(1, Math.round(dmg * def.poisonFx.dpsFrac)) * stacks;
+          ef._poisonDps = scaleMin1(dmg, def.poisonFx.dpsFrac) * stacks;
           ef._poisonUntil = clock + def.poisonFx.durSec;
           if (def.poisonFx.spreadOnDeath) ef._poisonSpread = true;
         }
@@ -593,7 +593,7 @@ export class CombatSystem {
     // stack deliberately, and each is announced separately in the log so a
     // playtest can tell which one is doing the work.
     if (sourceFoe && taken > 0 && activeEffects(state).has('thorns_reflect')) {
-      const back = Math.max(1, Math.round(taken * CFG.itemEffects.thornsPct));
+      const back = scaleMin1(taken, CFG.itemEffects.thornsPct);
       this.ctx.hordes?.hurt?.(sourceFoe, back, false, true);
       this.ctx.views?.addHitFlash?.(sourceFoe.x, sourceFoe.y);
       this.ctx.log?.push('combat', `Thorns bite back for ${back}`, state.clock);
@@ -603,7 +603,7 @@ export class CombatSystem {
     // still exchanges. Reads the weave so a run without it pays only a null check.
     const reflect = this.ctx.weaves?.reflect?.();
     if (reflect && sourceFoe && taken > 0) {
-      const back = Math.max(1, Math.round(taken * reflect.pct));
+      const back = scaleMin1(taken, reflect.pct);
       sourceFoe.hp -= back;
       const ef = sourceFoe as any;
       ef._stunnedUntil = Math.max(ef._stunnedUntil ?? 0, state.clock + reflect.stunSec);
@@ -620,7 +620,7 @@ export class CombatSystem {
     const eAff = (sourceFoe as any)?.elite?.has as Set<string> | undefined;
     if (eAff && taken > 0) {
       if (eAff.has('leeching')) {
-        const back = Math.max(1, Math.round(taken * AFFIX_POWER.leechPct));
+        const back = scaleMin1(taken, AFFIX_POWER.leechPct);
         const healed = Math.min(back, sourceFoe!.maxHp - sourceFoe!.hp);
         if (healed > 0) {
           sourceFoe!.hp += healed;

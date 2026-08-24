@@ -11,6 +11,7 @@ import { ENEMIES } from '../data/enemies';
 import { TILE } from '../world/worldgen';
 import type { Foe } from './hordes';
 import type { WorldBoss } from '../state';
+import { scaleMin1 } from '../rules';
 
 interface Patch {
   tx: number; ty: number;
@@ -113,7 +114,7 @@ export class EchoSystem {
       tx: fromTx, ty: fromTy, x: px, y: py,
       until: state.clock + st.patchSec,
       nextTick: state.clock, tickSec: st.patchTickSec,
-      dmg: Math.max(1, Math.round(st.dmg * mul)),
+      dmg: scaleMin1(st.dmg, mul),
     });
     this.ctx.views?.addBurnPatch?.(px, py, st.patchSec);
     this.ctx.particles?.spawn?.('ember', px, py - 4, 2);
@@ -192,7 +193,7 @@ export class EchoSystem {
         if (Math.hypot(f.x - ox, f.y - oy) > f.def.art.size / 2 + 7) continue;
         const mul = this.roll(def.id);
         this.orbHitAt.set(f.uid, state.clock);
-        this.ctx.hordes.hurt(f, Math.max(1, Math.round(st.dmg * mul)), false, true);
+        this.ctx.hordes.hurt(f, scaleMin1(st.dmg, mul), false, true);
         this.ctx.views?.addHitFlash?.(f.x, f.y);
       }
     }
@@ -209,7 +210,7 @@ export class EchoSystem {
     const r = st.radiusTiles * TILE;
     const t = this.targetsWithin(state.player.x, state.player.y, r);
     if (!t.foes.length && !t.bosses.length) return false;
-    const dmg = Math.max(1, Math.round(st.dmg * this.roll(def.id)));
+    const dmg = scaleMin1(st.dmg, this.roll(def.id));
     this.ctx.views?.addPulseRing?.(state.player.x, state.player.y, r, def.color);
     this.hitAll(t, dmg);
     return true;
@@ -220,7 +221,7 @@ export class EchoSystem {
     const r = st.radiusTiles * TILE;
     const t = this.targetsWithin(state.player.x, state.player.y, r);
     if (!t.foes.length && !t.bosses.length) return false;
-    const dmg = Math.max(1, Math.round(st.dmg * this.roll(def.id)));
+    const dmg = scaleMin1(st.dmg, this.roll(def.id));
     this.ctx.views?.addPulseRing?.(state.player.x, state.player.y, r, def.color);
     for (const f of t.foes) {
       // chill: hordes' march step reads these (bosses shrug the cold off in v1)
@@ -245,7 +246,7 @@ export class EchoSystem {
         .sort((a, b) => Math.hypot(a.x - px, a.y - py) - Math.hypot(b.x - px, b.y - py));
     }
     if (!foes.length && !bosses.length) return false;
-    const dmg = Math.max(1, Math.round(st.dmg * this.roll(def.id)));
+    const dmg = scaleMin1(st.dmg, this.roll(def.id));
     for (let i = 0; i < st.projectiles; i++) {
       if (foes.length) {
         const f = foes[i % foes.length];
@@ -328,7 +329,7 @@ export class EchoSystem {
     const px = state.player.x, py = state.player.y;
     const r = a.radiusTiles * TILE;
     const t = this.targetsWithin(px, py, r);
-    const dmg = Math.max(1, Math.round(a.dmg * this.roll(def.id)));
+    const dmg = scaleMin1(a.dmg, this.roll(def.id));
     this.ctx.views?.addPulseRing?.(px, py, r, def.color);
     this.ctx.views?.addPulseRing?.(px, py, r * 0.62, def.color);
     this.hitAll(t, dmg);
@@ -355,7 +356,7 @@ export class EchoSystem {
     const dx = Math.cos(ang), dy = Math.sin(ang);
     const tx0 = Math.floor(state.player.x / TILE), ty0 = Math.floor(state.player.y / TILE);
     const n = Math.max(1, Math.round(def.active.lineTiles ?? 5));
-    const dmg = Math.max(1, Math.round(a.dmg * this.roll(def.id)));
+    const dmg = scaleMin1(a.dmg, this.roll(def.id));
     const seen = new Set<string>();
     for (let i = 1; i <= n; i++) {
       const tx = Math.round(tx0 + dx * i), ty = Math.round(ty0 + dy * i);
@@ -383,7 +384,7 @@ export class EchoSystem {
     const px = state.player.x, py = state.player.y;
     const r = a.radiusTiles * TILE;
     const t = this.targetsWithin(px, py, r);
-    const dmg = Math.max(1, Math.round(a.dmg * this.roll(def.id)));
+    const dmg = scaleMin1(a.dmg, this.roll(def.id));
     this.ctx.views?.addPulseRing?.(px, py, r, def.color);
     const freeze = def.active.freezeSec ?? 0;
     for (const f of t.foes) {
@@ -406,7 +407,7 @@ export class EchoSystem {
     const px = state.player.x, py = state.player.y;
     const range = a.rangeTiles * TILE;
     const n = Math.max(1, Math.round(a.projectiles));
-    const dmg = Math.max(1, Math.round(a.dmg * this.roll(def.id)));
+    const dmg = scaleMin1(a.dmg, this.roll(def.id));
     const foes = ([...(this.ctx.hordes?.foes ?? [])] as Foe[])
       .filter((f) => f.hp > 0 && Math.hypot(f.x - px, f.y - py) <= range + f.def.art.size / 2)
       .sort((x, y) => Math.hypot(x.x - px, x.y - py) - Math.hypot(y.x - px, y.y - py));
