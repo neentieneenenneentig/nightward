@@ -17,6 +17,7 @@ import { bestRoll } from './loot';
 import { legacyWeight } from '../data/covenants';
 import { gearScore } from '../rules';
 import { CHRONICLE_SERIES, type Quality } from './chronicle';
+import { neutralGameValue } from '../data/network';
 
 export interface WireSeriesBucket {
   min: number;
@@ -61,6 +62,44 @@ export const SCORED_TARGETS = [
   'hordeAggression', 'siltDrag', 'fortune', 'aperture', 'gatherSpeed',
   'xpRate', 'vigorDecay', 'resolveDecay', 'mercy',
 ] as const;
+
+/** SR10 — bumped whenever the assist-index formula changes meaningfully
+ *  enough that a stored `assist.index` should be treated as stale. An old
+ *  record keeps whatever number it was written with — this is a label, not
+ *  a migration — but CATEGORIES' 'adjusted' entry never trusts the stored
+ *  value anyway; it recomputes straight from `wire.values` at rank time
+ *  (see adjustedLegacy below), so a formula bump fixes every existing card
+ *  retroactively instead of only the ones written after it. */
+export const ASSIST_FORMULA = 2;
+
+/** SR10 — a weighted geometric mean, in log space, of how far this run's
+ *  measured mapping outputs sat from their neutral (network-absent)
+ *  values. >1 means the wire net helped this run, <1 means it net hurt,
+ *  1.0 covers both "nothing sampled" and "sampled but it exactly
+ *  cancelled out" — the index alone cannot tell those apart, which is
+ *  exactly why every comparison built on it also carries `n`.
+ *
+ *  Weights are signed (CFG.legacy.assistWeights) so a target that gets
+ *  WORSE as its number goes up (enemyScale, hordeAggression, the decays,
+ *  mercy) still contributes assistance in the right direction — see each
+ *  weight's own comment for the reasoning. A target weighted 0 (dayPhase,
+ *  realmType, damage) is skipped entirely rather than diluting the mean
+ *  with noise from a degenerate or dormant mapping. */
+export function computeAssistIndex(values: Record<string, number>): number {
+  const weights = CFG.legacy.assistWeights;
+  let weightedLogSum = 0;
+  let weightMagnitude = 0;
+  for (const target of SCORED_TARGETS) {
+    const weight = weights[target] ?? 0;
+    if (weight === 0) continue;
+    const value = values[target];
+    const neutral = neutralGameValue(target);
+    if (!(value > 0) || !(neutral > 0)) continue;
+    weightedLogSum += weight * Math.log(value / neutral);
+    weightMagnitude += Math.abs(weight);
+  }
+  return weightMagnitude > 0 ? Math.exp(weightedLogSum / weightMagnitude) : 1.0;
+}
 
 type WireAccumulator = { sum: number; sec: number };
 
@@ -123,7 +162,7 @@ function buildWireRecord(ctx: any): WireRecord {
       jankP95: Number.isFinite(jank) ? Math.round(jank * 100) / 100 : 0,
       reducedMotion: !!vessel.reducedMotion,
     },
-    assist: { index: 0, formula: 1 },
+    assist: { index: computeAssistIndex(values), formula: ASSIST_FORMULA },
   };
 }
 
@@ -572,12 +611,35 @@ export function loadLeaderboard(): RunScorecard[] {
   } catch { return []; }
 }
 
-/** SR9 — a category over the board that already exists: a filter plus a
- *  comparator, which is data, not a new leaderboard. Shipping three rather
- *  than the plan's full six (§6): categories nobody understands are
- *  categories nobody plays, and Time/Purity/Legacy are the three that need
- *  no explanation. Damage (`bestHit`) is shown on the death screen instead
- *  of ranked — a single-run number, not a "best of your history" claim
+/** SR10 — legacyScore with the run's own assist index divided out, so a run
+ *  the wire measurably helped ranks BELOW its raw legacyScore and one it
+ *  measurably hurt ranks above. Recomputed from `wire.values` every call
+ *  rather than trusting the stored `assist.index` — that is what lets an
+ *  old card (formula 1, or no `assist` block at all, pre-SR10) get scored
+ *  under the CURRENT formula instead of reading as permanently 0/unhelped;
+ *  see the plan's own M5 note that the formula is versioned specifically so
+ *  it can be applied retroactively. Falls back to the plain legacyScore
+ *  when there's no wire block to recompute from at all — nothing was ever
+ *  measured on that run, so there is nothing to adjust. */
+export function adjustedLegacy(card: RunScorecard): number {
+  const values = card.wire?.values;
+  if (!values) return card.legacyScore;
+  const index = computeAssistIndex(values);
+  return Number.isFinite(index) && index > 0 ? Math.round(card.legacyScore / index) : card.legacyScore;
+}
+
+/** SR9/SR10 — a category over the board that already exists: a filter plus
+ *  a comparator, which is data, not a new leaderboard. The plan's risk
+ *  table shipped three of five deliberately — "categories nobody
+ *  understands are categories nobody plays", add the rest only if asked
+ *  for — and 'adjusted' is the one being asked for now that assist.index
+ *  is real. 'pact' (covenant-weighted) stays deferred: legacyWeight()
+ *  already folds the covenant multiplier into every `legacy` ranking, and
+ *  nothing has specified what a SEPARATE pact axis would sort or filter
+ *  on — inventing that ordering blind is exactly the "nobody understands
+ *  it" failure the mitigation exists to prevent, not a gap to fill on
+ *  spec. Damage (`bestHit`) is shown on the death screen instead of
+ *  ranked — a single-run number, not a "best of your history" claim
  *  worth its own board. */
 export interface LeaderboardCategory {
   id: string;
@@ -596,6 +658,8 @@ export const CATEGORIES: LeaderboardCategory[] = [
   { id: 'purity', label: 'Lowest Gear, Won',
     filter: (c) => c.outcome === 'reckoned',
     cmp: (a, b) => (a.gearScore ?? Infinity) - (b.gearScore ?? Infinity) },
+  { id: 'adjusted', label: 'Adjusted Legacy', filter: () => true,
+    cmp: (a, b) => adjustedLegacy(b) - adjustedLegacy(a) },
 ];
 
 /** Entries in `cat`'s order, legit runs still ranked before flagged ones

@@ -3211,6 +3211,66 @@ async function testLegacyScoreCalc(nw: any) {
   ok(more > less, `strictly more accomplishments scores strictly higher (${more} > ${less})`);
 }
 
+/** SR10 — the assistance index: computeAssistIndex() is a weighted
+ *  geometric mean of (value/neutral) ratios, and adjustedLegacy() must
+ *  recompute it fresh from wire.values rather than trust a card's stored
+ *  assist.index — that's specifically what lets a pre-SR10 card (no
+ *  `assist` block at all) or an old ASSIST_FORMULA:1 record get scored
+ *  under the CURRENT formula instead of reading as permanently unhelped. */
+async function testAssistIndexAndAdjustedLegacy(nw: any) {
+  void nw;
+  const { computeAssistIndex, adjustedLegacy, ASSIST_FORMULA, SCORED_TARGETS, CATEGORIES } = await import('./scoreboard');
+  const { neutralGameValue } = await import('../data/network');
+
+  const neutralValues: Record<string, number> = {};
+  for (const target of SCORED_TARGETS) neutralValues[target] = neutralGameValue(target);
+  const neutralIndex = computeAssistIndex(neutralValues);
+  ok(Math.abs(neutralIndex - 1.0) < 1e-6, `all targets at their neutral value → assist index exactly 1.0 (got ${neutralIndex})`);
+
+  // goldRate is weighted +1 (higher genuinely helps) — pushing it above
+  // neutral must push the index above 1.0.
+  const goldHelped = { ...neutralValues, goldRate: neutralValues.goldRate * 1.5 };
+  ok(computeAssistIndex(goldHelped) > 1.0, 'above-neutral goldRate (positive weight) raises the assist index');
+
+  // enemyScale is weighted -1 (higher is HARDER) — pushing it above neutral
+  // must LOWER the index, the opposite direction from a positive weight.
+  const scaleHurt = { ...neutralValues, enemyScale: neutralValues.enemyScale * 1.5 };
+  ok(computeAssistIndex(scaleHurt) < 1.0, 'above-neutral enemyScale (negative weight) lowers the assist index — inverted correctly');
+
+  // dayPhase/realmType/damage are weighted 0 — wildly moving them must not
+  // budge the index at all, proving the degenerate/dormant targets are
+  // actually excluded rather than just quietly near-zero contributors.
+  const zeroWeighted = { ...neutralValues, dayPhase: 0.9, realmType: 2, damage: 999 };
+  eq(computeAssistIndex(zeroWeighted), neutralIndex, 'zero-weighted targets (dayPhase/realmType/damage) never move the index');
+
+  // adjustedLegacy = legacyScore / assistIndex, recomputed live.
+  const helpedCard: any = { legacyScore: 1000, wire: { values: goldHelped } };
+  const expected = Math.round(1000 / computeAssistIndex(goldHelped));
+  eq(adjustedLegacy(helpedCard), expected, 'adjustedLegacy divides legacyScore by the freshly-computed assist index');
+
+  // No wire block at all → nothing to adjust, falls back to the raw score.
+  const wireless: any = { legacyScore: 777 };
+  eq(adjustedLegacy(wireless), 777, 'adjustedLegacy falls back to legacyScore when there is no wire block to recompute from');
+
+  // The whole point: a card stuck on the OLD formula (or with a stale/zeroed
+  // stored assist.index) still gets scored correctly, because adjustedLegacy
+  // never reads card.wire.assist at all.
+  const staleFormulaCard: any = { legacyScore: 1000, wire: { values: goldHelped, assist: { index: 0, formula: 1 } } };
+  eq(adjustedLegacy(staleFormulaCard), expected,
+    'a card stuck on an old assist.formula still gets the CURRENT formula applied retroactively');
+
+  ok(ASSIST_FORMULA === 2, `ASSIST_FORMULA bumped to 2 (got ${ASSIST_FORMULA})`);
+
+  const adjustedCat = (CATEGORIES as any[]).find((c) => c.id === 'adjusted');
+  ok(adjustedCat !== undefined, "CATEGORIES carries the 'adjusted' axis");
+  const worse: any = { legacyScore: 100, legit: true, wire: { values: neutralValues } };
+  const better: any = { legacyScore: 100, legit: true, wire: { values: goldHelped } };
+  // Same raw legacyScore; the one the wire measurably helped MORE should
+  // rank as a LOWER adjusted score — adjustedLegacy is legacyScore divided
+  // by a >1 index, so it shrinks the more help was measured.
+  ok(adjustedCat.cmp(worse, better) < 0, 'cmp ranks the LESS-helped equal-score run ahead — adjusted rewards doing it yourself');
+}
+
 // =========================================================================
 // N3: Living Network — fire params with network multipliers
 // =========================================================================
@@ -7190,6 +7250,7 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Wire absent not zeroed — old cards read as unmeasured, compareWire degrades', fn: testWireAbsentNotZeroedOnOldCard },
   { name: 'compareWire sufficient gating — below wireBaselineMinRuns reads insufficient', fn: testCompareWireSufficientGating },
   { name: 'Quota degrade — forced quota strips wire before shrinking the board', fn: testQuotaDegradeStripsWireBeforeShrinking },
+  { name: 'Assist index & adjustedLegacy — signed weights, retroactive recompute', fn: testAssistIndexAndAdjustedLegacy },
   // ---- L1: The Lifespan ----
   { name: 'Lifespan aging — real-time pace, neglect accelerates, never slows', fn: testLifespanAging },
   { name: 'Lifespan old-age death — distinct ending, gameOverCause set', fn: testLifespanOldAgeDeath },

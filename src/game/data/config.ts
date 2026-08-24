@@ -100,6 +100,41 @@ export const CFG = {
       yearLived: 4,      // per year past startAge when the run ended
       oldAgeBonus: 1000, // finishing the dream beats being cut short
     },
+    // SR10: the assistance index. Signed weight per SCORED_TARGETS entry —
+    // the direction "help" points for that target, magnitude how much it
+    // should move the geometric mean. 0 for a target this run never actually
+    // asked to score: dayPhase/realmType are degenerate (their transform is
+    // literally the identity function, so "neutral" is an arbitrary fallback
+    // value, not a meaningful baseline) and damage is a declared-clamps-only
+    // row whose transform is a hardcoded constant (the real roll logic lives
+    // in NetworkSystem.rollDamageMul(), never runs through this table at
+    // all) — weighting any of the three would score noise as assistance.
+    // mercy is inverted relative to every other weight. Its transform SHRINKS
+    // telegraphSlackPx (the enemy's forgiveness window) as measured jank
+    // rises — "real jank shrinks the slack: your dodges land" (see the
+    // mapping's own comment in data/network.ts) — so a mercy READING below
+    // neutral 1.0 is the moment the game is compensating a struggling
+    // machine by making itself easier. A positive weight would read that
+    // dip as "hurt" (value fell) when it is actually "helped" (slack
+    // shrank in the player's favor); the negative sign is what flips a
+    // below-neutral ratio into a positive contribution to the index.
+    assistWeights: {
+      simSpeed: 1,
+      goldRate: 1,
+      enemyScale: -1,     // higher enemyScale is harder, not easier
+      dayPhase: 0,        // degenerate mapping (identity transform)
+      realmType: 0,       // degenerate mapping (identity transform)
+      damage: 0,          // dormant — transform is a hardcoded constant
+      hordeAggression: -1, // higher aggression is harder, not easier
+      siltDrag: 1,        // sits ≤1.0; closer to 1.0 is LESS drag, i.e. more help
+      fortune: 1,
+      aperture: 1,
+      gatherSpeed: 1,
+      xpRate: 1,
+      vigorDecay: -1,     // higher decay is harder, not easier
+      resolveDecay: -1,   // higher decay is harder, not easier
+      mercy: -1,          // compensator: more mercy needed means LESS help
+    } as Record<string, number>,
   },
 
   time: {

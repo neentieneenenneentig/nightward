@@ -795,6 +795,29 @@ export const NET_METRICS: NetMapping[] = [
   },
 ];
 
+/** SR10 — the assistance index needs "what would this target read with no
+ *  network help at all", and that is exactly what a mapping's own fallback
+ *  already encodes (pillar 5: the fallback IS the neutral value). Mirrors
+ *  getGameValue()'s clamp pattern exactly, substituting the NetMapping's
+ *  static fallback for a live snapshot read and an empty/zeroed context for
+ *  the real one — so a transform that only reads its scalar argument (the
+ *  common case) is unaffected, and one that also branches on ctx.snap
+ *  (Fortune's deepLive check, XP Rate's distinctRegionsProbed) sees the
+ *  "nothing measured yet" state, which is the same neutral condition. */
+export function neutralGameValue(target: string): number {
+  const gm = NET_GAME_MAP.find((m) => m.target === target);
+  if (!gm) return 1.0;
+  const nm = NET_METRICS.find((m) => m.key === gm.netKey);
+  const raw = nm ? nm.fallback : 0;
+  try {
+    const ctx: NetMappingContext = { snap: {} as NetworkSnapshot, distinctRegionsProbed: 0 };
+    const val = gm.transform(raw, ctx);
+    return Math.max(gm.min, Math.min(gm.max, val));
+  } catch {
+    return 1.0;
+  }
+}
+
 /** NAT class → a number a transform can band. See the `gate` sensor for why
  *  `blocked` sits at the top and `unknown` sits with `cone`. */
 export const NAT_GRADE: Record<string, number> = {
