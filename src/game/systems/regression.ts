@@ -3302,6 +3302,35 @@ async function testAssistIndexAndAdjustedLegacy(nw: any) {
   ok(adjustedCat.cmp(worse, better) < 0, 'cmp ranks the LESS-helped equal-score run ahead — adjusted rewards doing it yourself');
 }
 
+/** SR3 — bestBurst10s is a rolling SIM-time window, not a running total and
+ *  not real time. A fresh, isolated ScoreboardSystem for the same reason
+ *  testWireTimeWeightedMeanOfConstant uses one: driving nw.sys.scoreboard
+ *  directly would pollute the live run's own burst tracking. state.clock is
+ *  advanced by hand between hits rather than via updateReal(), since
+ *  onDamageDealt reads ctx.state.clock directly and has no dt of its own. */
+async function testBestBurst10sWindow(nw: any) {
+  const { ScoreboardSystem } = await import('./scoreboard');
+  const freshCtx = { ...nw.ctx, state: { ...nw.ctx.state, gameOver: false, clock: 0 } };
+  const fresh = new (ScoreboardSystem as any)(freshCtx);
+
+  freshCtx.state.clock = 0;
+  fresh.onDamageDealt(10);
+  freshCtx.state.clock = 4;
+  fresh.onDamageDealt(20);
+  freshCtx.state.clock = 8;
+  fresh.onDamageDealt(15);
+  eq(fresh.bestBurst10s, 45, 'three hits inside one 10s window sum together (10+20+15)');
+
+  // This hit lands at t=21 — everything before t=11 (t=0, t=4, t=8) has aged
+  // out of the trailing-10s window, so the window is just this one hit.
+  freshCtx.state.clock = 21;
+  fresh.onDamageDealt(5);
+  eq(fresh.burstWindow.length, 1, 'hits older than 10 sim-seconds age out of the window');
+  eq(fresh.bestBurst10s, 45, 'the peak 45 from the earlier window is remembered even after it ages out');
+
+  eq(fresh.bestHit, 20, 'bestHit still tracks the single biggest swing independently of the burst window');
+}
+
 // =========================================================================
 // N3: Living Network — fire params with network multipliers
 // =========================================================================
@@ -7283,6 +7312,7 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'compareWire sufficient gating — below wireBaselineMinRuns reads insufficient', fn: testCompareWireSufficientGating },
   { name: 'Quota degrade — forced quota strips wire before shrinking the board', fn: testQuotaDegradeStripsWireBeforeShrinking },
   { name: 'Assist index & adjustedLegacy — signed weights, retroactive recompute', fn: testAssistIndexAndAdjustedLegacy },
+  { name: 'bestBurst10s — sim-time rolling window sums and ages out correctly', fn: testBestBurst10sWindow },
   // ---- L1: The Lifespan ----
   { name: 'Lifespan aging — real-time pace, neglect accelerates, never slows', fn: testLifespanAging },
   { name: 'Lifespan old-age death — distinct ending, gameOverCause set', fn: testLifespanOldAgeDeath },

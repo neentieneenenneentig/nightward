@@ -1691,6 +1691,7 @@ export class UI {
           ${card.bossDamageDealt != null ? `<div><span style="color:var(--metal-hi)">Damage to the lord:</span> ${card.bossDamageDealt}</div>` : ''}
           ${card.reckoningSec != null ? `<div><span style="color:var(--metal-hi)">Reckoning lasted:</span> ${card.reckoningSec}s</div>` : ''}
           <div><span style="color:var(--metal-hi)">Biggest hit:</span> ${card.bestHit ?? 0}</div>
+          ${card.bestBurst10s != null ? `<div><span style="color:var(--metal-hi)">Best 10s burst:</span> ${card.bestBurst10s}</div>` : ''}
         </div>` : ''}`;
     }
     // SR3: four endings, none of them "you lose" — Q2's cost is that a

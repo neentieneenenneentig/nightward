@@ -224,6 +224,14 @@ export interface RunScorecard {
   reckoningSec?: number;
   /** Biggest single melee hit landed this run, win or lose. */
   bestHit?: number;
+  /** SR3 §3 damage axis's other half: the most damage landed in any
+   *  rolling 10-SIM-second window (a burst spread across several swings
+   *  reads differently than one big hit). Sim time, not real time, for the
+   *  same reason reckoningSec uses state.clock — the window has to mean
+   *  "10 seconds of the fight," not "10 seconds of wall clock," or a
+   *  network hitch that stalls sim time would shrink the window's content
+   *  for reasons that have nothing to do with how hard the player hit. */
+  bestBurst10s?: number;
   /** Damage dealt to the summoned lord specifically — what an Outlasted
    *  ending is scored on, and what makes a loss still a number to beat. */
   bossDamageDealt?: number;
@@ -356,6 +364,11 @@ export class ScoreboardSystem {
    *  the swing that hit hardest, and melee is what a player is aiming when
    *  they read "biggest hit" as a thing to beat. */
   bestHit = 0;
+  /** SR3 §3 — the damage axis's other half. A ring of (clock, dmg) pairs
+   *  trimmed to the trailing 10 sim-seconds on every hit; cheap because a
+   *  hit lands at most a few times a second, never at frame rate. */
+  bestBurst10s = 0;
+  private burstWindow: { t: number; dmg: number }[] = [];
   private realLastMs = 0;
   private wireAcc: Record<string, WireAccumulator> = {};
 
@@ -403,7 +416,15 @@ export class ScoreboardSystem {
   }
 
   /** SR3 — call with the actual (clamped) damage a melee hit landed. */
-  onDamageDealt(dmg: number) { if (dmg > this.bestHit) this.bestHit = dmg; }
+  onDamageDealt(dmg: number) {
+    if (dmg > this.bestHit) this.bestHit = dmg;
+    const t = this.ctx.state?.clock ?? 0;
+    this.burstWindow.push({ t, dmg });
+    while (this.burstWindow.length && this.burstWindow[0].t < t - 10) this.burstWindow.shift();
+    let sum = 0;
+    for (const e of this.burstWindow) sum += e.dmg;
+    if (sum > this.bestBurst10s) this.bestBurst10s = sum;
+  }
 
   /** Call on building placed. */
   onBuild() { this.buildingsBuilt++; }
@@ -472,6 +493,7 @@ export class ScoreboardSystem {
       gearScore: gearScore(state),
       reckoningSec: state.reckoning ? Math.round(state.clock - state.reckoning.startClock) : undefined,
       bestHit: this.bestHit,
+      bestBurst10s: this.bestBurst10s,
       bossDamageDealt: state.reckoning?.damageDealt,
       seed: state.seed,
       engineVersion: ENGINE_VERSION,
