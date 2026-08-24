@@ -10,6 +10,7 @@ import { TILE, WorldGen, type MegaCluster } from './worldgen';
 import type { WorldCore } from './core';
 
 const CHUNK = 16; // keep in sync with chunkmap.ts / WorldCore
+const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
 export class World {
   private buildingIndex = new Map<string, Building>();
@@ -111,24 +112,43 @@ export class World {
     }
   }
 
-  /** Building placement rule (see config.build). Also prevents placing on the player.
-   *  C2: buildings can be placed within maxDistFromHall of the hall OR any waystone.
-   *  Waystones themselves must be within range of the hall or another waystone. */
-  canPlaceAt(tx: number, ty: number, isHall: boolean): boolean {
-    if (!this.passable(tx, ty)) return false;
-    if (!MATERIALS[this.materialAt(tx, ty)].buildable) return false;
+  /** Building placement rule (see config.build), as the specific reason the
+   *  spot is blocked — or null if it's valid. C2: buildings can be placed
+   *  within maxDistFromHall of the hall OR any waystone; waystones themselves
+   *  must be within range of the hall or another waystone.
+   *
+   *  Single source of truth for both canPlaceAt() (the boolean gate the ghost
+   *  and commit() use) and build.ts's placement toast (the human-readable
+   *  reason) — those were two independently hand-written checks that had
+   *  already drifted: the toast was missing the "not the tile you're
+   *  standing on" rule below, so targeting your own tile fell through to a
+   *  generic "Can't build there" instead of naming the actual blocker,
+   *  exactly the failure build.ts's own placeError() comment says it exists
+   *  to prevent. Checks are ordered so the toast names the FIRST real
+   *  blocker rather than the least specific one still true. */
+  placementBlocker(tx: number, ty: number, isHall: boolean): string | null {
+    if (this.buildingAt(tx, ty)) return "Something's already built there";
+    const f = this.featureAt(tx, ty);
+    const megaBlock = this.megaClusterAt(tx, ty); // mega squares always block
+    if (f && (f.blocking || megaBlock) && !this.isDepleted(tx, ty)) return `Blocked by ${f.name} — clear it first`;
+    const mat = MATERIALS[this.materialAt(tx, ty)];
+    if (!mat.passable || !mat.buildable) return `Can't build on ${cap(mat.name)}`;
     // don't let the player box themselves in
     const px = Math.floor(this.state.player.x / TILE);
     const py = Math.floor(this.state.player.y / TILE);
-    if (tx === px && ty === py) return false;
+    if (tx === px && ty === py) return "Can't build on yourself";
+    if (isHall) return null;         // the first hall roots wherever you like
     const h = this.state.buildings.find((b) => b.type === 'hall');
-    if (isHall) return true;         // the first hall roots wherever you like
-    if (!h) return false;            // everything else needs a hall first
-
+    if (!h) return 'Build the Hearthstone first — everything roots to it';
     // C2: check distance to hall OR any waystone (including other waystones for new waystones)
-    const maxDist = CFG.build.maxDistFromHall;
-    if (this.inRangeOfAnchor(tx, ty, maxDist)) return true;
-    return false;
+    if (!this.inRangeOfAnchor(tx, ty, CFG.build.maxDistFromHall))
+      return `Too far from a Hearthstone or Waystone (max ${CFG.build.maxDistFromHall} tiles)`;
+    return null;
+  }
+
+  /** Building placement rule (see config.build). Also prevents placing on the player. */
+  canPlaceAt(tx: number, ty: number, isHall: boolean): boolean {
+    return this.placementBlocker(tx, ty, isHall) === null;
   }
 
   /** C2: true if (tx,ty) is within `range` tiles of the hall or any waystone.

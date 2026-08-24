@@ -271,6 +271,37 @@ async function testBuildingDuplicateUnique(nw: any) {
   }
 }
 
+/** world.canPlaceAt (boolean) and build.ts's placeError (human-readable) had
+ *  drifted: placeError was missing the "not on the tile you're standing on"
+ *  rule canPlaceAt carried, so targeting your own tile fell through to a
+ *  generic "Can't build there" instead of naming the actual blocker — the
+ *  exact failure placeError's own comment says it exists to prevent. Both
+ *  now read world.placementBlocker(), which carries the rule once. */
+async function testPlacementBlockerUnified(nw: any) {
+  const { state, world } = nw;
+  if (!state.buildings.some((b: any) => b.type === 'hall')) {
+    ok(true, 'no hall yet — skipping placementBlocker test'); return;
+  }
+
+  const px = Math.floor(state.player.x / 32);
+  const py = Math.floor(state.player.y / 32);
+
+  const blocked = world.placementBlocker(px, py, false);
+  ok(blocked !== null, 'placementBlocker blocks the tile the player is standing on');
+  eq(blocked, "Can't build on yourself", `names the actual blocker, not a generic fallback (got "${blocked}")`);
+  eq(world.canPlaceAt(px, py, false), false, 'canPlaceAt agrees — same underlying check, still blocked');
+
+  // A genuinely clear nearby tile still reports no blocker — the merge
+  // didn't make the check any stricter than the two it replaced.
+  let foundValid = false;
+  for (let r = 1; r <= 4 && !foundValid; r++) {
+    for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r]] as [number, number][]) {
+      if (world.placementBlocker(px + dx, py + dy, false) === null) { foundValid = true; break; }
+    }
+  }
+  ok(foundValid, 'a genuinely clear nearby tile still reports no blocker (null)');
+}
+
 async function testCombatAttack(nw: any) {
   const { sys } = nw;
 
@@ -7179,6 +7210,7 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Crafting (no materials)', fn: testCraftingNoMaterials },
   { name: 'Building flow', fn: testBuildingFlow },
   { name: 'Building duplicate unique', fn: testBuildingDuplicateUnique },
+  { name: 'Placement blocker unified — canPlaceAt/placeError agree, own-tile named', fn: testPlacementBlockerUnified },
   { name: 'Combat attack state machine', fn: testCombatAttack },
   { name: 'Day/night cycle', fn: testDayNightCycle },
   { name: 'Player damage', fn: testPlayerDamage },
