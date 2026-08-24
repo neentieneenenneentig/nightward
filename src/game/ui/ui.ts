@@ -1450,7 +1450,7 @@ export class UI {
         const minimum = CFG.sr.wireBaselineMinRuns;
         wireSec.innerHTML += comparisons.map((entry) => {
           const label = entry.metric === 'simSpeed' ? 'pace' : entry.metric === 'goldRate' ? 'gold rate' : 'damage';
-          if (entry.n < minimum) return `<div class="nw-lb-wire"><b>${label}</b> ${entry.now.toFixed(2)} · not enough history (${entry.n}/${minimum})</div>`;
+          if (!entry.sufficient) return `<div class="nw-lb-wire"><b>${label}</b> ${entry.now.toFixed(2)} · not enough history (${entry.n}/${minimum})</div>`;
           const sign = entry.deltaPct >= 0 ? '+' : '';
           return `<div class="nw-lb-wire"><b>${label}</b> ${entry.now.toFixed(2)} · ${sign}${entry.deltaPct.toFixed(0)}% vs median (n=${entry.n})</div>`;
         }).join('');

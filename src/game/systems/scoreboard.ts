@@ -214,6 +214,11 @@ export interface WireComparison {
   deltaPct: number;
   percentile: number;
   n: number;
+  /** SR10 — n has reached CFG.sr.wireBaselineMinRuns. Computed here rather
+   *  than left for each caller to re-check against the config constant, so
+   *  a UI can render "not enough history yet" off this field instead of
+   *  duplicating the threshold comparison (see ui.ts's leaderboard panel). */
+  sufficient: boolean;
 }
 
 function median(values: number[]): number {
@@ -243,6 +248,7 @@ export function compareWire(card: RunScorecard, history: RunScorecard[]): WireCo
       deltaPct,
       percentile: past.length ? (below / past.length) * 100 : 0,
       n: past.length,
+      sufficient: past.length >= CFG.sr.wireBaselineMinRuns,
     });
   }
   return result;
@@ -449,13 +455,31 @@ export class ScoreboardSystem {
     // its own merits above, so shrinking the CAP (not hand-picking which
     // record to cut) never specifically sacrifices the run that's saving —
     // it drops from the bottom of the ranking, same as a normal prune, just
-    // a harder one. Once the wire block exists, stripping it from OLDER
-    // records is a cheaper rung to try before this one — see the plan's
-    // own risk table — but today's records carry nothing that large to
-    // strip, so the count is the only lever there is.
-    for (const cap of [MAX_ENTRIES, 25, 10, 3, 1]) {
+    // a harder one.
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify(entries.slice(0, MAX_ENTRIES)));
+      return card;
+    } catch { /* over quota even at the full cap — try the cheaper rung next */ }
+
+    // SR10 — the wire block is the cheaper rung the comment above used to
+    // promise before it existed: strip it from the OLDEST half of the
+    // board BY DATE (not by rank — a legacy-topping run from last week
+    // keeps its wire over yesterday's #40) rather than shrinking the
+    // record count at all. `card` is always the newest date on the board,
+    // so this can never strip the run that's saving right now. A stripped
+    // record keeps every other field and still ranks; it just stops
+    // carrying the ~800-byte block that made it expensive.
+    const byDate = [...entries].sort((a, b) => a.date.localeCompare(b.date));
+    const oldestHalf = new Set(byDate.slice(0, Math.floor(byDate.length / 2)));
+    const wireStripped = entries.map((e) => (oldestHalf.has(e) && e.wire ? { ...e, wire: undefined } : e));
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify(wireStripped.slice(0, MAX_ENTRIES)));
+      return card;
+    } catch { /* still over quota — fall through to shrinking the count */ }
+
+    for (const cap of [25, 10, 3, 1]) {
       try {
-        localStorage.setItem(LS_KEY, JSON.stringify(entries.slice(0, cap)));
+        localStorage.setItem(LS_KEY, JSON.stringify(wireStripped.slice(0, cap)));
         return card;
       } catch { /* try the next, smaller cap */ }
     }

@@ -2886,6 +2886,197 @@ async function testLeaderboardUI(nw: any) {
   ok(true, 'leaderboard UI test completed');
 }
 
+/** SR9 — the actual enforcement mechanism behind S-speedrun.md's risk-table
+ *  promise ("an explicit allowlist enforced by a test, not a comment"). A
+ *  live WireRecord, JSON-serialized exactly as it would ship on a saved
+ *  card, must not carry any of the fields the plan names as identity
+ *  disclosure (§ risk table, and the table at S-speedrun.md ~line
+ *  1248-1252): the player's own address, ISP, geo (colo/country/timezone/
+ *  coordinates), VPN-detector evidence, or a raw GPU string. Checked
+ *  case-insensitively because the codebase itself carries the same concept
+ *  under two casings (`timeZone` in vessel.ts, `timezone` on
+ *  NetworkSnapshot) — a leak via either spelling is the same disclosure. */
+async function testWirePrivacyAllowlist(nw: any) {
+  const scoreboard = nw.sys.scoreboard;
+  if (!scoreboard) { ok(true, 'no scoreboard system — skipping privacy allowlist test'); return; }
+  const card = scoreboard.snapshot();
+  ok(!!card.wire, 'live snapshot carries a wire block to check');
+  const json = JSON.stringify(card.wire).toLowerCase();
+
+  const forbidden = [
+    'publicip', 'srflxip', 'isp', 'colo', 'country', 'timezone',
+    'latitude', 'longitude', 'maskevidence', 'enumeratedevices',
+  ];
+  for (const word of forbidden) {
+    ok(!json.includes(word), `wire record does not leak '${word}'`);
+  }
+
+  // Raw GPU renderer/vendor strings are fingerprinting surface — gpuTier is
+  // the allowlisted summary. A regex for actual vendor/model tokens rather
+  // than bare 'gpu', which is a substring of the legitimate field name
+  // 'gpuTier' itself and would false-positive on every single record.
+  const gpuRendererPattern = /nvidia|geforce|radeon|quadro|rtx\s?\d|gtx\s?\d|intel\(r\)|iris\s?(xe|plus)?|apple\s?m\d|adreno|mali-|powervr/i;
+  ok(!gpuRendererPattern.test(json), 'wire record does not leak a raw GPU renderer string');
+
+  ok(true, 'wire privacy allowlist test completed');
+}
+
+/** SR10 — a typo'd SCORED_TARGETS entry is invisible at runtime: NetworkSystem
+ *  .getGameValue() returns the neutral 1.0 for any unknown target rather than
+ *  throwing, so a scored-but-unmapped target silently reports "no effect"
+ *  forever instead of failing loudly. */
+async function testScoredTargetsResolveToRealMappings(nw: any) {
+  const { SCORED_TARGETS } = await import('./scoreboard');
+  const { NET_GAME_MAP } = await import('../data/network');
+  for (const target of SCORED_TARGETS) {
+    const gm = (NET_GAME_MAP as any[]).find((m) => m.target === target);
+    ok(gm !== undefined, `SCORED_TARGETS entry '${target}' resolves to a real NET_GAME_MAP target`);
+  }
+}
+
+/** SR9 — sampleWire() accumulates sum/sec rather than storing a running
+ *  series specifically so a constant reading averages back out to itself
+ *  regardless of how unevenly the samples land in real time. Proven with a
+ *  FRESH, isolated ScoreboardSystem sharing the real state/net/sounding
+ *  read-only — driving nw.sys.scoreboard directly would feed its
+ *  realLastMs a synthetic timestamp and poison dt for the rest of this
+ *  Gauntlet run (the same hazard testLifespanAging's own comment documents
+ *  for LifespanSystem). Deliberately uneven dt steps below: a bug that
+ *  averaged by SAMPLE COUNT instead of by TIME would still pass an
+ *  evenly-spaced test and only fail on exactly this. */
+async function testWireTimeWeightedMeanOfConstant(nw: any) {
+  const { ScoreboardSystem } = await import('./scoreboard');
+  const CONST = 1.23;
+  const fakeNet = { getGameValue: (_t: string) => CONST, snap: {}, currentBiome: undefined };
+  const freshCtx = { ...nw.ctx, net: fakeNet, state: { ...nw.ctx.state, gameOver: false } };
+  const fresh = new (ScoreboardSystem as any)(freshCtx);
+
+  let t = 1_000_000;
+  fresh.updateReal(t);              // primes realLastMs — no sample yet
+  t += 300;  fresh.updateReal(t);   // uneven dt steps on purpose
+  t += 1700; fresh.updateReal(t);
+  t += 50;   fresh.updateReal(t);
+
+  const card = fresh.snapshot();
+  const value = card.wire?.values?.['simSpeed'];
+  ok(value !== undefined, 'wire record carries a sampled simSpeed value');
+  ok(Math.abs((value as number) - CONST) < 0.001,
+    `time-weighted mean of a constant (${CONST}) equals that constant (got ${value})`);
+}
+
+/** SR9 — RunScorecard.wire is optional precisely so a card written before
+ *  the wire block existed (or any run where nothing measurable sampled)
+ *  reads as "not recorded", never as a WireRecord full of zeroes — the same
+ *  carve-out the type's own doc comment claims for pact/trophy/outcome. A
+ *  zeroed wire would lie (e.g. simSpeed: 0 reads as "the game ran at 0×
+ *  speed", not "unmeasured"). compareWire must degrade the same way. */
+async function testWireAbsentNotZeroedOnOldCard(nw: any) {
+  const { loadLeaderboard, compareWire } = await import('./scoreboard');
+  try { localStorage.removeItem('nw.leaderboard'); } catch {}
+  try {
+    const v2raw = [{ v: 2, date: new Date().toISOString(), connectionAge: 10, dominantRealm: 'Unknown',
+      riftsSurvived: 0, peakRtt: 10, lowestDownlink: 5, nightsSurvived: 1, buildingsBuilt: 0,
+      enemiesKilled: 0, bossesSlain: 0, goldHoarded: 0, finalRealm: 'Unknown', loomPointsEarned: 0,
+      age: 20, causeOfDeath: 'unknown', legit: true, legacyScore: 100 }];
+    localStorage.setItem('nw.leaderboard', JSON.stringify(v2raw));
+    const [card] = loadLeaderboard();
+    ok(card !== undefined, 'v2 record loads');
+    ok(card.wire === undefined, "a v2 card's wire reads as absent (undefined), not a zeroed WireRecord");
+
+    const comparisons = compareWire(card, [card]);
+    eq(comparisons.length, 0, 'compareWire on a wireless card returns no comparisons, not zeroed ones');
+  } finally {
+    try { localStorage.removeItem('nw.leaderboard'); } catch {}
+  }
+}
+
+/** SR10 — the "not enough history" gate now lives on WireComparison itself
+ *  (`sufficient`) rather than being recomputed against CFG.sr.wireBaselineMinRuns
+ *  at every call site — ui.ts's leaderboard panel consumes this field
+ *  instead of re-deriving it. */
+async function testCompareWireSufficientGating(nw: any) {
+  const { compareWire } = await import('./scoreboard');
+  const { CFG } = await import('../data/config');
+  const minimum = CFG.sr.wireBaselineMinRuns;
+
+  const makeCard = (value: number, date: string): any => ({
+    v: 3, date, wire: { v: 1, series: {}, values: { simSpeed: value },
+      shape: {} as any, vessel: {} as any, assist: { index: 1, formula: 2 } },
+  });
+
+  const current = makeCard(1.0, new Date().toISOString());
+  const belowMin = Array.from({ length: minimum - 1 }, (_, i) => makeCard(1.0 + i * 0.01, new Date(2020, 0, i + 1).toISOString()));
+  const atMin = Array.from({ length: minimum }, (_, i) => makeCard(1.0 + i * 0.01, new Date(2020, 0, i + 1).toISOString()));
+
+  const shortEntry = compareWire(current, belowMin).find((c: any) => c.metric === 'simSpeed');
+  const fullEntry = compareWire(current, atMin).find((c: any) => c.metric === 'simSpeed');
+  ok(shortEntry !== undefined && shortEntry.sufficient === false,
+    `below ${minimum} history (n=${shortEntry?.n}): sufficient is false`);
+  ok(fullEntry !== undefined && fullEntry.sufficient === true,
+    `at ${minimum} history (n=${fullEntry?.n}): sufficient is true`);
+}
+
+/** SR9 — the leaderboard's own risk-table mitigation: a forced quota failure
+ *  must degrade (strip wire from the oldest half by date) rather than drop
+ *  the run that triggered it OR shrink the record count while a cheaper
+ *  option is still available. localStorage.setItem is monkey-patched to
+ *  simulate quota pressure by REJECTING on record content (how many
+ *  surviving records still carry a wire block) rather than by guessing a
+ *  byte threshold, so the assertion doesn't depend on WireRecord's exact
+ *  serialized size. Restored in `finally` regardless of outcome. */
+async function testQuotaDegradeStripsWireBeforeShrinking(nw: any) {
+  const scoreboard = nw.sys.scoreboard;
+  if (!scoreboard) { ok(true, 'no scoreboard system — skipping quota-degrade test'); return; }
+  const { loadLeaderboard } = await import('./scoreboard');
+  try { localStorage.removeItem('nw.leaderboard'); } catch {}
+
+  const bigWire = {
+    v: 1, series: {}, values: { simSpeed: 1, goldRate: 1 },
+    shape: { effectiveType: '4g', saveData: false, deepLive: false, natClass: 'unknown', udpV6: false,
+      protoDominant: 'h2', pact: 'quiet', soundings: 0 },
+    vessel: { gpuTier: 'unknown', cores: 4, pressureMean: 0, jankP95: 0, reducedMotion: false },
+    assist: { index: 1, formula: 2 },
+  };
+  // 10 old, dated records — all carrying wire, all cheaper to strip than to drop.
+  const seeded = Array.from({ length: 10 }, (_, i) => ({
+    v: 3, date: new Date(2020, 0, i + 1).toISOString(), connectionAge: 0, dominantRealm: 'Unknown',
+    riftsSurvived: 0, peakRtt: 0, lowestDownlink: 0, nightsSurvived: 0, buildingsBuilt: 0,
+    enemiesKilled: 0, bossesSlain: 0, goldHoarded: 0, finalRealm: 'Unknown', loomPointsEarned: 0,
+    age: 20, causeOfDeath: 'unknown', legit: true, legacyScore: 100 - i, wire: bigWire,
+  }));
+  localStorage.setItem('nw.leaderboard', JSON.stringify(seeded));
+
+  const realSetItem = Storage.prototype.setItem;
+  let attempts = 0;
+  // 11 records total once the new run saves. Stripping the oldest half
+  // (floor(11/2) = 5) leaves exactly 6 still carrying wire — reject
+  // anything with MORE than 6, so only the stripped attempt can succeed.
+  Storage.prototype.setItem = function (this: Storage, key: string, value: string) {
+    attempts++;
+    if (key === 'nw.leaderboard') {
+      const withWire = (JSON.parse(value) as any[]).filter((e) => !!e.wire).length;
+      if (withWire > 6) throw new DOMException('forced quota', 'QuotaExceededError');
+    }
+    return realSetItem.call(this, key, value);
+  };
+  let card: any;
+  try {
+    card = scoreboard.saveToLeaderboard();
+  } finally {
+    Storage.prototype.setItem = realSetItem;
+  }
+
+  const entries = loadLeaderboard();
+  eq(attempts, 2, 'exactly one failed (unstripped) attempt then one successful (stripped) attempt');
+  eq(entries.length, seeded.length + 1, 'degrade preserved every record instead of dropping any');
+  const strippedCount = entries.filter((e: any) => !e.wire).length;
+  eq(strippedCount, 5, 'degrade stripped wire from exactly the oldest half by date');
+  const savedEntry = entries.find((e: any) => e.date === card.date);
+  ok(!!savedEntry?.wire, "the run that just saved keeps its own wire block — it's never in the oldest half by date");
+
+  try { localStorage.removeItem('nw.leaderboard'); } catch {}
+}
+
 // =========================================================================
 // L1: The Lifespan — hard run-length clock, natural-causes death, legacy score
 // =========================================================================
@@ -6992,6 +7183,13 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Leaderboard persist — save, load, formatAge, v1→v2 migration', fn: testLeaderboardPersist },
   { name: 'Leaderboard UI — getLiveStats, panel renders', fn: testLeaderboardUI },
   { name: 'Leaderboard legit ranking — god-mode run never outranks a legit one', fn: testLeaderboardLegitRanking },
+  // ---- SR9/SR10: The Wire record — privacy allowlist, assist index ----
+  { name: 'Wire privacy allowlist — no identity fields survive JSON.stringify', fn: testWirePrivacyAllowlist },
+  { name: 'SCORED_TARGETS resolve — every entry has a real NET_GAME_MAP row', fn: testScoredTargetsResolveToRealMappings },
+  { name: 'Wire time-weighted mean — a constant reading averages back to itself', fn: testWireTimeWeightedMeanOfConstant },
+  { name: 'Wire absent not zeroed — old cards read as unmeasured, compareWire degrades', fn: testWireAbsentNotZeroedOnOldCard },
+  { name: 'compareWire sufficient gating — below wireBaselineMinRuns reads insufficient', fn: testCompareWireSufficientGating },
+  { name: 'Quota degrade — forced quota strips wire before shrinking the board', fn: testQuotaDegradeStripsWireBeforeShrinking },
   // ---- L1: The Lifespan ----
   { name: 'Lifespan aging — real-time pace, neglect accelerates, never slows', fn: testLifespanAging },
   { name: 'Lifespan old-age death — distinct ending, gameOverCause set', fn: testLifespanOldAgeDeath },
