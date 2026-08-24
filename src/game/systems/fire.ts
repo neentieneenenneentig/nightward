@@ -3,7 +3,7 @@
 // ignition, controlled-burn charcoal, entity burn damage, and campfires as eternal ignition points.
 import { CFG } from '../data/config';
 import { MATERIALS } from '../data/materials';
-import { addXp, invAdd } from '../rules';
+import { addXp, invAdd, nearestWithinReach } from '../rules';
 import { tileKey, type Building } from '../state';
 import { TILE } from '../world/worldgen';
 import { levelUpFlourish } from './flourish';
@@ -25,24 +25,24 @@ export class FireSystem {
     this.ignite(target.tx, target.ty);
   }
 
-  /** Nearest tile within reach that's flammable, unlit, and still has fuel — same 5x5-tile scan
-   * shape as GatherSystem.findTarget. */
+  /** Nearest tile within reach that's flammable, unlit, and still has fuel — same
+   * nearestWithinReach() scan GatherSystem.findTarget and HubSystem.near() use. */
   private findIgniteTarget(): { tx: number; ty: number } | null {
     const { state, world, worldCore } = this.ctx;
     const { x, y } = state.player;
     const ptx = Math.floor(x / TILE), pty = Math.floor(y / TILE);
     const reachPx = CFG.fire.reachTiles * TILE;
-    let best: { tx: number; ty: number } | null = null, bestD = Infinity;
+    const candidates: { tx: number; ty: number }[] = [];
     for (let ty = pty - 2; ty <= pty + 2; ty++) {
       for (let tx = ptx - 2; tx <= ptx + 2; tx++) {
         const mat = MATERIALS[world.materialAt(tx, ty)];
         if (mat.flammable <= 0 || worldCore.isBurning(tx, ty) || worldCore.fuelAt(tx, ty) <= 0) continue;
         if (worldCore.wetAt(tx, ty) >= CFG.fire.wetExtinguish) continue; // too wet to catch — don't offer it
-        const d = Math.hypot((tx + 0.5) * TILE - x, (ty + 0.5) * TILE - y);
-        if (d <= reachPx && d < bestD) { best = { tx, ty }; bestD = d; }
+        candidates.push({ tx, ty });
       }
     }
-    return best;
+    return nearestWithinReach(candidates,
+      (c) => Math.hypot((c.tx + 0.5) * TILE - x, (c.ty + 0.5) * TILE - y), reachPx);
   }
 
   /** Direct action — also used by the console/acceptance harness. */

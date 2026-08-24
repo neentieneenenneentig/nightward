@@ -4,7 +4,7 @@ import { CFG } from '../data/config';
 import { itemName } from '../data/items';
 import { SKILLS } from '../data/skills';
 import type { FeatureDef } from '../data/features';
-import { addXp, awardSoulXp, bestTool, rollLoot, scaleMin1, skillLevel, soulStat } from '../rules';
+import { addXp, awardSoulXp, bestTool, nearestWithinReach, rollLoot, scaleMin1, skillLevel, soulStat } from '../rules';
 import { BUILDINGS } from '../data/buildings';
 import type { SoulSlot } from '../data/soulgear';
 import { TILE, type MegaCluster } from '../world/worldgen';
@@ -47,19 +47,15 @@ export class GatherSystem {
     const { x, y } = state.player;
     const ptx = Math.floor(x / TILE), pty = Math.floor(y / TILE);
     const reachPx = CFG.gather.reachTiles * TILE;
-    let best: GatherTarget | null = null, bestD = Infinity;
+    const candidates: GatherTarget[] = [];
     for (let ty = pty - 2; ty <= pty + 2; ty++) {
       for (let tx = ptx - 2; tx <= ptx + 2; tx++) {
         const def = world.activeFeatureAt(tx, ty);
-        if (!def) continue;
-        const d = Math.hypot((tx + 0.5) * TILE - x, (ty + 0.5) * TILE - y);
-        if (d <= reachPx && d < bestD) {
-          best = { tx, ty, def };
-          bestD = d;
-        }
+        if (def) candidates.push({ tx, ty, def });
       }
     }
-    this.target = best;
+    this.target = nearestWithinReach(candidates,
+      (c) => Math.hypot((c.tx + 0.5) * TILE - x, (c.ty + 0.5) * TILE - y), reachPx);
   }
 
   /** Player pressed interact. */

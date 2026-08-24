@@ -19,6 +19,20 @@ export function scaleMin1(base: number, mul: number): number {
   return Math.max(1, Math.round(base * mul));
 }
 
+/** The nearest candidate within `reachPx` (by `distFn`), or null if none
+ *  qualify. Shared shape behind every "closest interactable tile in a local
+ *  radius" scan — GatherSystem.findTarget, FireSystem's ignite-target
+ *  search, HubSystem.near() — which all differed only in how they built the
+ *  candidate list, never in how they picked the winner. */
+export function nearestWithinReach<T>(candidates: Iterable<T>, distFn: (item: T) => number, reachPx: number): T | null {
+  let best: T | null = null, bestD = Infinity;
+  for (const item of candidates) {
+    const d = distFn(item);
+    if (d <= reachPx && d < bestD) { best = item; bestD = d; }
+  }
+  return best;
+}
+
 // ------------------------------------------------------------ inventory ----
 
 export function invAdd(state: GameState, id: string, n: number) {

@@ -22,7 +22,7 @@ import { LOOT_BANDS, rarityDef, rarityIndex } from '../data/rarity';
 import { affixSlotOf, fortuneFrom, reforgeAffix, rollItem } from './loot';
 import type { AffixSlot } from '../data/affixes';
 import type { Stack } from '../types';
-import { carriedGearIds, invAdd, invCount, invHasAll, invTakeAll } from '../rules';
+import { carriedGearIds, invAdd, invCount, invHasAll, invTakeAll, nearestWithinReach } from '../rules';
 import { TILE } from '../world/worldgen';
 import { Sound } from '../../engine/audio';
 
@@ -83,17 +83,17 @@ export class HubSystem {
   near(): { kind: HubKind; def: BuildingDef; b: any } | null {
     const { x, y } = this.state.player;
     const reach = CFG.a6.reachTiles * TILE;
-    let best: any = null, bestD = Infinity;
+    const candidates: { kind: HubKind; def: BuildingDef; b: any }[] = [];
     for (const b of this.state.buildings) {
       const def = BUILDINGS.find((d) => d.id === b.type);
       if (!def?.hub) continue;
       // Each counter answers to its own flag. The Sounding Stone is N4.5's row
       // and must not be gated off by A6's revert — and vice versa.
       if (def.hub === 'sounding' ? !CFG.n45.enabled : !CFG.a6.enabled) continue;
-      const d = Math.hypot((b.tx + 0.5) * TILE - x, (b.ty + 0.5) * TILE - y);
-      if (d <= reach && d < bestD) { best = { kind: def.hub, def, b }; bestD = d; }
+      candidates.push({ kind: def.hub, def, b });
     }
-    return best;
+    return nearestWithinReach(candidates,
+      (c) => Math.hypot((c.b.tx + 0.5) * TILE - x, (c.b.ty + 0.5) * TILE - y), reach);
   }
 
   /** Whether a hub of this kind is standing at all — for the panel, which stays
