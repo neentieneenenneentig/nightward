@@ -593,8 +593,7 @@ export class UI {
     if (this.panel === 'craft') head.appendChild(this.craftTabs());
     const x = el('div', 'nw-x'); x.innerHTML = '&times;';
     x.tabIndex = 0; x.setAttribute('role', 'button'); x.setAttribute('aria-label', 'Close panel');
-    x.addEventListener('click', () => this.close());
-    x.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.close(); } });
+    bindActivate(x, () => this.close());
     head.appendChild(el('div', 'nw-spacer'));
     head.appendChild(x);
     panel.appendChild(head);
@@ -620,10 +619,7 @@ export class UI {
       tab.textContent = t[0].toUpperCase() + t.slice(1);
       tab.tabIndex = 0; tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-selected', String(t === this.craftTab));
-      tab.addEventListener('click', () => { this.craftTab = t; this.renderPanel(); });
-      tab.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.craftTab = t; this.renderPanel(); }
-      });
+      bindActivate(tab, () => { this.craftTab = t; this.renderPanel(); });
       tabs.appendChild(tab);
     }
     return tabs;
@@ -670,8 +666,7 @@ export class UI {
       chip.tabIndex = 0; chip.setAttribute('role', 'tab');
       chip.setAttribute('aria-selected', String(s.slot === this.hubSlot));
       const pick = () => { this.hubSlot = s.slot; this.renderPanel(); };
-      chip.addEventListener('click', pick);
-      chip.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      bindActivate(chip, pick);
       chips.appendChild(chip);
     }
     body.appendChild(chips);
@@ -930,16 +925,13 @@ export class UI {
       cell.tabIndex = 0; cell.setAttribute('role', 'button');
       if (slot) {
         cell.setAttribute('aria-label', `${worn ? 'Unequip' : 'Equip'} ${itemName(id)}`);
-        cell.addEventListener('click', () => this.hooks.equip(id));
-        cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.hooks.equip(id); } });
+        bindActivate(cell, () => this.hooks.equip(id));
       } else if (usable) {
         cell.setAttribute('aria-label', `Use ${itemName(id)}`);
-        cell.addEventListener('click', () => this.hooks.useItem(id));
-        cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.hooks.useItem(id); } });
+        bindActivate(cell, () => this.hooks.useItem(id));
       } else if (feedable) {
         cell.setAttribute('aria-label', `Feed ${itemName(id)} to soul gear`);
-        cell.addEventListener('click', () => this.showFeedPicker(id, p.inv[id]));
-        cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.showFeedPicker(id, p.inv[id]); } });
+        bindActivate(cell, () => this.showFeedPicker(id, p.inv[id]));
       }
       grid.appendChild(cell);
     }
@@ -986,7 +978,7 @@ export class UI {
       row.className = 'nw-feed-row' + (isAffinity ? ' affinity' : '') + (isOpposed ? ' opposed' : '');
       row.innerHTML = `<span>${glyph} ${label}</span><span class="nw-feed-lv">soul lv ${lv}</span>${affLabel ? `<span class="nw-feed-aff">${affLabel}</span>` : ''}`;
       row.tabIndex = 0; row.setAttribute('role', 'button');
-      row.addEventListener('click', () => {
+      bindActivate(row, () => {
         const count = Math.min(available, 99); // feed all available, max 99 at once
         const result = this.hooks.feedSoul(itemId, count, slot);
         if (result) {
@@ -998,15 +990,13 @@ export class UI {
           this.rebuildPanel();
         }
       });
-      row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.click(); } });
       picker.appendChild(row);
     }
 
     const cancel = el('div', 'nw-feed-cancel');
     cancel.textContent = 'Cancel';
     cancel.tabIndex = 0; cancel.setAttribute('role', 'button');
-    cancel.addEventListener('click', () => picker.remove());
-    cancel.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); picker.remove(); } });
+    bindActivate(cancel, () => picker.remove());
     picker.appendChild(cancel);
 
     this.panelHost.appendChild(picker);
@@ -1030,8 +1020,7 @@ export class UI {
       cell.tabIndex = 0; cell.setAttribute('role', 'button');
       cell.setAttribute('aria-label', `Unequip ${def.name}`);
       cell.title = 'Enter/Space to unequip';
-      cell.addEventListener('click', () => this.hooks.equip(id));
-      cell.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.hooks.equip(id); } });
+      bindActivate(cell, () => this.hooks.equip(id));
     } else {
       cell.innerHTML = `<div class="ph">${glyph}</div><div class="meta"><b>${label}</b><span class="off">empty</span></div>`;
     }
@@ -1166,14 +1155,8 @@ export class UI {
         if (can) {
           row.tabIndex = 0;
           row.setAttribute('role', 'button');
-          row.addEventListener('click', () => {
+          bindActivate(row, () => {
             if (this.hooks.allocateLoom(n.id)) this.renderPanel();
-          });
-          row.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              if (this.hooks.allocateLoom(n.id)) this.renderPanel();
-            }
           });
         }
         col.appendChild(row);
@@ -1477,8 +1460,7 @@ export class UI {
       t.setAttribute('role', 'tab');
       t.setAttribute('aria-selected', String(c.id === this.lbCategory));
       const pick = () => { this.lbCategory = c.id; this.renderPanel(); };
-      t.addEventListener('click', pick);
-      t.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      bindActivate(t, pick);
       tabs.appendChild(t);
     }
     histSec.appendChild(tabs);
@@ -1586,10 +1568,7 @@ export class UI {
         <div class="nm">${node.name}${node.keystone ? '<span class="ks">keystone</span>' : ''}</div>
         <div class="ef">${node.keystone ? (node.keystoneDesc ?? '') : effectSummary(node)}</div>
         <div class="rk">${rank}/${node.maxRank}</div>`;
-      card.addEventListener('click', (e) => { e.stopPropagation(); this.pickDraftCard(id); });
-      card.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.pickDraftCard(id); }
-      });
+      bindActivate(card, (e) => { e.stopPropagation(); this.pickDraftCard(id); });
       grid.appendChild(card);
     });
     over.appendChild(grid);
@@ -1768,6 +1747,19 @@ function el(tag: string, cls: string): HTMLElement {
   return e;
 }
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+
+/** Wires both a click AND an Enter/Space keydown to the same handler — the
+ *  click-or-activate-key pattern every keyboard-reachable custom control
+ *  (tabIndex=0, role="button"/"tab") in this file needs, retyped by hand at
+ *  a dozen call sites before this. `fn` receives the triggering event so a
+ *  handler that needs to stopPropagation() on the click still can. */
+function bindActivate(node: HTMLElement, fn: (e: Event) => void) {
+  node.addEventListener('click', fn);
+  node.addEventListener('keydown', (e) => {
+    const ke = e as KeyboardEvent;
+    if (ke.key === 'Enter' || ke.key === ' ') { ke.preventDefault(); fn(e); }
+  });
+}
 
 // ---- N2: network log abbreviations & styling ----
 /** Short pixel-style labels for each log kind. */
