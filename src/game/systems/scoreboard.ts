@@ -16,8 +16,10 @@ import { allRolled } from '../data/items';
 import { bestRoll } from './loot';
 import { legacyWeight } from '../data/covenants';
 import { gearScore } from '../rules';
-import { CHRONICLE_SERIES, type Quality } from './chronicle';
+import { CHRONICLE_SERIES, type Quality, type SeriesMeta } from './chronicle';
 import { neutralGameValue } from '../data/network';
+import { actFor } from './acts';
+import { TILE } from '../world/worldgen';
 
 export interface WireSeriesBucket {
   min: number;
@@ -62,6 +64,20 @@ export const SCORED_TARGETS = [
   'hordeAggression', 'siltDrag', 'fortune', 'aperture', 'gatherSpeed',
   'xpRate', 'vigorDecay', 'resolveDecay', 'mercy',
 ] as const;
+
+/** SR1 §9 M2 — "what does a fast player actually do in minutes 0–5?" Q3
+ *  kept the Gathering on the grounds that it is the identity of the game;
+ *  that verdict deserves evidence instead of assumption before the act gets
+ *  defended or compressed. Each key here is pushed to the Chronicle exactly
+ *  ONCE per run, at the moment it becomes true — read with `.last`, not
+ *  `.plot()`, off a real run's exported chronicle. main.ts registers these
+ *  the same way it registers CHRONICLE_SERIES. */
+export const M2_SERIES: SeriesMeta[] = [
+  { key: 'm2.firstCraftSec', label: 'First Craft', unit: 's' },
+  { key: 'm2.firstBuildSec', label: 'First Build', unit: 's' },
+  { key: 'm2.firstNightHallHp', label: 'Hall HP After Night 1', unit: 'hp' },
+  { key: 'm2.tilesWalkedGathering', label: 'Tiles Walked (Gathering)', unit: 'tiles' },
+];
 
 /** SR10 — bumped whenever the assist-index formula changes meaningfully
  *  enough that a stored `assist.index` should be treated as stale. An old
@@ -371,8 +387,25 @@ export class ScoreboardSystem {
   private burstWindow: { t: number; dmg: number }[] = [];
   private realLastMs = 0;
   private wireAcc: Record<string, WireAccumulator> = {};
+  // M2 — one-shot guards so a metric measured once (or a metric accumulated
+  // across the whole Gathering) is pushed to the Chronicle exactly once,
+  // not re-pushed on every subsequent craft/build/frame.
+  private m2CraftPushed = false;
+  private m2BuildPushed = false;
+  private m2TilesPushed = false;
+  private m2TilesWalked = 0;
+  private m2LastPx?: number;
+  private m2LastPy?: number;
 
   constructor(private ctx: any) {}
+
+  /** M2 — a one-shot Chronicle push, tagged 'measured' since these are exact
+   *  reads of game state, not estimates. A no-op if the chronicle isn't
+   *  wired (a bare ScoreboardSystem built for a test) — instrumentation
+   *  must never be load-bearing for the run it's watching. */
+  private pushM2(key: string, value: number) {
+    this.ctx.net?.chronicle?.push(key, this.ctx.elapsedRealSec?.() ?? 0, value, 'measured');
+  }
 
   /** Called every frame with real-world dt (not sim dt). */
   updateReal(realMs: number) {
@@ -392,6 +425,28 @@ export class ScoreboardSystem {
     if (rtt > this.peakRtt) this.peakRtt = rtt;
     const dl = this.ctx.net?.snap?.downlink ?? Infinity;
     if (dl < this.lowestDownlink) this.lowestDownlink = dl;
+
+    this.updateM2Tiles();
+  }
+
+  /** M2 — distance walked (in tiles) while the act curve reads 'gathering'.
+   *  Pushed once, the moment the act moves on (or at death, whichever comes
+   *  first — see snapshot()) rather than sampled continuously: nobody reads
+   *  a running total mid-run, only the final figure after. */
+  private updateM2Tiles() {
+    if (!CFG.sr.enabled || this.m2TilesPushed) return;
+    const p = this.ctx.state.player;
+    if (!p) return;
+    const gathering = actFor(this.ctx.elapsedRealSec?.() ?? 0) === 'gathering';
+    if (this.m2LastPx !== undefined && gathering) {
+      this.m2TilesWalked += Math.hypot(p.x - this.m2LastPx, p.y - (this.m2LastPy ?? p.y)) / TILE;
+    }
+    this.m2LastPx = p.x;
+    this.m2LastPy = p.y;
+    if (!gathering) {
+      this.pushM2('m2.tilesWalkedGathering', Math.round(this.m2TilesWalked));
+      this.m2TilesPushed = true;
+    }
   }
 
   /** Keep consequences as time-weighted means; a death-time read would lie. */
@@ -427,7 +482,22 @@ export class ScoreboardSystem {
   }
 
   /** Call on building placed. */
-  onBuild() { this.buildingsBuilt++; }
+  onBuild() {
+    this.buildingsBuilt++;
+    if (!this.m2BuildPushed) { this.m2BuildPushed = true; this.pushM2('m2.firstBuildSec', this.ctx.elapsedRealSec?.() ?? 0); }
+  }
+
+  /** M2 — call on a successful craft(). */
+  onCraft() {
+    if (!this.m2CraftPushed) { this.m2CraftPushed = true; this.pushM2('m2.firstCraftSec', this.ctx.elapsedRealSec?.() ?? 0); }
+  }
+
+  /** M2 — call once, the moment the first night's dawn credits
+   *  state.nightsSurvived === 1. `hp` is the hall's HP at that instant, or
+   *  undefined if the hall had already fallen (nothing to measure). */
+  onFirstNightHp(hp: number | undefined) {
+    if (hp !== undefined) this.pushM2('m2.firstNightHallHp', Math.round(hp));
+  }
 
   /** Call on rift/transition. */
   onRift() { this.riftsSurvived++; }
@@ -449,6 +519,10 @@ export class ScoreboardSystem {
   /** Build the scorecard snapshot at death. */
   snapshot(): RunScorecard {
     const { state } = this.ctx;
+    // M2 — a run that dies inside the Gathering never sees the act change,
+    // so updateM2Tiles()'s own push never fires. Flush whatever accumulated
+    // so far rather than losing the reading entirely.
+    if (!this.m2TilesPushed) { this.m2TilesPushed = true; this.pushM2('m2.tilesWalkedGathering', Math.round(this.m2TilesWalked)); }
     const loomPointsEarned = this.loomPointsEarned();
     const age = Math.floor(state.player?.age ?? CFG.lifespan.startAge);
     const causeOfDeath: RunScorecard['causeOfDeath'] = state.gameOverCause ?? 'unknown';

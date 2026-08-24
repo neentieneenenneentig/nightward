@@ -60,6 +60,7 @@ export function craft(state: GameState, recipeId: string, toast: (m: string, k?:
   Sound.play('craft');
   toast(`Crafted ${itemName(outId)}${r.out.n > 1 ? ' ×' + r.out.n : ''} (+${r.xp}xp)`, 'good');
   log?.push('craft', `Crafted ${itemName(outId)}${r.out.n > 1 ? ' ×' + r.out.n : ''}`, state.clock);
+  ctx?.scoreboard?.onCraft?.(); // M2: first-craft-time instrumentation
   // M3.5: Action-gated beacon echo — crafting pings artisan beacons
   net?.probeAction?.('craft');
   // M3.6: Passive flux snapshot — connection stability at craft time, zero HTTP

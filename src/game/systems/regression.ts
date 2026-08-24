@@ -3331,6 +3331,71 @@ async function testBestBurst10sWindow(nw: any) {
   eq(fresh.bestHit, 20, 'bestHit still tracks the single biggest swing independently of the burst window');
 }
 
+/** M2 (SR1 §9) — "what does a fast player actually do in minutes 0–5?" Each
+ *  metric is a guarded one-shot push to the Chronicle. Fresh, isolated
+ *  ScoreboardSystem for the same reason testWireTimeWeightedMeanOfConstant
+ *  uses one, with a fake chronicle that just records what it was pushed
+ *  rather than a real ChronicleStore (these are one-shot values, not a
+ *  series worth exercising the bucket-compaction machinery for). */
+async function testM2Instrumentation(nw: any) {
+  const { ScoreboardSystem } = await import('./scoreboard');
+  const { CFG } = await import('../data/config');
+  const { TILE } = await import('../world/worldgen');
+  const pushed: { key: string; t: number; v: number }[] = [];
+  const fakeChronicle = { push: (key: string, t: number, v: number) => pushed.push({ key, t, v }) };
+  let realSec = 0;
+  const freshCtx = {
+    ...nw.ctx,
+    net: { ...nw.ctx.net, chronicle: fakeChronicle },
+    state: { ...nw.ctx.state, gameOver: false, player: { x: 0, y: 0 }, buildings: [] },
+    elapsedRealSec: () => realSec,
+  };
+  const fresh = new (ScoreboardSystem as any)(freshCtx);
+
+  // First craft pushes once; a second craft must not push again.
+  fresh.onCraft();
+  fresh.onCraft();
+  eq(pushed.filter((p) => p.key === 'm2.firstCraftSec').length, 1,
+    'onCraft pushes m2.firstCraftSec exactly once, even across repeated crafts');
+
+  // First build pushes once, alongside the existing buildingsBuilt counter
+  // continuing to increment on every call — instrumentation must not change
+  // the stat it's riding alongside.
+  fresh.onBuild();
+  fresh.onBuild();
+  eq(fresh.buildingsBuilt, 2, 'onBuild still increments buildingsBuilt on every call');
+  eq(pushed.filter((p) => p.key === 'm2.firstBuildSec').length, 1, 'onBuild pushes m2.firstBuildSec exactly once');
+
+  // A fallen hall (hp undefined) must never read as "survived at 0 HP".
+  fresh.onFirstNightHp(undefined);
+  eq(pushed.filter((p) => p.key === 'm2.firstNightHallHp').length, 0, 'undefined hall HP pushes nothing');
+  fresh.onFirstNightHp(340);
+  const hpPush = pushed.find((p) => p.key === 'm2.firstNightHallHp');
+  ok(hpPush !== undefined && hpPush.v === 340, `a real hall HP (${hpPush?.v}) pushes m2.firstNightHallHp`);
+
+  // Tiles walked: only accumulates while the act reads 'gathering', and
+  // pushes exactly once, at the act boundary. Three updateReal() calls:
+  // the first only primes realLastMs (updateReal's own early-return), the
+  // second captures the player's STARTING position with no delta yet, the
+  // third moves the player and is the first call that can accumulate.
+  freshCtx.state.player.x = 0;
+  fresh.updateReal(1000);
+  fresh.updateReal(1050);
+  realSec = 1;
+  freshCtx.state.player.x = 5 * TILE;
+  fresh.updateReal(1100);
+  eq(pushed.filter((p) => p.key === 'm2.tilesWalkedGathering').length, 0, 'no push yet — still inside the Gathering act');
+
+  realSec = CFG.sr.actCurve[0].untilSec + 1; // past the Gathering act's window
+  freshCtx.state.player.x = 999 * TILE; // a huge move AFTER leaving Gathering — must not count
+  fresh.updateReal(1200);
+  const tilePush = pushed.find((p) => p.key === 'm2.tilesWalkedGathering');
+  ok(tilePush !== undefined && tilePush.v === 5, `tiles walked counts only the Gathering-act move (5), not the post-act one (got ${tilePush?.v})`);
+
+  fresh.updateReal(1300);
+  eq(pushed.filter((p) => p.key === 'm2.tilesWalkedGathering').length, 1, 'tiles-walked pushes exactly once, at the act boundary');
+}
+
 // =========================================================================
 // N3: Living Network — fire params with network multipliers
 // =========================================================================
@@ -7313,6 +7378,7 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   { name: 'Quota degrade — forced quota strips wire before shrinking the board', fn: testQuotaDegradeStripsWireBeforeShrinking },
   { name: 'Assist index & adjustedLegacy — signed weights, retroactive recompute', fn: testAssistIndexAndAdjustedLegacy },
   { name: 'bestBurst10s — sim-time rolling window sums and ages out correctly', fn: testBestBurst10sWindow },
+  { name: 'M2 instrumentation — one-shot Chronicle pushes for craft/build/night-hp/tiles', fn: testM2Instrumentation },
   // ---- L1: The Lifespan ----
   { name: 'Lifespan aging — real-time pace, neglect accelerates, never slows', fn: testLifespanAging },
   { name: 'Lifespan old-age death — distinct ending, gameOverCause set', fn: testLifespanOldAgeDeath },

@@ -38,7 +38,7 @@ import { LoomSystem } from './game/systems/loom';
 import { WeaveSystem } from './game/systems/weaves';
 import { HubSystem } from './game/systems/hub';
 import { SoundingSystem, soundingReward } from './game/systems/sounding';
-import { ScoreboardSystem } from './game/systems/scoreboard';
+import { ScoreboardSystem, M2_SERIES } from './game/systems/scoreboard';
 import { SoulFeedSystem } from './game/systems/soulfeed';
 import { MaterialEffectSystem } from './game/systems/materialEffects';
 import { craft } from './game/systems/crafting';
@@ -325,6 +325,7 @@ async function boot() {
   // live here are five tab modules now.
   const chronicle = new ChronicleStore();
   for (const m of CHRONICLE_SERIES) chronicle.define(m);
+  for (const m of M2_SERIES) chronicle.define(m); // SR1 §9 M2 — see scoreboard.ts
   net.chronicle = chronicle;
 
   // N4.3: Omens — the Chronicle's detected step changes stop being Feed lines
@@ -814,6 +815,13 @@ async function boot() {
         net.computeNightRttStability();
         vitals.onSurviveNight();
         loom.onNightSurvived();  // C3: nights survived = Loom points
+        // M2: the hall's HP the moment the FIRST night's dawn credits.
+        // Undefined (not zero) if the hall had already fallen, so a fallen
+        // hall never reads as "survived the night at 0 HP".
+        if (state.nightsSurvived === 1) {
+          const hall = state.buildings.find((b: any) => b.type === 'hall');
+          scoreboard.onFirstNightHp(hall?.hp);
+        }
         // Action-gated beacon echo — surviving the night pings the southern beacons
         net.probeAction('survive_night');
         // Passive pulse drift — dawn pulse minus dusk pulse, zero HTTP
