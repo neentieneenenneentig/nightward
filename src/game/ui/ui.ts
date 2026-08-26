@@ -1479,7 +1479,21 @@ export class UI {
         rank++;
         const row = el('div', 'nw-lb-row' + (e.legit ? '' : ' cheat'));
         const rankIcon = !e.legit ? '&#128128;' : rank === 1 ? '&#129351;' : rank === 2 ? '&#129352;' : rank === 3 ? '&#129353;' : `#${rank}`;
-        const causeIcon = e.causeOfDeath === 'old_age' ? '&#9203;' : e.causeOfDeath === 'hall_fallen' ? '&#128128;' : '?';
+        // SR3: a won run has no cause of death — nothing killed you — so the
+        // pre-SR3 read fell through to '?' / "unknown causes" and labelled
+        // every victory a mystery. Outcome first, causeOfDeath for the records
+        // that predate it.
+        const causeIcon = e.outcome === 'reckoned' ? '&#128081;'
+          : e.causeOfDeath === 'old_age' ? '&#9203;'
+          : e.causeOfDeath === 'hall_fallen' ? '&#128128;'
+          : e.outcome === 'fallen' ? '&#128128;'
+          : '?';
+        const causeTitle = e.outcome === 'reckoned' ? 'won the Reckoning'
+          : e.outcome === 'outlasted' ? 'outlasted the lord — the clock ran out'
+          : e.outcome === 'fallen' ? 'struck down by the lord'
+          : e.causeOfDeath === 'old_age' ? 'died of natural causes'
+          : e.causeOfDeath === 'hall_fallen' ? 'died of the hall falling'
+          : 'died of unknown causes';
         // The headline number changes with the tab — a Purity board that
         // still leads with Legacy Score is a Legacy board with extra steps.
         const headline = cat.id === 'time' ? `${(e.reckoningSec ?? 0).toFixed(1)}s`
@@ -1488,7 +1502,7 @@ export class UI {
         row.innerHTML = `
           <span class="nw-lb-rank">${rankIcon}</span>
           <span class="nw-lb-score">${headline}</span>
-          <span class="nw-lb-age" title="died of ${e.causeOfDeath === 'old_age' ? 'natural causes' : e.causeOfDeath === 'hall_fallen' ? 'the hall falling' : 'unknown causes'}">${causeIcon} age ${e.age}</span>
+          <span class="nw-lb-age" title="${causeTitle}">${causeIcon} age ${e.age}</span>
           <span class="nw-lb-detail">${e.nightsSurvived}n &middot; ${e.enemiesKilled}k &middot; ${e.bossesSlain}b &middot; ${e.goldHoarded}g</span>
           <span class="nw-lb-realm">${e.dominantRealm}${e.legit ? '' : ' &middot; <i>god mode</i>'}</span>`
           + (e.trophy
@@ -1518,6 +1532,22 @@ export class UI {
   }
 
   isDrafting() { return this.draftEl !== null; }
+
+  /** Dismiss every modal surface at once: panel, draft, pause.
+   *
+   *  The Gauntlet's per-test cleanup hook. runAll() had no isolation of its
+   *  own, so any test that granted a Loom point left the SR2 draft standing —
+   *  and because isOpen() counts a draft as open and main.ts zeroes the
+   *  movement axis while anything is open, every LATER movement test measured
+   *  0.0px and reported it as a terrain problem.
+   *
+   *  Public because the suite needs it. closeDraft() stays private: nothing in
+   *  the GAME may dismiss an offer without picking from it. */
+  closeOverlays() {
+    this.close();
+    this.closeDraft();
+    this.closePause();
+  }
   /** The offer currently on screen, in card order — onKey's 1/2/3 reads this
    *  rather than duplicating openDraft()'s pick logic. */
   private draftIds: string[] = [];

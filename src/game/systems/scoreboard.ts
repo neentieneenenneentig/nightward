@@ -341,6 +341,10 @@ export interface LegacyInputs {
   goldHoarded: number;
   age: number;
   causeOfDeath: 'old_age' | 'hall_fallen' | 'unknown';
+  /** SR3 — the run's terminal shape, when it has one. Optional: pre-SR3
+   *  records and CFG.sr.enabled=false runs have no outcome and fall back to
+   *  causeOfDeath, which is exactly what it meant for them. */
+  outcome?: 'reckoned' | 'outlasted' | 'fallen' | 'unmet';
 }
 
 /** L1: a single transparent number for "which run was best." Weights live in
@@ -356,7 +360,15 @@ export function computeLegacyScore(inp: LegacyInputs): number {
     + inp.loomPointsEarned * w.loomPoint
     + inp.goldHoarded * w.gold
     + yearsLived * w.yearLived;
-  if (inp.causeOfDeath === 'old_age') score += w.oldAgeBonus;
+  // Outcome first, causeOfDeath second. The Reckoning moved where "you won"
+  // lives; causeOfDeath still answers the older, narrower question of what
+  // killed you, and on a won run the honest answer is "nothing did" — which is
+  // precisely why reading the win off it used to pay the winner nothing.
+  // 'unmet' (the years ran out before the lord was ever summoned) keeps the
+  // old-age bonus it earned under the pre-SR3 rules — it is the same ending
+  // that term was written for.
+  if (inp.outcome === 'reckoned') score += w.reckonedBonus;
+  else if (inp.outcome === 'outlasted' || inp.causeOfDeath === 'old_age') score += w.oldAgeBonus;
   return Math.round(score);
 }
 
@@ -536,6 +548,7 @@ export class ScoreboardSystem {
       goldHoarded: state.player?.gold ?? 0,
       age,
       causeOfDeath,
+      outcome: state.outcome ?? undefined,
     }) * legacyWeight(state.nightsAtCovenant ?? {}, state.covenant ?? 'quiet'));
     return {
       v: 3,

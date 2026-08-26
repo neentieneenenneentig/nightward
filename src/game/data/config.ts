@@ -99,6 +99,16 @@ export const CFG = {
       gold: 0.5,
       yearLived: 4,      // per year past startAge when the run ended
       oldAgeBonus: 1000, // finishing the dream beats being cut short
+      // SR3 fix: oldAgeBonus was authored when outliving the Lifespan WAS the
+      // win. Once the Reckoning became the ending, 'reckoned' stopped matching
+      // causeOfDeath === 'old_age' and silently forfeited the 1000 — so killing
+      // the lord scored 700 BELOW letting the clock run out on it (the 1000
+      // forfeited against the +300 bossKill a lord pays). The win needs its own
+      // term, and it has to clear the best losing line by more than noise:
+      // outlasting pays 1000, plus up to one more night (500) and the last
+      // years (~80 at 4/yr) that an early kill gives up. 2500 leaves a
+      // Reckoning won ~900 ahead even in that worst case.
+      reckonedBonus: 2500,
     },
     // SR10: the assistance index. Signed weight per SCORED_TARGETS entry —
     // the direction "help" points for that target, magnitude how much it
