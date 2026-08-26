@@ -85,13 +85,41 @@ export interface RarityDef {
 // The ladder relation is now pinned by testRarityLadder() in systems/regression.ts
 // so a future statMul edit cannot quietly collapse it again.
 
+// ---- the 2026-08-26 regression, and the older bug it exposed ---------------
+//
+// That pin did its job. testRarityLadderIsWorthClimbing() went red: Riftborn's
+// delivered lead over Sovereign had fallen from +6.2% to +2.0%, under the +3%
+// floor the block above argued for. Two causes, and only one of them was new.
+//
+// The new one is SR2. "Elemental damage as an affix any weapon or ring can
+// roll" put four rows worth 190 weight into the prefix/suffix pool, and every
+// one of them is a FLAT add ([2,5] / [2,6]) rather than a multiplier.
+// mergeDef() applies statMul to the base and affix ADDS AFTERWARDS, so a flat
+// +4 is worth exactly +4 on a Sovereign and +4 on a Riftborn. Loading the pool
+// with adds compresses every ratio in this table at once — the part of a roll
+// that varies stopped being multiplicative, and the tiers converged.
+//
+// The old one had been latent since A1: **Riftborn rolled FEWER beneficial
+// affixes than Sovereign.** rollItem() spends one of a cursed tier's slots on
+// the curse (`count--`), so [5, 5] delivered four good affixes against
+// Sovereign's [4, 5] mean of 4.5. Rule 2 says Riftborn always costs something;
+// it never said the cost was a whole rung of the ladder. The deficit was
+// survivable while the pool was mostly multiplicative and x1.55 could outrun
+// it. It stopped being survivable the moment a third of the damage went flat.
+//
+// The fix is the slot, not the multiplier. Point 2 above already spent a
+// paragraph on why statMul cannot be moved without breaking the tier gap, and
+// that argument runs in both directions. [6, 6] leaves Riftborn holding five
+// beneficial affixes and the curse: one clear rung above Sovereign's 4.5, and
+// still the only tier in the table that pays for what it is.
+
 export const RARITIES: RarityDef[] = [
   { id: 'plain',     name: 'Plain',     color: '#b9b2a4', affixes: [0, 0], weight: 620, statMul: 1.00 },
   { id: 'touched',   name: 'Touched',   color: '#6fa8dc', affixes: [1, 1], weight: 300, statMul: 1.06 },
   { id: 'woven',     name: 'Woven',     color: '#e8c34a', affixes: [2, 3], weight: 160, statMul: 1.14 },
   { id: 'hallowed',  name: 'Hallowed',  color: '#b47ae0', affixes: [3, 4], weight:  60, statMul: 1.24 },
   { id: 'sovereign', name: 'Sovereign', color: '#f08a3c', affixes: [4, 5], weight:  18, statMul: 1.38 },
-  { id: 'riftborn',  name: 'Riftborn',  color: '#e0413e', affixes: [5, 5], weight:   4, statMul: 1.55, cursed: true },
+  { id: 'riftborn',  name: 'Riftborn',  color: '#e0413e', affixes: [6, 6], weight:   4, statMul: 1.55, cursed: true },
 ];
 
 export const RARITY_ORDER: RarityId[] = RARITIES.map((r) => r.id);
