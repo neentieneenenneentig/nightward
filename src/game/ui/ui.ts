@@ -458,7 +458,12 @@ export class UI {
         e.preventDefault();
         const id = this.draftIds[+digit[1] - 1];
         if (id) this.pickDraftCard(id);
+        return;
       }
+      // SR0: the re-roll was the last control in the batch that could only be
+      // reached with a mouse — on the one screen that stops the game, in the
+      // phase whose entire premise is that the mouse has no gameplay job left.
+      if (k === 'r' || k === 'R') { e.preventDefault(); this.rerollDraftCard(); }
       return; // no other key does anything while the Loom is calling
     }
 
@@ -1558,6 +1563,13 @@ export class UI {
     this.draftIds = [];
   }
 
+  /** SR2 — re-roll the current offer. Shared by the button and the `R` key so
+   *  the two can never disagree, the same reason pickDraftCard() exists. */
+  private rerollDraftCard() {
+    if (this.hooks.rerollDraft()) { this.closeDraft(); this.openDraft(); }
+    else this.toast('Not enough gold to re-roll', 'bad');
+  }
+
   private pickDraftCard(id: string) {
     if (!this.hooks.allocateLoom(id)) return;
     this.closeDraft();
@@ -1604,14 +1616,15 @@ export class UI {
     over.appendChild(grid);
 
     const reroll = el('div', 'nw-btn');
-    reroll.textContent = `Re-roll (${CFG.sr.draftRerollGold}g)`;
+    // The key is IN the label. A keyboard-only game that hides its bindings is
+    // a keyboard-only game nobody can play — same reason each card shows its
+    // digit.
+    reroll.textContent = `Re-roll (${CFG.sr.draftRerollGold}g) — R`;
+    reroll.tabIndex = 0;
+    reroll.setAttribute('role', 'button');
     reroll.style.pointerEvents = 'auto';
     reroll.style.marginTop = '8px';
-    reroll.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (this.hooks.rerollDraft()) { this.closeDraft(); this.openDraft(); }
-      else this.toast('Not enough gold to re-roll', 'bad');
-    });
+    bindActivate(reroll, (e) => { e.stopPropagation(); this.rerollDraftCard(); });
     over.appendChild(reroll);
 
     this.root.appendChild(over);

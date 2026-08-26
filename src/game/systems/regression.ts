@@ -1617,6 +1617,80 @@ async function testLoomTreeShape(nw: any) {
  *
  *  This drives the real DOM: opens the panel, clicks a node, and checks that a
  *  point left the bank and a modifier the game reads actually moved. */
+/** SR2 — the draft, which had NO coverage in this suite until 2026-08-26.
+ *
+ *  The batch's headline feature shipped unpinned, and what that cost was a
+ *  control that could only be reached with a mouse: the re-roll was a bare
+ *  `div` with a click listener, on the one screen that stops the game, in the
+ *  batch whose entire premise (SR0) is that the mouse has no gameplay job left.
+ *
+ *  Everything here is driven through the REAL key path — window keydown, the
+ *  same events a player produces — rather than by calling the handlers, so a
+ *  binding that is deleted or shadowed fails this rather than passing it. */
+async function testDraftIsPlayableFromTheKeyboard(nw: any) {
+  const { state, ui, sys } = nw;
+  const { CFG } = await import('../data/config');
+  const key = (k: string, code: string) =>
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: k, code, bubbles: true }));
+
+  const saved = {
+    nodes: { ...(state.player.loomNodes ?? {}) },
+    points: state.player.loomPoints,
+    gold: state.player.gold,
+    over: state.gameOver,
+  };
+  try {
+    state.gameOver = false;
+    state.player.loomNodes = {};
+    state.player.loomPoints = 3;
+    state.player.gold = CFG.sr.draftRerollGold * 3;
+    (sys.loom as any)._rebuildNeeded = true;
+
+    sys.loom.offerDraft();
+    ui.openDraft();
+    ok(ui.isDrafting(), 'the draft opens');
+    // The distinction the whole phase rests on: a draft does not merely block
+    // input, it stops the world. main.ts zeroes the step accumulator on
+    // isPaused(), and isPaused() counts a draft.
+    ok(ui.isPaused(), '...and it PAUSES the sim, not just the movement axis');
+
+    const cards = [...document.querySelectorAll('.nw-draft-card')] as HTMLElement[];
+    eq(cards.length, CFG.sr.draftCards, `${CFG.sr.draftCards} cards are offered`);
+    for (let i = 0; i < cards.length; i++) {
+      ok(cards[i].tabIndex >= 0, `card ${i + 1} is focusable`);
+      ok((cards[i].textContent ?? '').includes(String(i + 1)), `card ${i + 1} names its digit`);
+    }
+
+    const reroll = ([...document.querySelectorAll('.nw-draft .nw-btn')] as HTMLElement[])
+      .find((b) => /re-roll/i.test(b.textContent ?? ''));
+    ok(!!reroll, 'the offer carries a re-roll control');
+    ok((reroll?.tabIndex ?? -1) >= 0,
+      'the re-roll is focusable — SR0 says every control is reachable without a mouse');
+    ok(/R/.test(reroll?.textContent ?? ''),
+      'and it names its key, the way each card names its digit');
+
+    // R must reach LoomSystem.rerollDraft() through the real listener.
+    const goldBefore = state.player.gold;
+    key('r', 'KeyR');
+    eq(state.player.gold, goldBefore - CFG.sr.draftRerollGold,
+      'pressing R spends the re-roll price — the key reaches LoomSystem, not just the button');
+    ok(ui.isDrafting(), '...and leaves an offer on screen rather than dismissing it');
+
+    // ...and a digit must actually spend a point.
+    const pointsBefore = state.player.loomPoints;
+    key('1', 'Digit1');
+    eq(state.player.loomPoints, pointsBefore - 1, 'pressing 1 takes the first card');
+    eq(Object.keys(state.player.loomNodes).length, 1, '...and records the rank on the run');
+  } finally {
+    ui.closeOverlays?.();
+    state.player.loomNodes = saved.nodes;
+    state.player.loomPoints = saved.points;
+    state.player.gold = saved.gold;
+    state.gameOver = saved.over;
+    (sys.loom as any)._rebuildNeeded = true;
+  }
+}
+
 async function testLoomPanelIsReachable(nw: any) {
   const { state, ui, sys } = nw;
   const { LOOM_NODES } = await import('../data/loom');
@@ -7375,6 +7449,7 @@ const TESTS: Array<{ name: string; fn: (nw: any) => Promise<void> }> = [
   // ---- C3: The Loom ----
   { name: 'Loom allocation — allocate, rank up, prereq gating', fn: testLoomAllocation },
   { name: 'Loom keystones — Glass Echo, Deep Roots, Night Market, Long Thread', fn: testLoomKeystones },
+  { name: 'SR2 draft is playable from the keyboard (cards + re-roll)', fn: testDraftIsPlayableFromTheKeyboard },
   // ---- C4: The Armory ----
   { name: 'Boss relic drops — kill each boss, check echo + relic', fn: testBossRelicDrops },
   { name: 'Relic equip — equip/unequip relic slot', fn: testRelicEquip },
