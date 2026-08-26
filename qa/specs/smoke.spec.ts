@@ -115,9 +115,22 @@ test.describe('Smoke — does the shipped page actually work', () => {
       const nw = (window as any).__nw;
       const b = (nw.state.worldBosses ?? []).find((x: any) => x.reviveAt === 0);
       if (!b) return false;
-      // direct object mutation — the sanctioned way to drive state (WORKFLOW.md)
+      const TILE = 32; // world pixels per tile — world/worldgen.ts
+      // Direct object mutation is the sanctioned way to drive state
+      // (WORKFLOW.md), but drive the INPUT rather than the derived flag.
+      // worldbosses.update() recomputes `hunting` every tick from
+      // `territoryRoused || provokedUntil > clock`; three seconds into a fresh
+      // run neither holds, so setting `hunting` on its own was undone on the
+      // very next tick and nearestThreatTiles() reported null — which is the
+      // 'received value must be a number' this test was failing with.
+      // provokedUntil is the engine's own "a fight always gets fought back".
+      b.provokedUntil = nw.state.clock + 60;
       b.hunting = true;
-      b.x = nw.state.player.x + 20;
+      // Ten tiles: well inside CFG.worldBoss.warnTiles (22), well outside
+      // attackReachPx (30). The old +20px put the lord on top of the player,
+      // so the eight-second audio window doubled as a race against the biggest
+      // single hit in the game landing twice.
+      b.x = nw.state.player.x + 10 * TILE;
       b.y = nw.state.player.y;
       return true;
     });
