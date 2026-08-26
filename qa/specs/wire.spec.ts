@@ -1,7 +1,19 @@
 import { test, expect } from '../harness/fixtures';
 
 const RESOLVER_HOSTS = ['cloudflare-dns.com', 'dns.google'];
-const ALLOWED = [...RESOLVER_HOSTS, 'cloudflare.com', '127.0.0.1', 'localhost', '[::1]'];
+/** `speed.cloudflare.com` is N4.1's Deep Wire probe — DEEP_PROBE_URL, which is
+ *  `__down?bytes=1`. One byte of body, rate-limited to one call per 20s, and
+ *  the whole point of it is that the interesting data is in the HEADERS. It is
+ *  NOT the N4.5 throughput sounding, which lives on the same host, spends real
+ *  megabytes, and is refused outright at the default `quiet` covenant
+ *  (`budgetMB <= 0` — sounding.ts blocked()). That consent gate is asserted by
+ *  covenant.spec.ts; allowing the host here does not weaken it.
+ *
+ *  The list had bare `cloudflare.com` and never picked up the subdomain, so
+ *  this spec has failed on every push since the Deep Wire shipped — which,
+ *  because deploy.yml runs a wider gate than ci.yml, is part of why the game
+ *  never actually reached Pages. */
+const ALLOWED = [...RESOLVER_HOSTS, 'cloudflare.com', 'speed.cloudflare.com', '127.0.0.1', 'localhost', '[::1]'];
 
 const BEACON_HOSTS = [
   'www.yandex.ru', 'www.naver.com', 'www.baidu.com', 'www.yahoo.co.jp',

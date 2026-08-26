@@ -234,6 +234,23 @@ export class ChunkMap {
     return [d[0], d[1], d[2], d[3]];
   }
 
+  /** G1/QA: how much relief work is still outstanding — queued relights plus
+   *  loaded chunks that have no overlay yet.
+   *
+   *  Exists because the relief specs used to sleep on a fixed timer, which is a
+   *  bet on frame rate. Overlays are built RELIEF_BUILD_PER_FRAME at a time and
+   *  the relight queue drains RELIGHT_PER_FRAME per frame, so on the
+   *  software-raster lane (~3 fps) neither had finished when the sample was
+   *  taken. Worse, the queue is drained with pop() while the player's own chunk
+   *  was inserted FIRST — so the tiles a test looks at are the last ones
+   *  updated. Waiting on the work itself is lane-independent. */
+  debugReliefPending(): number {
+    if (!this.reliefOn) return 0;
+    let missing = 0;
+    for (const c of this.chunks.values()) if (!c.relief) missing++;
+    return this.relightQueue.length + missing;
+  }
+
   /** G1: the relief shade multiplier (0..1) at tile-local pixel offset
    *  (offX,offY) (default: tile centre). 1 means the surface is flat there and
    *  the bake shows through untouched. null if the chunk isn't loaded or relief

@@ -14,6 +14,17 @@ import { test, expect } from '../harness/fixtures';
 
 const MOUNTAIN = 7, SNOW = 8, HILL = 6, GRASS = 3, MEADOW = 4;
 
+/** Block until every loaded chunk has an overlay and the relight queue is
+ *  empty. See ChunkMap.debugReliefPending() for why a fixed sleep was wrong.
+ *  Bounded, so a genuine stall still fails the test rather than hanging. */
+async function settleRelief(page: import('@playwright/test').Page, timeout = 40_000) {
+  await page.waitForFunction(
+    () => ((window as any).__nw?.chunks?.debugReliefPending?.() ?? 1) === 0,
+    undefined,
+    { timeout, polling: 100 },
+  );
+}
+
 test.describe('Batch G — terrain reads as terrain', () => {
   test('height reads as height: mountain lighter than hill, hill lighter than grass', async ({ launch }, testInfo) => {
     test.setTimeout(3 * 60 * 1000);
@@ -77,7 +88,7 @@ test.describe('Batch G — terrain reads as terrain', () => {
     test.setTimeout(3 * 60 * 1000);
     const nw = await launch({ seed: 4242, gl: testInfo.project.name === 'webgl' });
     await nw.page.evaluate(() => { (window as any).__nw.state.clock = 40; });   // low sun, long shadows
-    await nw.page.waitForTimeout(1500);
+    await settleRelief(nw.page);
 
     const r = await nw.page.evaluate(async () => {
       const g = (window as any).__nw;
@@ -111,9 +122,16 @@ test.describe('Batch G — terrain reads as terrain', () => {
         if (level.length > 250 && step.length > 250) break;
         g.player.x = g.player.px = (((hop * 811) % 1400) - 700) * 32;
         g.player.y = g.player.py = (((hop * 449) % 1400) - 700) * 32;
-        // relief overlays are built off the bake path a few per frame, so a
-        // fresh region needs longer than a bake to finish lighting
-        await new Promise((k) => setTimeout(k, 1400));
+        // Relief overlays are built off the bake path a few per frame, so a
+        // fresh region needs longer than a bake to finish lighting. Wait for
+        // the WORK rather than for a timer: the old fixed 1400ms was a bet on
+        // frame rate, and on the software-raster lane it lost — most tiles
+        // still read null, which is how a terrain test came to sample nine
+        // height boundaries and report the relief system broken.
+        for (let i = 0; i < 400; i++) {
+          if ((g.chunks.debugReliefPending?.() ?? 1) === 0) break;
+          await new Promise((k) => setTimeout(k, 50));
+        }
       }
       const mean = (a: number[]) => a.reduce((s, v) => s + v, 0) / Math.max(1, a.length);
       return {
@@ -160,7 +178,7 @@ test.describe('Batch G — terrain reads as terrain', () => {
 
     const at = async (clock: number) => {
       await nw.page.evaluate((c: number) => { (window as any).__nw.state.clock = c; }, clock);
-      await nw.page.waitForTimeout(2500);   // let the relight queue drain
+      await settleRelief(nw.page);          // let the relight queue actually drain
       return nw.page.evaluate(() => {
         const g = (window as any).__nw;
         const px = Math.floor(g.player.x / 32), py = Math.floor(g.player.y / 32);
