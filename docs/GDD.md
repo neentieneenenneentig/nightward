@@ -481,10 +481,10 @@ you (or anything else) kill that lord and leveled further (cap 8) on every re-ki
 These are auto-abilities — always active once granted, no activation input.
 
 ### 9.3 The Loom
-A per-run passive tree, 40 nodes total: 36 small nodes across three 12-node branches — 
-**War** (melee damage/swing-speed/arc-width/crit-floor), **Field** (gather speed,
-double-yield chance, cheaper crafting, move speed), **Ward** (building HP, armor, tower
-damage/range, territory income) — plus 4 keystones, one per late branch node, each a real
+A per-run passive tree of **15 nodes** across three branches — **War** (4: melee damage,
+swing speed, arc width, crit floor), **Field** (7: gather speed, double-yield chance,
+cheaper crafting, move speed), **Ward** (4: building HP, armor, tower damage/range,
+territory income). Four of the fifteen are keystones, two of them in Field, each a real
 tradeoff:
 
 | Keystone | Branch | Effect |

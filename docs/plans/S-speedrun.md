@@ -653,6 +653,45 @@ versioned on every record precisely so the answer can be applied retroactively.
 tree than fifteen nodes browsed, and B3.b resized the Loom specifically so that "one keystone is
 a real choice" was true. SR2 must not quietly undo that.
 
+---
+
+### First measured playthrough — 2026-08-27
+
+A full lifespan, played end to end through real DOM input on the WebGPU lane by the
+`speedrunner` profile (`qa/specs/reckoning.spec.ts`, `NW_MINUTES=99`). This is the first
+time anything has walked the whole arc: until this run, `Snap` carried none of the batch's
+state, so all eleven phases had playthrough coverage of zero.
+
+| reading | value |
+|---|---|
+| run length | 742s real, ended by death |
+| acts | Gathering 298.0s · Swelling 420.3s · Reckoning 22.9s |
+| outcome | **fallen** — the lord killed the player 23s into the Reckoning |
+| drafts offered | **2** |
+| Loom nodes taken | 2 of 15 |
+| peak foes alive | 57 |
+| peak elites alive | 4 |
+
+**The act curve holds.** 298 / 420 against an authored 300 / 420 — the acts land where they
+are supposed to, elites are genuinely absent from the Gathering, and the field genuinely
+thins for the Reckoning. SR1 does what it says.
+
+**M3, partially, and pointing the other way from the worry.** The failure mode §M3 named was a
+player who never sees the finale. This run saw it and was killed by it in 23 seconds. One bot
+run is not a difficulty verdict — the profile is a crude policy holding two Loom nodes — but
+the concern that a level-1 lord would be a formality is not what the first measurement shows.
+
+**M4, and this is the sharp one: the draft fires twice.** Not "three of fifteen is tight" —
+*two offers per run*. Loom points come from surviving a night (1/night) plus boss kills, and a
+run spans about two nights, so a whole lifespan hands the player six cards and two nodes out
+of fifteen. SR2 is the batch's depth layer and the Vampire Survivors half of Q1; at two
+offers it is closer to a garnish than a system. The knob is the grant rate, not the draft.
+Worth deciding deliberately before SR11 draws attention elsewhere.
+
+**M2 is still open.** This is a bot, not a fast player. What it shows is that the Gathering is
+survivable and that the acts are correctly shaped — not what a competent human does with the
+first five minutes, which is what Q3's verdict was staked on.
+
 ## 10. First thing to do
 
 **SR0**, because it is the smallest phase here and everything else assumes its control model.
