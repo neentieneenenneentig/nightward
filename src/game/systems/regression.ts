@@ -2753,7 +2753,7 @@ async function testScoreboardSnapshot(nw: any) {
   state.player.loomNodes = { 'war_strike': 3, 'field_gather': 1 };
 
   const card = scoreboard.snapshot();
-  ok(card.v === 2, 'scorecard version is 2 (L1)');
+  ok(card.v === 3, 'scorecard version is 3 (SR9 — L1 wrote 2)');
   ok(card.connectionAge === 3600, `connection age: ${card.connectionAge}s`);
   ok(card.enemiesKilled === 42, `enemies killed: ${card.enemiesKilled}`);
   ok(card.buildingsBuilt === 15, `buildings built: ${card.buildingsBuilt}`);
@@ -2799,7 +2799,7 @@ async function testLeaderboardPersist(nw: any) {
   ok(entries.length >= 1, `leaderboard has ${entries.length} entries`);
   ok(entries[0].connectionAge === 7200, 'leaderboard entry matches saved data');
   ok(entries[0].enemiesKilled === 100, 'leaderboard preserves kill count');
-  ok(entries[0].v === 2, 'leaderboard entry has L1 version field (2)');
+  ok(entries[0].v === 3, 'leaderboard entry carries the SR9 version field (3)');
   ok(entries[0].legacyScore === card.legacyScore, 'leaderboard preserves the legacy score');
   ok(entries[0].legit === true, 'leaderboard preserves the legit flag');
 
@@ -3176,6 +3176,12 @@ async function testLifespanOldAgeDeath(nw: any) {
   state.gameOverCause = null;
   state.player.vigor = 100;
   state.player.resolve = 100;
+  // ...and no Reckoning may be running. SR3 reads an old-age death DURING a
+  // Reckoning as 'Outlasted' and titles it THE CLOCK RUNS OUT — correctly.
+  // This test is about the OTHER ending, the one where the years simply run
+  // out, so the absence of a lord is part of what it is asserting rather than
+  // an accident of test order.
+  state.reckoning = null;
 
   const deathAge = lifespan.deathAtAge();
 
@@ -3198,7 +3204,12 @@ async function testLifespanOldAgeDeath(nw: any) {
   // Old-age death is a DIFFERENT ending from hall-destroyed — distinct flavor text.
   if (typeof document !== 'undefined') {
     const domText = document.body.innerText || '';
-    ok(domText.includes('DREAM FADES') || domText.includes('dream fades'), 'old-age death shows THE DREAM FADES, not the combat-death screen');
+    // Report the headline actually rendered. "expected DREAM FADES" alone sent
+    // a reviewer looking at the flavour text when the real answer was that a
+    // different overlay was on screen entirely.
+    const headline = document.querySelector('.nw-gameover h1')?.textContent?.trim() ?? '(no game-over screen)';
+    ok(domText.includes('DREAM FADES') || domText.includes('dream fades'),
+      `old-age death shows THE DREAM FADES, not the combat-death screen (headline: "${headline}", outcome: ${state.outcome})`);
   }
 
   // Critical: this test just ended the shared, live game run. Reset it back
@@ -8120,6 +8131,15 @@ export async function runAll(nw: any): Promise<{ pass: number; fail: number; tot
         _results.push(`  ❌ ${t.name}: unexpected error — ${msg}`);
         console.error(`  💥 ${msg}`);
       }
+    } finally {
+      // Per-test cleanup. The suite had none, and the omission cost four
+      // assertions: any test that grants a Loom point opens the SR2 draft,
+      // ui.isOpen() counts a draft as open, and main.ts zeroes the movement
+      // axis while anything is open — so every LATER movement test measured
+      // 0.0px and blamed the terrain it was standing on. A modal left
+      // standing is shared state, and shared state between tests is the exact
+      // thing a suite exists in order not to have.
+      try { nw?.ui?.closeOverlays?.(); } catch { /* a headless nw has no ui */ }
     }
   }
 
