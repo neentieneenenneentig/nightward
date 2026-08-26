@@ -43,6 +43,36 @@ export interface Snap {
   invTotal: number;
   buildings: number;
   nightsSurvived: number;
+
+  /* --- Batch SR. None of this existed in Snap, which is why no playthrough
+   *     could see the acts, the draft, or the Reckoning, and why every SR
+   *     phase shipped with playthrough coverage of zero. --- */
+
+  /** SR1 — the named act the run is in. Derived from the SAME clock the
+   *  spawner and the summons read (main.ts's `elapsedRealSec`, a sim-tick
+   *  count), not from `clock`, so a profile agrees with the HUD. */
+  act: 'gathering' | 'swelling' | 'reckoning';
+  /** That clock itself, in seconds. It does not advance while paused. */
+  elapsed: number;
+  /** SR2 — a draft is on screen. The whole sim is frozen while this is true:
+   *  main.ts gates the step accumulator on `ui.isPaused()`, which counts a
+   *  draft. A profile must therefore SPEND the offer to make time move. */
+  drafting: boolean;
+  loomPoints: number;
+  loomNodes: number;
+  /** A2 — the act curve gates these, so they are how you prove an act
+   *  boundary actually did something rather than just relabelling the HUD. */
+  elites: number;
+  champions: number;
+  /** SR3 — live once the lord is summoned. `secondsLeft` counts down the
+   *  window opened at CFG.sr.reckoningAtSec. */
+  reckoning: { damageDealt: number; secondsLeft: number } | null;
+  /** SR3 — the summoned lord's remaining health, so a spec can tell "the
+   *  fight is going badly" from "the fight never started". */
+  bossHpFrac: number | null;
+  /** SR3 — set only when the run has ended. The scoring axis. */
+  outcome: 'reckoned' | 'outlasted' | 'fallen' | 'unmet' | null;
+
   gameOver: boolean;
   frames: number;
   heapMB: number | null;  // Chromium only
@@ -103,6 +133,11 @@ export interface RunSummary {
   peakHeapMB: number | null;
   minFps: number;
   avgFps: number;
+  /** SR2 — how many level-up drafts the session answered. Zero over a run long
+   *  enough to level is itself a finding: the draft never fired. */
+  draftsTaken: number;
+  /** SR1 — real seconds spent in each act, from the samples. */
+  actSeconds: Record<string, number>;
 }
 
 /* ===========================================================================
@@ -187,6 +222,8 @@ function mulberry32(seed: number) {
  * ======================================================================== */
 export class Nightward {
   private held = new Set<string>();
+  /** SR2 — drafts answered this session; surfaced on RunSummary. */
+  draftsTaken = 0;
   private t0 = 0;
   /** game-originated errors — these fail the run */
   readonly errors: string[] = [];
@@ -313,6 +350,25 @@ export class Nightward {
       const home = w.__qaHome ?? { x: p.x, y: p.y };
       const hdx = home.x - p.x, hdy = home.y - p.y;
 
+      // SR1: the act, off ctx.elapsedRealSec — the same clock hordes.ts's
+      // actRow(), main.ts's HUD label and main.ts's summons all read. Derived
+      // from CFG.sr.actCurve rather than importing actFor(), because this
+      // probe also has to run against the minified production bundle where
+      // that symbol does not exist under that name.
+      const elapsed = nw.ctx?.elapsedRealSec?.() ?? 0;
+      const curve = CFG?.sr?.actCurve ?? [];
+      const actRow = curve.find((r: any) => elapsed < r.untilSec) ?? curve[curve.length - 1];
+
+      let elites = 0, champions = 0;
+      for (const f of foes) {
+        if (!f.elite) continue;
+        elites++;
+        if (f.elite.rank === 'champion') champions++;
+      }
+
+      const rk = s.reckoning;
+      const lord = rk ? (s.worldBosses ?? []).find((b: any) => b.uid === rk.bossUid) : null;
+
       const g = nw.sys.gather;
       const cy = (CFG?.time?.daySec ?? 240) + (CFG?.time?.nightSec ?? 100);
       let invTotal = 0, invKinds = 0;
@@ -343,6 +399,19 @@ export class Nightward {
         invKinds, invTotal,
         buildings: s.buildings.length,
         nightsSurvived: s.nightsSurvived,
+
+        act: (actRow?.id ?? 'gathering') as 'gathering' | 'swelling' | 'reckoning',
+        elapsed: +elapsed.toFixed(2),
+        drafting: !!nw.ui?.isDrafting?.(),
+        loomPoints: p.loomPoints ?? 0,
+        loomNodes: Object.keys(p.loomNodes ?? {}).length,
+        elites, champions,
+        reckoning: rk
+          ? { damageDealt: rk.damageDealt ?? 0, secondsLeft: +Math.max(0, rk.deadlineRealSec - elapsed).toFixed(1) }
+          : null,
+        bossHpFrac: lord ? +(lord.hp / lord.maxHp).toFixed(3) : null,
+        outcome: s.outcome ?? null,
+
         gameOver: !!s.gameOver,
         frames: nw.frames,
         heapMB: (performance as any).memory
@@ -496,6 +565,22 @@ export class Nightward {
         onSample?.(s);
       }
       if (s.gameOver) break;
+
+      // SR2: a draft freezes the ENTIRE sim. main.ts gates the step
+      // accumulator on ui.isPaused(), and isPaused() counts a draft — so an
+      // unanswered offer does not merely zero the movement axis, it stops the
+      // world, while the wall clock this session is measured in keeps running.
+      // A profile that ignored one would spend the rest of its minutes staring
+      // at three cards. A real player always picks, so the driver picks unless
+      // the profile has its own opinion, and the choice lands in the timeline
+      // either way.
+      if (s.drafting) {
+        this.draftsTaken++;
+        const own = profile.act(s, this.rng);
+        await this.perform(own.tap?.length ? own : { tap: ['1'], hold: 220, note: 'draft: took card 1' });
+        continue;
+      }
+
       await this.perform(profile.act(s, this.rng));
     }
     await this.releaseAll();
@@ -514,6 +599,15 @@ export class Nightward {
     }
     const heaps = s.map((x) => x.heapMB).filter((x): x is number => x !== null);
 
+    // SR1: real seconds spent in each act, straight off the samples. This is
+    // the number that answers "did the run actually reach the Reckoning" —
+    // which no playthrough could ask before Snap carried `act`.
+    const actSeconds: Record<string, number> = {};
+    for (let i = 1; i < s.length; i++) {
+      const dt = s[i].t - s[i - 1].t;
+      actSeconds[s[i].act] = +((actSeconds[s[i].act] ?? 0) + dt).toFixed(1);
+    }
+
     return {
       profile: profile.name,
       seed: this.seed,
@@ -525,6 +619,8 @@ export class Nightward {
       peakHeapMB: heaps.length ? Math.max(...heaps) : null,
       minFps: fps.length ? +Math.min(...fps).toFixed(1) : 0,
       avgFps: fps.length ? +(fps.reduce((a, b) => a + b, 0) / fps.length).toFixed(1) : 0,
+      draftsTaken: this.draftsTaken,
+      actSeconds,
     };
   }
 

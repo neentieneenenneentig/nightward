@@ -77,6 +77,18 @@ function assertUniversal(r: RunSummary, lane: string) {
    * and a boss sitting inside that radius swaps the mood whether or not it has
    * decided to hunt. A wandering profile like `explorer` walks into boss
    * territory routinely, and drums there are correct. */
+  /* 6. SR2 — no session may END inside a draft.
+   *
+   * A draft freezes the whole sim, so a session that finishes with one still
+   * on screen did not play for as long as its timeline claims: the wall clock
+   * kept running while the world stood still. Either the driver failed to
+   * answer the offer, or the offer refused to close. */
+  const lastSample = s[s.length - 1];
+  expect(
+    lastSample.drafting,
+    'the session ended with a draft still on screen — the world was frozen for the tail of this run',
+  ).toBe(false);
+
   const everInBossRange = s.some(
     (x) => x.bossThreatTiles !== null && x.bossThreatTiles < x.warnTiles,
   );
@@ -96,9 +108,11 @@ for (const base of PROFILES) {
 
   test(`playthrough — ${profile.name}: ${profile.blurb}`, async ({ launch }, testInfo) => {
     test.setTimeout((profile.minutes + 4) * 60 * 1000);
-    // pilgrim only means anything at its natural length
+    // The full-life profiles (pilgrim, speedrunner) only mean anything at
+    // their natural length. Keyed off the declared length rather than the
+    // name, so a third one does not silently run truncated and fail its check.
     test.skip(
-      profile.name === 'pilgrim' && MINUTES_CAP < 16,
+      base.minutes >= 16 && MINUTES_CAP < 16,
       'full-life run — set NW_MINUTES=99 for the pre-release sweep',
     );
 

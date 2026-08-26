@@ -134,6 +134,67 @@ export const PROFILES: Profile[] = [
   },
 
   {
+    /* -----------------------------------------------------------------------
+     * The Batch SR profile.
+     *
+     * Every profile above predates the batch, so between them they cover none
+     * of it: no act ever gets named, no draft is ever answered, and no lord is
+     * ever summoned. This one plays the run the batch actually built — gear up
+     * through the Gathering, farm the Swelling for Loom points, and go at the
+     * lord the moment it lands — so the Three Acts, the draft and the four
+     * outcomes finally have a player walking through them.
+     * -------------------------------------------------------------------- */
+    name: 'speedrunner',
+    blurb: 'Plays for the Reckoning: gears up in the Gathering, farms the Swelling, and goes straight at the lord.',
+    seed: 8080,
+    minutes: 17,   // outlasts the ~15-minute lifespan on purpose, like pilgrim
+    act(s, rng): Act {
+      // SR2 first, always. A draft freezes the entire sim (main.ts gates the
+      // step accumulator on ui.isPaused(), which counts a draft), so an
+      // unanswered offer stops the world rather than merely blocking a key.
+      if (s.drafting) return { tap: ['1'], hold: 200, note: 'draft: take the first card' };
+
+      // SR3: once the lord is up, nothing else on the field matters. The act
+      // curve has thinned the horde to 0.2x specifically so this is true.
+      if (s.reckoning) {
+        if (s.nearestBoss === null) return { move: wander(s), hold: 320, note: 'find the lord' };
+        if (s.nearestBoss < 44) return { tap: [' '], move: s.bossDir!, hold: 170, note: 'at the lord' };
+        return { move: s.bossDir!, hold: 250, note: 'close on the lord' };
+      }
+
+      // Survival outranks progress in every act — a dead speedrunner scores
+      // 'fallen', which is the one outcome worth nothing.
+      if (s.hpFrac < 0.3 && s.nearestFoe !== null && s.nearestFoe < 220)
+        return { move: { x: -s.foeDir!.x, y: -s.foeDir!.y }, hold: 340, note: 'break off' };
+
+      // The Gathering is the only quiet window the run gets. Spend it on gear.
+      if (s.act === 'gathering') {
+        if (s.gathering) return { hold: 300, note: 'gathering' };
+        if (s.gatherTarget) return { tap: ['e'], hold: 200, note: 'gear up' };
+        if (s.nearestFoe !== null && s.nearestFoe < SWING) return { tap: [' '], hold: 180, note: 'clear the path' };
+        if (rng() < 0.05) return { tap: ['c', 'Escape'], hold: 240, note: 'craft check' };
+        return { move: wander(s), hold: 340, note: 'forage' };
+      }
+
+      // The Swelling: kills are Loom points and Loom points are drafts, so
+      // fighting IS the progression here rather than a tax on it.
+      if (s.nearestFoe !== null && s.nearestFoe < SWING) return { tap: [' '], move: s.foeDir!, hold: 170, note: 'swing' };
+      if (s.nearestFoe !== null && s.nearestFoe < 400) return { move: s.foeDir!, hold: 230, note: 'close in' };
+      if (s.gatherTarget) return { tap: ['e'], hold: 200, note: 'top up' };
+      return { move: wander(s), hold: 320, note: 'hunt' };
+    },
+    check(r) {
+      const last = r.samples[r.samples.length - 1];
+      if (!last?.gameOver)
+        throw new Error(
+          `speedrunner played ${r.realSeconds.toFixed(0)}s and the run never ended — the lifespan cap did not fire`,
+        );
+      if (!last.outcome)
+        throw new Error('the run ended with no SR3 outcome recorded — state.outcome was never set');
+    },
+  },
+
+  {
     name: 'pilgrim',
     blurb: 'A competent generalist playing one entire life, start to death screen. The full-playthrough profile.',
     seed: 4242,
