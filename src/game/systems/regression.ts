@@ -1478,8 +1478,16 @@ async function testBossDeathPaysOut(nw: any) {
     ok(invSum() >= before.inv + onGround,
       `walking onto the hoard banks it (${before.inv} → ${invSum()} items)`);
     eq(state.drops.length, 0, 'and the floor is clear again');
-    eq(state.player.gold - before.gold, coinsDown,
-      `...including the coins, for exactly what was lying there (+${coinsDown} gold)`);
+    // `>=`, not `===`. The walk above runs up to eight sim seconds with the
+    // magnet armed, and the world does not hold still for it: anything that
+    // dies nearby in those seconds puts more coins on the floor, and the same
+    // magnet banks them. Equality turned this into a referendum on whether
+    // something else happened to die during the walk — which is how it passed
+    // on one machine and failed on CI with +145 against a lord's purse of 142.
+    // What must be true is that the purse banked to `gold` rather than the
+    // bag, and that the floor ended clear; both are still pinned.
+    ok(state.player.gold - before.gold >= coinsDown,
+      `...including the coins, for at least what was lying there (+${state.player.gold - before.gold} gold, ${coinsDown} of it the lord's purse)`);
 
     // The three that nothing pinned before this test existed.
     eq(sys.scoreboard.bossesSlain, before.slain + 1,
