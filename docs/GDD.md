@@ -1,7 +1,7 @@
 # NIGHTWARD — Game Design Document
 
-**This is the source of truth for what the game IS.** Last updated 2026-07-31 (post-L1
-"The Lifespan"). When this document and any other doc disagree, this one wins — file a
+**This is the source of truth for what the game IS.** Last updated 2026-08-26 (post-Batch SR
+"The Reckoning"). When this document and any other doc disagree, this one wins — file a
 correction here, don't let the disagreement stand.
 
 **Document map** — four docs, four jobs, don't blend them:
@@ -85,25 +85,40 @@ These are load-bearing. A change to any of these is a conversation, not a commit
    design change would put a network term in player-facing text, it's wrong; if a Lens
    number doesn't honestly reflect what the browser actually reports, it's wrong.
 8. **The Lifespan — a hard run, not an idle sim.** A run is bounded to roughly fifteen real
-   minutes by an in-fiction character lifespan that ages in real wall-clock time and ends
-   the run in death of natural causes, independent of combat. This cap cannot be extended
-   by skill or bypassed by cheats (see §11) — it can only be *shortened* by playing badly.
-   The game is won by what you accomplish inside the window, not by surviving longer than
-   it.
+   minutes by an in-fiction character lifespan that ages in real wall-clock time. This cap
+   cannot be extended by skill or bypassed by cheats (see §11) — it can only be *shortened*
+   by playing badly. The game is won by what you accomplish inside the window, not by
+   surviving longer than it.
+
+   *Batch SR amended how the window ENDS.* Until SR3, the lifespan running out **was** the
+   ending: the run stopped rather than finished, and the optimal line was to be alive when
+   it did. The window now has a finish line inside it — the last act summons a domain lord,
+   and killing it before the years run out is the win (§3.3, §11.3). The clock itself is
+   unchanged and still cannot be extended. What changed is that reaching the end of it is no
+   longer the best thing that can happen to you.
 
 ---
 
 ## 3. The core loop
 
 ### 3.1 Moment to moment
-Move with WASD/touch. **Gather** (`E`) wood, stone, ore, and herbs from world features.
-**Craft** (`C`) tools, weapons, armor, and consumables at three skill tracks. **Build**
-(`B`, a cycling placement carousel — no popup menu) a hall, walls, and towers, anchored to
-your hall or chained outward through waystones. **Attack** (`Space`/click) with a weighty
-windup→active→recovery swing, not an instant hit. **Ignite** (`F`) flammable ground with
-the real fire simulation. Check your **Bag** (`I`), **Skills** (`K`), and event **Log**
-(`L`); open the **Lens** (`O`) to see the raw network truth driving everything; check the
-**Leaderboard** (`;`) to see how your run stacks up.
+**The game is played entirely from the keyboard** (SR0). Move with WASD — or touch, on a
+phone, which has no keyboard. **Gather** (`E`) wood, stone, ore, and herbs from world
+features. **Craft** (`C`) tools, weapons, armor, and consumables at three skill tracks.
+**Build** (`B`, a cycling placement carousel — no popup menu) a hall, walls, and towers,
+anchored to your hall or chained outward through waystones; the ghost sits at your facing
+and the arrow keys nudge it. **Attack** (`Space`) with a weighty windup→active→recovery
+swing, not an instant hit. **Ignite** (`F`) flammable ground with the real fire simulation.
+Check your **Bag** (`I`), **Skills** (`K`), and event **Log** (`L`); open the **Lens**
+(`O`) to see the raw network truth driving everything; check the **Leaderboard** (`;`) to
+see how your run stacks up. On a level-up the **draft** (§9.3) stops the game and offers
+three cards, taken with `1`/`2`/`3`.
+
+**The mouse has exactly one gameplay job left, and it is to stop the game** — a click opens
+the pause menu. Everything else it used to do is a key. Aiming was the reason to keep it,
+and aiming was always driven by `aimAngle` (§5.3), which is movement-derived: pointing with
+the mouse meant aiming with a second, worse device that disagreed with the one the swing
+already used. What SR0 deleted is that disagreement, not a verb.
 
 ### 3.2 The day/night rhythm
 A day/night cycle is 340 seconds (240s day + 100s night — a bit over five and a half
@@ -113,14 +128,22 @@ hordes spawn and converge on your hall; towers and your own melee are the defens
 scale with night number, your territory score, and your hoarded gold (greed draws danger) —
 by the second or third night of a run this is a real siege, not a formality.
 
-### 3.3 The run: age, death, and the score
-This is the structural layer everything else sits inside — see §11 for full detail. In
-short: your character ages in real time toward a seeded ~15-minute target. When the years
-run out, the run ends peacefully ("THE DREAM FADES"). If your hall falls to a horde or
-lord first, the run ends violently ("THE THREAD IS CUT"). Either way, a scorecard is
-computed — a **Legacy Score** weighing nights survived, kills, bosses, buildings, Loom
-points, gold, and years lived — and saved to a local leaderboard. Reload for a new seed,
-new connection-driven world, new attempt at a better run.
+### 3.3 The run: three acts, the Reckoning, and the score
+This is the structural layer everything else sits inside — see §11 for full detail. Your
+character ages in real time toward a seeded ~15-minute target, and since SR1 the window has
+a deliberate shape inside it (`CFG.sr.actCurve`):
+
+| act | roughly | what it is |
+|---|---|---|
+| **The Gathering** | 0–5 min | fewer and slower foes, no elites — room to gather, build, and reach a real weapon |
+| **The Swelling** | 5–12 min | count and spawn rate climb hard; elites and champions arrive |
+| **The Reckoning** | 12–15 min | ordinary spawns fall away almost entirely, and a domain lord is summoned |
+
+The current act is named in the HUD. The lord is the finish line: **killing it is the win**,
+and the run has four endings rather than two (§11.3). Every ending computes a **Legacy
+Score** — nights survived, kills, bosses, buildings, Loom points, gold, years lived, and a
+bonus for how it ended — and saves a scorecard to a local leaderboard. Reload for a new seed,
+a new connection-driven world, a new attempt at a better run.
 
 ---
 
@@ -475,6 +498,13 @@ Points come from **surviving a night** (flat 1/night) and, as of L1, **slaying a
 (+2) — the second source exists specifically because 1/night alone barely samples a
 40-node tree inside a 15-minute run. There is no respec: a run *is* its weave.
 
+**The draft (SR2).** Points are not spent from a panel. At the grant moment the game stops
+and offers `CFG.sr.draftCards` (3) still-eligible nodes, weighted toward depth; you take one
+with `1`/`2`/`3` or a click, or pay `CFG.sr.draftRerollGold` (40 gold) for a fresh offer.
+A Long Thread grant worth several points calls again rather than leaving them sitting
+unspent. The tree is the same 40 nodes it always was — what changed is that you are handed a
+decision under pressure instead of a menu to browse.
+
 ### 9.4 The Armory (relics & item effects)
 Items can declare data-driven `effects` hooks (thorns_reflect, fire_aura, chill_aura,
 regen_boost, move_burst_on_kill, see_foe_hp, resonance_boost, fire_on_hit, chill_on_hit,
@@ -576,16 +606,28 @@ the final 0.4 minutes, a slow heartbeat vignette. The HUD carries a permanent ag
 a draining lifespan bar so the clock is always visible — a hard timer only creates good
 pressure if the player can see it.
 
-### 11.3 Death
-Two distinct, mutually exclusive endings:
-- **Hall destroyed → "THE THREAD IS CUT."** A violent ending; the existing gold-loss/
-  scatter mechanics on player death still apply during the run, though the hall falling
-  itself is what actually ends it.
-- **Old age → "THE DREAM FADES."** A peaceful ending, no penalty — reaching it is the
-  intended way most runs conclude, not a failure state. Distinct flavor text, obeys the
-  Veil law (no network jargon).
+### 11.3 Death — and, since SR3, victory
+Four terminal outcomes, recorded on `GameState.outcome`:
 
-`GameState.gameOverCause` records which. Both save a scorecard and show the leaderboard.
+| outcome | when | screen |
+|---|---|---|
+| **Reckoned** | you killed the summoned lord | "THE RECKONING IS YOURS" |
+| **Outlasted** | the years ran out with the lord still standing | "THE CLOCK RUNS OUT" |
+| **Fallen** | the lord struck you down (or your hall fell mid-fight) | "THE LORD'S RECKONING" |
+| **Unmet** | the run ended before a lord was ever summoned | "THE THREAD IS CUT" / "THE DREAM FADES" |
+
+**Unmet** is the pre-SR3 pair, unchanged and still reachable — a hall destroyed is a violent
+ending (the gold-loss/scatter mechanics on player death still apply during the run, though
+the hall falling is what actually ends it); old age is a peaceful one, no penalty. Distinct
+flavor text for each, both obeying the Veil law (no network jargon).
+
+`GameState.gameOverCause` still records what *killed* you, and still means exactly what it
+meant before SR3 — which is why it is `null` on a Reckoned run. **Nothing kills you when you
+win.** Anything asking "how did this run end" must read `outcome`; `gameOverCause` answers
+the narrower question it was written for. (§11.4 records what happens when that distinction
+is missed.)
+
+All four save a scorecard and show the leaderboard.
 
 ### 11.4 Legacy Score & the leaderboard
 A transparent weighted sum, weights held in `CFG.legacy.weights` (data, tunable live, and
@@ -593,12 +635,45 @@ shown broken down in the UI rather than as a black-box number — matching the L
 legibility law):
 
 `legacyScore = nights×500 + kills×8 + bossKills×300 + buildings×40 + loomPoints×150
-+ gold×0.5 + yearsLived×4 + (oldAgeBonus 1000 if the run ended naturally)`
++ gold×0.5 + yearsLived×4 + endingBonus`
 
-The board (`;` key, or the death screen's "Leaderboard" button) shows your **current run's**
-live score alongside the top 50 historical runs from this browser, ranked by legacy score.
+...all multiplied by the covenant weighting (§11.5). `endingBonus` is **2500 for a Reckoned
+run** (you killed the lord) and **1000 when the years ran out** (Outlasted, or an Unmet
+old-age ending). A Fallen run gets neither.
+
+**The ending bonus is keyed to `outcome`, not to `causeOfDeath`** — and that is worth
+stating in the design doc because getting it wrong shipped. Reading the win off
+`causeOfDeath` paid the 1000 to the player who let the clock run out on the lord and nothing
+to the player who killed it, which made winning worth ~700 points *less* than losing, in the
+board's headline category. No cause-of-death field can ever describe a victory; see §11.3.
+
+**Categories.** The board (`;` key, or the death screen's "Leaderboard" button) shows your
+**current run's** live score alongside the top 50 historical runs from this browser, under
+four axes:
+
+| axis | ranks by | over |
+|---|---|---|
+| **Legacy** | legacy score, descending | every run |
+| **Fastest Reckoning** | `reckoningSec`, ascending | won runs only |
+| **Lowest Gear, Won** | `gearScore`, ascending | won runs only |
+| **Adjusted Legacy** | `legacyScore / assistance` | every run |
+
+**The assistance index (SR10).** The Wire (§4.2) makes every run's numbers
+connection-dependent, which means a raw board partly ranks your ISP. `computeAssistIndex()`
+takes a weighted geometric mean, in log space, of the score-affecting mapping outputs against
+their declared pillar-5 neutral values, and **Adjusted Legacy** divides by it. It is
+recomputed at rank time from the stored `wire` block rather than trusting the number written
+into the record, so revising the formula re-ranks the whole back catalogue instead of
+stranding it; the formula version is stamped on every record (`ASSIST_FORMULA`). It is an
+honest correction, not a complete one — see §15.
+
+**The run record.** Scorecards are `v: 3` and carry the seed, the engine version, the outcome
+and its Reckoning axes (gear score, seconds elapsed, biggest single hit, best 10-second
+burst, damage dealt to the lord), the covenant, the best item the run found, and a
+privacy-allowlisted `wire` block of run conditions — enforced by a test, not a comment.
 Finished-run scorecards are the one thing allowed to persist to `localStorage` — never live
-state, consistent with pillar 3.
+state, consistent with pillar 3. Under storage pressure the `wire` block is stripped from the
+oldest half of the board before any whole record is dropped.
 
 **God-mode integrity:** toggling god mode on (currently a dev-only debug hotkey — see §14)
 sets a sticky `state.everGod` flag for the rest of that run. Flagged runs are still
@@ -608,6 +683,29 @@ keyboard-hotkey path; directly poking `window.__nw.state.god` via devtools, or h
 the `nw.leaderboard` localStorage key, would bypass it. There's no backend to enforce
 against on a local, single-player leaderboard, so this is treated the same as
 `window.NW.CFG` being globally live-tweakable — an accepted tradeoff, not an oversight.
+
+### 11.5 Covenants — one selector, two vocabularies
+*(N4.5 + A7.)* Five tiers — **quiet, listening, deep, drowning, abyssal** — sworn at the
+Sounding Stone. The Veil calls a tier a covenant you swear; the Lens calls it a data budget
+you consent to, stated in megabytes, in the panel, before you pick. They are the same row of
+the same table, deliberately: a second, independent difficulty axis is exactly what ships
+when two plans get written by the same person on different days, and it leaves both of them
+unbalanceable.
+
+`quiet` is the default and is byte-for-byte the game that shipped — every multiplier exactly
+1.0, budget 0, and the Sounding Stone refuses to fire. A player who never opens the panel
+spends nothing and plays at the difficulty they started at. Raising a covenant raises the
+horde, raises the rarity **floor**, gates Riftborn to the top two tiers, and multiplies Legacy
+Score.
+
+Two rules keep it honest. **Tiers are raise-only within a run**, and the score weighting is by
+nights spent at each covenant, so swearing `abyssal` in the last thirty seconds does not
+retroactively pay for a quiet run. And **the budget is a hard ceiling for the whole run, not a
+rate**: spend it and the stone goes quiet until the run ends, because a budget you can exceed
+by playing longer is not a budget.
+
+A throughput sounding spends *the player's* data — possibly metered, possibly roaming. That
+is why it is the one thing in this project that cannot be a default.
 
 ---
 
@@ -719,6 +817,30 @@ Honest inventory — don't describe these as live if you're extending the game:
   Never built.
 - **`everGod` leaderboard-legit tracking** only catches the keyboard hotkey path — see
   §11.4's accepted-gap note.
+- **Per-pixel lighting.** SR5 was spec'd as a height buffer in `Pix`, Sobel normals baked
+  with each sprite, and a light buffer the world is lit through. What shipped is a
+  screen-space light **mask** (`PostProcess.lightMask`) rendered from the glow layer — it
+  decides where darkness is, and it is what SR8's fog and grading are built on, but no
+  surface responds to a light's *direction*. Batch SR's own §4 measurement ("nothing is lit
+  — no per-pixel response to any light source") therefore still stands. SR8's light shafts
+  and ground specular are blocked behind it. See `docs/plans/S-speedrun.md` §7.1 for the
+  ruling and what has to be measured before it is picked back up.
+- **The fifth leaderboard axis.** A covenant-weighted (`pact`) category was scoped alongside
+  the four in §11.4 and never shipped.
+- **Run verification.** Batch SR §2 argued for storing seed + an input log + a checksum, so a
+  record could be re-simulated and checked. Only the **seed** shipped, deliberately and with
+  its reasoning recorded in `scoreboard.ts` — a real input-replay hash needs one capture
+  point for every input surface, and a movement-only hash would have lied about what it
+  proved. The consequence is honest but real: a `v: 3` record proves the world it was played
+  in, not the play. Every record accumulating now is unverifiable after the fact.
+- **The assistance index is a correction, not a solution.** §11.4's index divides out the
+  average *magnitude* of the Wire's help. It cannot correct `simSpeed`, which changes how
+  many actions fit inside a fixed wall clock rather than scaling any single number — a
+  scalar divide has nothing to divide. And the two ideas above are mutually exclusive at the
+  limit: re-simulating a run from seed + inputs cannot reproduce the live network conditions
+  that drove its damage rolls and spawn pacing. A board that is comparable across
+  *connections* rather than across *runs on one connection* needs a design decision, not a
+  better formula.
 - **Network-driven cellular-automaton mappings beyond fire** (wetness diffusion speed from
   bandwidth, packet-loss "dead zones," a "data storm" weather event) were speculatively
   scoped in early planning but never implemented; only jitter→fire-spread and realm→wind
