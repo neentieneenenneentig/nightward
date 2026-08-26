@@ -503,25 +503,51 @@ which is the colour grammar every Diablo game is built on.
 Two tracks. **They are independent and can run in either order** — SR1–SR3 touch systems and
 data, SR4–SR8 touch the renderer, and they do not collide.
 
-| phase | contents | depends on | status (2026-08-23) |
+| phase | contents | depends on | status (2026-08-26) |
 |---|---|---|---|
 | **SR0 — Keyboard only** | `Input.pressed/held`, tile-space entry to `BuildSystem`, ghost-at-facing + hold-to-paint, arrows-nudge mode, delete the four pointer build handlers, click → pause menu (the one piece of new UI) | — | **shipped** |
 | **SR4 — Shader floor** | `engine/shaders/`, paired WGSL+GLSL convention, `CFG.gfx` gates, real bloom replacing the Canvas2D fake, both backends green | — | **shipped** |
-| **SR5 — Light** | height buffer in `Pix`, Sobel normals at bake, light buffer, the lighting shader, light sources on fires/spells/telegraphs/moon | SR4 | **partial** — shipped as a mask-based "darkness with pools of light" approximation piggybacked on the glow layer, not the full per-pixel normal-mapped lighting spec'd above; no height buffer, no Sobel bake |
+| **SR5 — Light** | height buffer in `Pix`, Sobel normals at bake, light buffer, the lighting shader, light sources on fires/spells/telegraphs/moon | SR4 | **ruled 2026-08-26 — see §7.1.** Shipped as `PostProcess.lightMask`: a screen-space mask rendered from the glow layer, which decides where darkness is. No height buffer, no Sobel bake, no per-pixel response to light direction. The mask is now the accepted floor; the spec above moves to SR11 and is gated on M1 |
 | **SR6 — Palette** | hue-shifted ramps, 6–8 steps, dithering, per-biome LUT | SR4 | **shipped** |
 | **SR7 — Feel** | hit-stop, flashes, trails, decals, crit weight, boss-slam distortion | SR4 | **shipped** |
-| **SR8 — Diablo pass** | shafts, ground specular, fog, exposure, warm/cold grading | SR5 | **partial** — fog + exposure/warmth grading shipped, plus (2026-08-23) a flat overcast baseline so daytime — ~70% of a run's clock — stops rendering as neutral/undecorated; light shafts and ground specular still not built (need live visual tuning / the normal-map pipeline SR5 didn't build) |
+| **SR8 — Diablo pass** | shafts, ground specular, fog, exposure, warm/cold grading | SR5 | **partial, and the remainder is blocked** — fog + exposure/warmth grading shipped, plus (2026-08-23) a flat overcast baseline so daytime, ~70% of a run's clock, stops rendering as neutral. Light shafts and ground specular need the normal-map pipeline, so they move to SR11 with it |
 | **SR1 — Three Acts** | `CFG.sr.actCurve`, act-driven density and elite gating, the act named in the HUD, instrumentation | SR0 | **shipped** |
 | **SR3 — The Reckoning** | the summons trigger, the boss as a wall, four outcomes, the certificate with axes, Gear Score | SR1 | **shipped** |
 | **SR2 — The Quickening** | the level-up draft over Loom nodes, weapon evolution over A5 weaves, elemental affixes, pickup radius | SR1 | **shipped** |
-| **SR9 — The board** | category comparators over the board that **already exists** (`nw.leaderboard`, `saveToLeaderboard`, `migrate`); the v3 record in FULL — seed + input log + checksum, and the whole `wire` block even where nothing reads it yet; the privacy allowlist and the quota fix | SR3 | **partial, and the missing part is the risky part** — see below |
-| **SR10 — Wire history** | the comparison layer: per-metric baselines from your own past records, the assistance index, both vocabularies on the scorecard | SR9 | **partial** — `compareWire` and the Lens comparison UI shipped; `assist.index`/`assist.formula` are hardcoded `{ index: 0, formula: 1 }`, never actually computed, so the "Adjusted" leaderboard axis has nothing to rank on |
+| **SR9 — The board** | category comparators over the board that **already exists** (`nw.leaderboard`, `saveToLeaderboard`, `migrate`); the v3 record in FULL — seed + input log + checksum, and the whole `wire` block even where nothing reads it yet; the privacy allowlist and the quota fix | SR3 | **shipped, except run verification** — the privacy allowlist now has its test, the quota-degrade rung strips `wire` from the oldest half before dropping records, and the v3 block is complete. Seed shipped; the input log and checksum did not — see below |
+| **SR10 — Wire history** | the comparison layer: per-metric baselines from your own past records, the assistance index, both vocabularies on the scorecard | SR9 | **shipped** — `compareWire` + the Lens comparison UI, a real `computeAssistIndex()` at `ASSIST_FORMULA = 2`, and the "Adjusted Legacy" axis ranking on it, recomputed at rank time rather than read back from the record |
 
-**SR9's gap, in detail — found on 2026-08-23 review, not yet fixed:**
-- **The privacy allowlist has no test.** §3's own ruling says *"the allowlist is enforced by a test rather than a comment"* and lists six required tests (§SR10 "Tests"). None exist — `regression.ts` has zero references to `WireRecord`, `buildWireRecord`, `SCORED_TARGETS`, or `compareWire`. `buildWireRecord()` in `src/game/systems/scoreboard.ts` does appear to hand-honor the allowlist (no `ip`/`colo`/`country`/`timezone`/coordinates/mask-evidence fields present in what it reads), but there is nothing that *fails the build* if a future edit adds one back in. This is the one risk the plan called out by name as needing a test, not a comment — and it shipped with only the comment.
-- **The quota-degrade rung regressed.** `saveToLeaderboard()` (fixed 2026-08-23 in an earlier pass, before the wire block existed that same day) retries at shrinking entry caps `[50, 25, 10, 3, 1]`, exactly as the plan's *"budget it"* rung asks — but the plan's *second* rung, *"strip `wire` from the oldest half of the board"* before shrinking the count, was never added even though the wire block shipped an hour later in the same session. Right now a quota failure loses whole records before it tries losing the cheaper thing first.
-- **`assist.index` is a stub, not a placeholder.** §3 specs it as *"a weighted product of the score-affecting mapping outputs against their neutral values"* — a pure, computable-from-`values` formula, not something needing live tuning. Shipping `{ index: 0, formula: 1 }` unconditionally means every stored record already has the wrong number baked in under `formula: 1`, and the "Adjusted" category (§3's fifth leaderboard axis) can't be built until this is real. Worth fixing before more records accumulate under a formula version that was never the real formula.
-- **Two of five leaderboard axes never shipped.** `CATEGORIES` in `scoreboard.ts` has `legacy` / `time` / `purity` only. `pact` (covenant-weighted) and `adjusted` (blocked on `assist.index` above) are both still missing — consistent with the risk table's own *"ship three... add the rest only if asked for"* mitigation, so this may be intentional rather than a gap, but it's worth confirming against the plan's original five-axis intent rather than assuming.
+**SR9's gap, in detail — reviewed again 2026-08-26. Three of the four are now closed:**
+- ~~**The privacy allowlist has no test.**~~ **Closed.** `regression.ts` now carries 20 references to `WireRecord`/`buildWireRecord`/`SCORED_TARGETS`/`compareWire`. The allowlist is enforced by a test rather than a comment, as §3 demanded.
+- ~~**The quota-degrade rung regressed.**~~ **Closed.** `saveToLeaderboard()` strips `wire` from the oldest half of the board before it shrinks the entry count — the cheaper thing is lost first, as the plan asked.
+- ~~**`assist.index` is a stub.**~~ **Closed.** `computeAssistIndex()` is real, stamped `ASSIST_FORMULA = 2`, and — better than the plan asked for — the **Adjusted Legacy** comparator recomputes it at rank time instead of trusting the stored value, so a formula revision re-ranks the back catalogue rather than stranding it.
+- **Two of five leaderboard axes never shipped → now one.** `adjusted` shipped. `pact` (covenant-weighted) did not. Consistent with the risk table's own *"ship three... add the rest only if asked for"* mitigation, so this is a scope decision to confirm rather than a defect.
+
+**And the one that did not close — §2's insurance:**
+
+§2 named seed + input log + checksum *"the one piece of insurance that has to be taken now,
+because it is nearly free today and expensive to retrofit."* Only the seed shipped.
+`scoreboard.ts` records the reasoning and it is good reasoning — a real input-replay hash
+needs a single capture point for EVERY input surface, and a movement-only hash would have
+lied about what it proved. But the conclusion §2 drew still applies to the decision that was
+actually made: `v: 3` records are already accumulating, and every one of them is the
+permanently unverifiable back-catalogue §2 existed to prevent.
+
+Worth facing squarely, because it is not only a scheduling problem: **server-side
+re-simulation and the live-wire premise are mutually exclusive.** A re-simulation from seed +
+inputs cannot reproduce the client's network conditions, and the wire drives damage rolls,
+spawn pacing and `simSpeed` per tick. SR9 stores time-weighted *summaries*, not a tick-level
+trace, so a replay would diverge immediately. §2 did not notice this, and the assistance
+index does not fix it — dividing by a scalar cannot undo `simSpeed`, which changes how many
+actions fit inside a fixed wall clock rather than scaling any single number.
+
+There are three honest exits, and the batch should pick one deliberately rather than drift:
+
+| exit | what it means | cost |
+|---|---|---|
+| **(a) accept it** | the board is personal-best only; reword SR10's claim to match | free, and loses the cross-player comparison the batch wanted |
+| **(b) a Sealed run** ← *recommended* | a run mode that pins every mapping to its declared pillar-5 neutral; only Sealed runs rank | small — pillar 5 already **requires** every metric to document a neutral fallback, so the values exist. The Wire stays the game's identity for ordinary play, and a Sealed run is the one that could actually be re-simulated |
+| **(c) connection classes** | rank within buckets, like weight classes | medium, and it hardens the ISP dependency into the design rather than removing it |
 
 **First: SR0.** It is the smallest phase in the batch, it is mostly deletion, and every phase
 after it assumes a control model. Building SR1's acts against a mouse and then removing the
@@ -535,6 +561,57 @@ it is measured before SR6 starts rather than after SR7.
 
 **Then the run, SR1 → SR3 → SR2.** A curve, then a finish line, then depth on top of a shape that
 exists. SR9 last, because a board with nothing to rank is furniture.
+
+---
+
+## 7.1 The SR5 ruling — 2026-08-26
+
+**SR5 was declared the gate.** §7 says so in bold: *"its answer to 'does per-pixel lighting
+fit 16.67 ms with 250 foes alive' decides whether SR8 is a plan or a wish, so it is measured
+before SR6 starts rather than after SR7."*
+
+That did not happen. M1 was never answered with a number. SR5 shipped a screen-space light
+mask instead of the spec'd pipeline, and SR6, SR7 and SR8 all shipped on top of it anyway.
+Three phases are stacked on a foundation that was never poured, and the table has carried
+SR5 as "partial" for three days without anyone deciding what it should become. **Drift is
+the failure here, not the mask.**
+
+### The ruling
+
+**1. The mask is the shipped floor, not a shortfall.** `PostProcess.lightMask` delivered the
+readable "darkness with pools of light" that SR8's fog and grading are built on, at a
+fraction of the cost of the spec'd pipeline. It stops being scored against a spec the batch
+has chosen not to build. SR5 reads **ruled**, not **partial**.
+
+**2. It does not close §4's Finding 2, and the plan stops implying it does.** §4 measured
+*"nothing is lit — no per-pixel response to any light source."* A mask decides **where**
+darkness is; it cannot make a surface respond to a light's **direction**, because there are
+no normals to respond with. Finding 2 is open. It is now recorded as open in `docs/GDD.md`
+§15 as well, so the honest state survives this document.
+
+**3. The spec'd pipeline becomes SR11, and it does not start until M1 has a number.**
+Height buffer in `Pix`, Sobel normals at bake, per-sprite normal maps, the light-direction
+term the mask cannot carry — plus SR8's light shafts and ground specular, which are blocked
+on exactly the same thing and move with it.
+
+### The gate, restated so it cannot be stepped over again
+
+M1 is cheap to answer now in a way it was not before SR4 existed:
+
+> Instrument frame time at 250 alive, on both backends, with the mask on and off. The delta
+> is the entire budget a normal-mapped pass has to fit inside. Publish the number in this
+> section before writing a line of SR11.
+
+If the number says it does not fit, SR11 is a wish and the mask is the permanent answer —
+which is a fine outcome, and a decision rather than a drift. **What is not acceptable is a
+third phase shipping on top of an unmeasured gate.**
+
+### Why this is the graphics ruling and not a graphics milestone
+
+Q4 bought the whole ladder, and the look is the loudest half of §0's ask. Nothing above
+reduces that scope — SR11 is the ladder's top rung and it stays on the board. What the
+ruling changes is that the rung is now *specified, gated, and honestly reported* instead of
+being quietly counted as half-delivered by a row in a table.
 
 ---
 
