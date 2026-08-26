@@ -148,8 +148,23 @@ test.describe('The Reckoning — one full run, start to outcome', () => {
       'a Reckoning was active but its lord was never found in state.worldBosses',
     ).toBe(true);
 
-    expect(last.gameOver, `the run never ended across ${r.realSeconds.toFixed(0)}s`).toBe(true);
-    expect(['reckoned', 'outlasted', 'fallen', 'unmet']).toContain(last.outcome);
+    // Read the terminal state LIVE rather than off the timeline. Sampling is a
+    // lossy view of a run by construction, and "how did this end" is precisely
+    // the question that must not depend on whether the ending landed on a
+    // sample boundary.
+    const ended = await nw.page.evaluate(() => {
+      const s = (window as any).__nw.state;
+      return { gameOver: !!s.gameOver, outcome: s.outcome ?? null, cause: s.gameOverCause ?? null };
+    });
+
+    expect(ended.gameOver, `the run never ended across ${r.realSeconds.toFixed(0)}s`).toBe(true);
+    expect(['reckoned', 'outlasted', 'fallen', 'unmet']).toContain(ended.outcome);
+
+    // SR3's own invariant: a won run has no cause of death, because nothing
+    // killed you. This is the exact confusion the scoring inversion came from.
+    if (ended.outcome === 'reckoned') {
+      expect(ended.cause, 'a won run reported a cause of death').toBeNull();
+    }
 
     /* -- SR3/SR9: the scorecard agrees with what actually happened -------- */
 
@@ -164,7 +179,7 @@ test.describe('The Reckoning — one full run, start to outcome', () => {
 
     expect(card, 'the finished run wrote no scorecard to the leaderboard').toBeTruthy();
     expect(card.v, 'the scorecard is not a v3 record').toBe(3);
-    expect(card.outcome, "the scorecard's outcome disagrees with the run's").toBe(last.outcome);
+    expect(card.outcome, "the scorecard's outcome disagrees with the run's").toBe(ended.outcome);
 
     // The SR3 scoring fix, asserted against a real card rather than against
     // the weights table. Before the fix, a win was scored through

@@ -17,10 +17,15 @@ const MOUNTAIN = 7, SNOW = 8, HILL = 6, GRASS = 3, MEADOW = 4;
 /** Block until every loaded chunk has an overlay and the relight queue is
  *  empty. See ChunkMap.debugReliefPending() for why a fixed sleep was wrong.
  *  Bounded, so a genuine stall still fails the test rather than hanging. */
-async function settleRelief(page: import('@playwright/test').Page, timeout = 40_000) {
+async function settleRelief(page: import('@playwright/test').Page, timeout = 40_000, afterGen?: number) {
   await page.waitForFunction(
-    () => ((window as any).__nw?.chunks?.debugReliefPending?.() ?? 1) === 0,
-    undefined,
+    (g: number | undefined) => {
+      const c = (window as any).__nw?.chunks;
+      if (!c) return false;
+      if (g !== undefined && c.debugSunGen() <= g) return false;   // relight not triggered yet
+      return (c.debugReliefPending?.() ?? 1) === 0;
+    },
+    afterGen,
     { timeout, polling: 100 },
   );
 }
@@ -128,8 +133,13 @@ test.describe('Batch G — terrain reads as terrain', () => {
         // frame rate, and on the software-raster lane it lost — most tiles
         // still read null, which is how a terrain test came to sample nine
         // height boundaries and report the relief system broken.
+        // Wait for the tile the sampler is about to stand on to actually have
+        // an overlay, not merely for the queue to look idle — after a teleport
+        // the new chunks may not have been created yet, so an empty queue means
+        // "nothing started", not "everything finished".
         for (let i = 0; i < 400; i++) {
-          if ((g.chunks.debugReliefPending?.() ?? 1) === 0) break;
+          const cx = Math.floor(g.player.x / 32), cy = Math.floor(g.player.y / 32);
+          if (g.chunks.debugRelief(cx, cy) != null && (g.chunks.debugReliefPending?.() ?? 1) === 0) break;
           await new Promise((k) => setTimeout(k, 50));
         }
       }
@@ -177,8 +187,13 @@ test.describe('Batch G — terrain reads as terrain', () => {
     const nw = await launch({ seed: 4242, gl: testInfo.project.name === 'webgl' });
 
     const at = async (clock: number) => {
+      const gen0 = await nw.page.evaluate(() => (window as any).__nw.chunks.debugSunGen());
       await nw.page.evaluate((c: number) => { (window as any).__nw.state.clock = c; }, clock);
-      await settleRelief(nw.page);          // let the relight queue actually drain
+      // Wait for the relight to have been TRIGGERED and then finished. Waiting
+      // on an empty queue alone is a race: the queue is also empty in the gap
+      // between setting the clock and tickRelief() next running, so it returns
+      // instantly and samples the old sun.
+      await settleRelief(nw.page, 40_000, gen0);
       return nw.page.evaluate(() => {
         const g = (window as any).__nw;
         const px = Math.floor(g.player.x / 32), py = Math.floor(g.player.y / 32);

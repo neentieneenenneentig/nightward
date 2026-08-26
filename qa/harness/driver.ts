@@ -564,7 +564,15 @@ export class Nightward {
         lastSampleT = s.t;
         onSample?.(s);
       }
-      if (s.gameOver) break;
+      if (s.gameOver) {
+        // Always record the ENDING. Samples are gated to 1 Hz, so the frame
+        // that ended the run is usually not the frame that was last kept — and
+        // a spec asking "how did this end" then reads the last SURVIVING sample
+        // and concludes it never did. Cost the first full-lifespan run its
+        // outcome, which is the one thing that run existed to report.
+        if (lastSampleT !== s.t) { this.samples.push(s); lastSampleT = s.t; onSample?.(s); }
+        break;
+      }
 
       // SR2: a draft freezes the ENTIRE sim. main.ts gates the step
       // accumulator on ui.isPaused(), and isPaused() counts a draft — so an

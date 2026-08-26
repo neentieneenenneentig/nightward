@@ -69,6 +69,12 @@ export class ChunkMap {
   private reliefSeed: number;
   private sun: SunDir = sunAt(0);
   private relightQueue: string[] = [];
+  /** QA: bumped every time the sun moves far enough to enqueue a relight. A
+   *  test that moves the world clock has to wait for the RELIGHT, and "the
+   *  queue is empty" is not that signal — the queue is also empty in the window
+   *  between setting the clock and tickRelief() next running, so waiting on it
+   *  alone returns instantly and samples the OLD sun. */
+  private sunGen = 0;
 
 
   constructor(
@@ -200,6 +206,7 @@ export class ChunkMap {
     if (moved || s.gain !== this.sun.gain) {
       this.sun = s;
       this.relightQueue = [...this.chunks.keys()];
+      this.sunGen++;
     }
     for (let n = 0; n < RELIGHT_PER_FRAME && this.relightQueue.length; n++) {
       const c = this.chunks.get(this.relightQueue.pop()!);
@@ -244,6 +251,10 @@ export class ChunkMap {
    *  taken. Worse, the queue is drained with pop() while the player's own chunk
    *  was inserted FIRST — so the tiles a test looks at are the last ones
    *  updated. Waiting on the work itself is lane-independent. */
+  /** QA: see `sunGen`. Pair with debugReliefPending() === 0 to wait for a
+   *  clock change to be fully reflected in the overlays. */
+  debugSunGen(): number { return this.sunGen; }
+
   debugReliefPending(): number {
     if (!this.reliefOn) return 0;
     let missing = 0;
