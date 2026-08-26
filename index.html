@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#0d2b47" />
   <title>NIGHTWARD</title>
+  <!-- Pillar 1 is "100% procgen, no hosted assets", and that has to include the
+       tab. An inline SVG data URI ships no file and fetches nothing: a ward
+       around a hearth-ember. Without it the browser requests /favicon.ico by
+       itself, which 404s — invisible in headless Chrome, but the headed WebGPU
+       lane asks for it and the QA harness counts every console error. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230d2b47'/%3E%3Cpath d='M8 1.5 L13.5 8 L8 14.5 L2.5 8 Z' fill='none' stroke='%23dfe6f0' stroke-width='1.6'/%3E%3Ccircle cx='8' cy='8' r='1.6' fill='%23e8c34a'/%3E%3C/svg%3E" />
   <style>
     html, body {
       margin: 0; padding: 0; height: 100%;

@@ -1666,7 +1666,7 @@ async function testDraftIsPlayableFromTheKeyboard(nw: any) {
     ok(!!reroll, 'the offer carries a re-roll control');
     ok((reroll?.tabIndex ?? -1) >= 0,
       'the re-roll is focusable — SR0 says every control is reachable without a mouse');
-    ok(/R/.test(reroll?.textContent ?? ''),
+    ok((reroll?.textContent ?? '').trim().endsWith('R'),
       'and it names its key, the way each card names its digit');
 
     // R must reach LoomSystem.rerollDraft() through the real listener.
