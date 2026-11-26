@@ -2,6 +2,10 @@
 
 **Your internet connection is the world you're dreaming, and you only get one dream.**
 
+> Open source under the [MIT license](LICENSE), made almost entirely by AI coding agents, and
+> released as-is: the author has stopped working on it. Forks and pull requests are welcome,
+> including AI-written ones. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 A ~15-minute browser survival-RPG: gather, craft, build a fortified hold, and fight off
 night hordes and roaming boss lords — all shaped by your live network connection, and all
 inside one finite character lifespan that ages in real time and ends in death of natural
@@ -105,3 +109,14 @@ Debug hotkeys (`.` +30s clock, `n` skip to night, `j` force wave, `g` +gold, `m`
 +materials, `h` heal, `u` god mode, `p`/`Shift+P` paint brush) only register in `npm run
 dev` — they're stripped from production builds (`npm run build`), so a live game never
 ships with a free-resources hotkey reachable by a real player.
+
+## How it was made
+
+Nearly all of the code, tests and docs were written by AI coding agents (Claude Opus, Sonnet
+and Fable), with a human directing, playtesting and reviewing. Commits made by an agent carry
+a `Co-Authored-By:` trailer naming the model. There are no hand-drawn or AI-generated image or
+audio files: every sprite, particle and sound is generated in code at runtime.
+
+## License
+
+MIT: see [LICENSE](LICENSE). npm and Cargo dependencies keep their own licenses.
